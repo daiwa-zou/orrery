@@ -209,6 +209,13 @@ across the filter boundary into ADDED/DELETED, so a filtered page only hears
 about objects it shows. Unsupported `fieldSelector` fields are rejected with
 a 400 naming the supported set rather than silently matching nothing.
 
+`GET .../resources/{g}/{v}/{r}/facets` returns the distinct label keys/values
+and low-cardinality field values on the objects the caller may list — the
+vocabulary behind the search bar's autocomplete. The UI exposes all of this as
+one search input: bare words are free text, `key=value` / `key!=value` /
+`!key` / `key in (a,b)` are label terms, and dotted keys like
+`status.phase=Running` are field terms.
+
 Sessions are cookie-based: the session cookie is `HttpOnly` and encrypted, and
 mutating requests carry a double-submit CSRF token in `X-CSRF-Token`.
 

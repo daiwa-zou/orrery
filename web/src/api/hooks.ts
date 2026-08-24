@@ -260,6 +260,21 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
   }
 }
 
+/**
+ * Search-autocomplete vocabulary. Fetched lazily (enabled when the search bar
+ * first gains focus) so pages that never search never pay for the scan.
+ */
+export function useFacets(ref: ResourceRef | null, namespace: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ref
+      ? ['facets', ref.cluster, ref.group, ref.version, ref.resource, namespace]
+      : ['facets', 'none'],
+    queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, signal),
+    enabled: !!ref && enabled,
+    staleTime: 30_000,
+  })
+}
+
 export function useResource(ref: ResourceRef | null) {
   return useQuery({
     queryKey: ref

@@ -77,6 +77,18 @@ export interface KubeObject {
   [key: string]: unknown
 }
 
+/** Search-autocomplete vocabulary for one resource. */
+export interface Facet {
+  key: string
+  values: string[]
+}
+
+export interface FacetsResponse {
+  labels: Facet[]
+  fields: Facet[]
+  truncated?: boolean
+}
+
 export type HealthStatus = 'healthy' | 'degraded' | 'unreachable' | 'unknown'
 
 export interface ClusterSummary {

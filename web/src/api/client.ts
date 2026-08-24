@@ -2,6 +2,7 @@ import type {
   AccessCheck,
   Decision,
   DiscoveryResponse,
+  FacetsResponse,
   KubeObject,
   ListResponse,
   Me,
@@ -204,6 +205,14 @@ export const api = {
     request<ListResponse>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/${ref.resource}` +
         qs(params as Record<string, unknown>),
+      {},
+      signal,
+    ),
+
+  facets: (ref: ResourceRef, namespace: string | undefined, signal?: AbortSignal) =>
+    request<FacetsResponse>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/${ref.resource}/facets` +
+        qs({ namespace }),
       {},
       signal,
     ),

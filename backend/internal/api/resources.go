@@ -106,6 +106,63 @@ func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) []string {
 	return out
 }
 
+// visibleScope collects the objects the caller is allowed to list, together
+// with the scope actually granted and any partial-scan warnings. Every read
+// that serves cached objects must come through here (or perform the same
+// checks): the cache holds the dashboard's view, not the caller's.
+func (a *API) visibleScope(ctx context.Context, res *resolved, namespace string) ([]*unstructured.Unstructured, scopeInfo, []string, error) {
+	var (
+		scope    scopeInfo
+		warnings []string
+	)
+
+	if namespace != "" {
+		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
+			return nil, scope, nil, err
+		}
+		scope.Namespace = namespace
+		objs, err := res.cluster.Informers.List(ctx, res.resource, namespace)
+		return objs, scope, nil, err
+	}
+
+	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
+		ctx,
+		res.cluster.AuthzClient(res.clients),
+		res.cluster.AuthSubject(res.identity),
+		authz.Attributes{
+			Verb: "list", Group: res.resource.Group, Version: res.resource.Version,
+			Resource: res.resource.Name,
+		},
+		a.namespaceNames(ctx, res.cluster),
+	)
+	if scanErr != nil && !all && len(allowed) == 0 {
+		return nil, scope, nil, scanErr
+	}
+	if scanErr != nil {
+		warnings = append(warnings, scanErr.Error())
+	}
+
+	switch {
+	case all:
+		scope.AllNamespaces = true
+		objs, err := res.cluster.Informers.List(ctx, res.resource, "")
+		return objs, scope, warnings, err
+	case len(allowed) == 0 || !res.resource.Namespaced:
+		return nil, scope, nil, &forbiddenError{verb: "list", resource: res.resource.Name}
+	default:
+		scope.Namespaces = allowed
+		var objs []*unstructured.Unstructured
+		for _, ns := range allowed {
+			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
+			if err != nil {
+				return nil, scope, warnings, err
+			}
+			objs = append(objs, part...)
+		}
+		return objs, scope, warnings, nil
+	}
+}
+
 // listResources serves a page of a resource from the shared cache.
 func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -124,64 +181,10 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		namespace = ""
 	}
 
-	var (
-		scope    scopeInfo
-		warnings []string
-		objs     []*unstructured.Unstructured
-	)
-
-	if namespace != "" {
-		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
-			a.writeErr(w, r, err)
-			return
-		}
-		scope.Namespace = namespace
-		objs, err = res.cluster.Informers.List(ctx, res.resource, namespace)
-		if err != nil {
-			a.writeErr(w, r, err)
-			return
-		}
-	} else {
-		all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
-			ctx,
-			res.cluster.AuthzClient(res.clients),
-			res.cluster.AuthSubject(res.identity),
-			authz.Attributes{
-				Verb: "list", Group: res.resource.Group, Version: res.resource.Version,
-				Resource: res.resource.Name,
-			},
-			a.namespaceNames(ctx, res.cluster),
-		)
-		if scanErr != nil && !all && len(allowed) == 0 {
-			a.writeErr(w, r, scanErr)
-			return
-		}
-		if scanErr != nil {
-			warnings = append(warnings, scanErr.Error())
-		}
-
-		switch {
-		case all:
-			scope.AllNamespaces = true
-			objs, err = res.cluster.Informers.List(ctx, res.resource, "")
-			if err != nil {
-				a.writeErr(w, r, err)
-				return
-			}
-		case len(allowed) == 0 || !res.resource.Namespaced:
-			a.writeErr(w, r, &forbiddenError{verb: "list", resource: res.resource.Name})
-			return
-		default:
-			scope.Namespaces = allowed
-			for _, ns := range allowed {
-				part, err := res.cluster.Informers.List(ctx, res.resource, ns)
-				if err != nil {
-					a.writeErr(w, r, err)
-					return
-				}
-				objs = append(objs, part...)
-			}
-		}
+	objs, scope, warnings, err := a.visibleScope(ctx, res, namespace)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
 	}
 
 	objs, err = filterObjects(objs, r)

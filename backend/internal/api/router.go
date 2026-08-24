@@ -67,6 +67,7 @@ func (a *API) Router() http.Handler {
 				r.Get("/pods/{namespace}/{name}/logs", a.getPodLogs)
 
 				r.Get("/resources/{group}/{version}/{resource}", a.listResources)
+				r.Get("/resources/{group}/{version}/{resource}/facets", a.listFacets)
 				r.Get("/resources/{group}/{version}/{resource}/{namespace}/{name}", a.getResource)
 				r.Get("/rollout/history", a.rolloutHistory)
 				r.Get("/explain", a.explainHandler)

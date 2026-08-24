@@ -50,6 +50,28 @@ export function validateLabelValue(value: string): string | undefined {
 }
 
 /**
+ * Splits a selector into its top-level comma-separated terms, leaving commas
+ * inside `in (a,b)` set expressions alone.
+ */
+export function splitSelector(selector: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of selector) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    if (ch === ',' && depth === 0) {
+      out.push(cur)
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  out.push(cur)
+  return out.map((p) => p.trim()).filter(Boolean)
+}
+
+/**
  * Toggles a `key=value` equality term in a comma-separated label selector,
  * which is what clicking a label chip does. Clicking a chip already in the
  * selector removes it; clicking a different value for a key that already has
@@ -58,10 +80,7 @@ export function validateLabelValue(value: string): string | undefined {
  */
 export function toggleSelectorTerm(selector: string, key: string, value: string): string {
   const term = `${key}=${value}`
-  const parts = selector
-    .split(',')
-    .map((p) => p.trim())
-    .filter(Boolean)
+  const parts = splitSelector(selector)
 
   const had = parts.includes(term)
   const kept = parts.filter((p) => {

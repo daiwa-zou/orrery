@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, type ResourceRef } from '../api/client'
-import { useAccess, useLiveList, usePodMetrics } from '../api/hooks'
+import { useAccess, useFacets, useLiveList, usePodMetrics } from '../api/hooks'
 import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
 import { toggleSelectorTerm } from '../lib/labels'
+import type { SearchQuery } from '../lib/searchQuery'
 import { rowKey } from '../lib/selection'
-import { useDebouncedInput } from '../lib/useDebouncedInput'
 import { DataTable, Pagination } from '../components/DataTable'
+import { SearchBar } from '../components/SearchBar'
 import { Badge, Button, ErrorState, GatedButton, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
@@ -139,13 +140,24 @@ export function ResourceList() {
     [params, setParams],
   )
 
-  const commitQ = useCallback((v: string) => update({ q: v, page: '1' }), [update])
-  const commitSelector = useCallback(
-    (v: string) => update({ labelSelector: v, page: '1' }),
+  const searchQuery = useMemo<SearchQuery>(
+    () => ({ q, labelSelector, fieldSelector }),
+    [q, labelSelector, fieldSelector],
+  )
+  const commitSearch = useCallback(
+    (next: SearchQuery) =>
+      update({
+        q: next.q,
+        labelSelector: next.labelSelector,
+        fieldSelector: next.fieldSelector,
+        page: '1',
+      }),
     [update],
   )
-  const [qInput, setQInput] = useDebouncedInput(q, commitQ)
-  const [selectorInput, setSelectorInput] = useDebouncedInput(labelSelector, commitSelector)
+  // Facets are only fetched once the user reaches for the search bar.
+  const [searchActive, setSearchActive] = useState(false)
+  const activateSearch = useCallback(() => setSearchActive(true), [])
+  const facets = useFacets(ref, namespace, searchActive)
 
   const onLabelClick = useCallback(
     (k: string, v: string) =>
@@ -302,19 +314,6 @@ export function ResourceList() {
 
         <LiveIndicator state={live} />
 
-        {fieldSelector && (
-          <Badge tone="info" title="Field selector applied by the page you came from">
-            <span className="font-mono">{fieldSelector}</span>
-            <button
-              aria-label="Clear field selector"
-              className="ml-1 hover:text-ink"
-              onClick={() => update({ fieldSelector: null, page: '1' })}
-            >
-              ×
-            </button>
-          </Badge>
-        )}
-
         {data && (
           <span className="text-xs text-ink-faint tabular-nums">
             {data.total.toLocaleString()} total
@@ -323,21 +322,12 @@ export function ResourceList() {
 
         <div className="flex-1" />
 
-        <input
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          placeholder="Search name, namespace, labels"
-          aria-label="Search by name, namespace or label"
-          title='Matches name, namespace, or labels — try "app=web"'
-          className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
-        />
-        <input
-          value={selectorInput}
-          onChange={(e) => setSelectorInput(e.target.value)}
-          placeholder="Label selector"
-          aria-label="Label selector"
-          title="Kubernetes label selector syntax, e.g. app=web,tier!=cache"
-          className="w-52 rounded-md bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
+        <SearchBar
+          query={searchQuery}
+          onCommit={commitSearch}
+          facets={facets.data}
+          onActivate={activateSearch}
+          placeholder="Search or filter — name, app=web, status.phase=Running"
         />
         <Button
           size="sm"
@@ -436,9 +426,13 @@ export function ResourceList() {
             onRowClick={openRow}
             onLabelClick={showLabels ? onLabelClick : undefined}
             loading={isLoading}
-            emptyTitle={q || labelSelector ? 'No matches' : `No ${meta?.kind ?? resource} found`}
+            emptyTitle={
+              q || labelSelector || fieldSelector
+                ? 'No matches'
+                : `No ${meta?.kind ?? resource} found`
+            }
             emptyDescription={
-              q || labelSelector
+              q || labelSelector || fieldSelector
                 ? 'Try relaxing the filters.'
                 : namespace
                   ? `Nothing in namespace ${namespace}.`
