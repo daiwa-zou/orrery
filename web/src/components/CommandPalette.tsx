@@ -156,7 +156,6 @@ export function CommandPalette({
         label: 'Events',
         href: `/c/${cluster}/events${namespace ? `?namespace=${namespace}` : ''}`,
       },
-      { id: 'page:can-i', label: 'Can I?', href: `/c/${cluster}/can-i` },
     ]
     const pushPage = (p: (typeof pages)[number]) =>
       out.push({

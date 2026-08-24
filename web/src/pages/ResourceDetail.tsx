@@ -16,6 +16,7 @@ import {
   Button,
   ErrorState,
   Field,
+  GatedButton,
   Modal,
   Spinner,
   StatusBadge,
@@ -179,24 +180,34 @@ function containerNames(obj?: KubeObject): string[] {
 function TabButton({
   active,
   onClick,
+  disabled,
+  deniedTitle,
   children,
 }: {
   active: boolean
   onClick: () => void
+  /** Dimmed and inert, with deniedTitle explaining the missing permission. */
+  disabled?: boolean
+  deniedTitle?: string
   children: React.ReactNode
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        'border-b-2 px-3 py-2 text-sm transition-colors',
-        active
-          ? 'border-accent text-ink'
-          : 'border-transparent text-ink-muted hover:text-ink',
-      )}
-    >
-      {children}
-    </button>
+    <span className="inline-flex" title={disabled ? deniedTitle : undefined}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={clsx(
+          'border-b-2 px-3 py-2 text-sm transition-colors',
+          disabled && 'cursor-not-allowed opacity-40',
+          active
+            ? 'border-accent text-ink'
+            : 'border-transparent text-ink-muted',
+          !disabled && !active && 'hover:text-ink',
+        )}
+      >
+        {children}
+      </button>
+    </span>
   )
 }
 
@@ -483,8 +494,10 @@ function ResourceDetailInner() {
                 View pods
               </Button>
             )}
-            {SCALABLE.has(kind) && mayScale && (
-              <Button
+            {SCALABLE.has(kind) && (
+              <GatedButton
+                allowed={mayScale}
+                deniedTitle={`Requires patch on ${resource}/scale`}
                 size="sm"
                 onClick={() => {
                   setReplicas(currentReplicas)
@@ -492,24 +505,37 @@ function ResourceDetailInner() {
                 }}
               >
                 Scale
-              </Button>
+              </GatedButton>
             )}
-            {RESTARTABLE.has(kind) && mayPatch && (
-              <Button size="sm" onClick={doRestart} title="Stamps the pod template to trigger a rollout">
+            {RESTARTABLE.has(kind) && (
+              <GatedButton
+                allowed={mayPatch}
+                deniedTitle={`Requires patch on ${resource}`}
+                size="sm"
+                onClick={doRestart}
+                title="Stamps the pod template to trigger a rollout"
+              >
                 Restart
-              </Button>
+              </GatedButton>
             )}
-            {isDeployment && mayPatch && may('listReplicaSets') && ns && (
+            {isDeployment && ns && (
               <>
-                <RollbackButton cluster={cluster!} namespace={ns} name={name!} onDone={invalidate} />
+                <RollbackButton
+                  cluster={cluster!}
+                  namespace={ns}
+                  name={name!}
+                  allowed={mayPatch && may('listReplicaSets')}
+                  onDone={invalidate}
+                />
                 <PauseButton
                   paused={(obj.spec as { paused?: boolean })?.paused === true}
                   objRef={ref}
+                  allowed={mayPatch}
                   onDone={invalidate}
                 />
               </>
             )}
-            {isCronJob && ns && (may('createJob') || mayPatch) && (
+            {isCronJob && ns && (
               <CronJobActions
                 cluster={cluster!}
                 namespace={ns}
@@ -520,30 +546,37 @@ function ResourceDetailInner() {
                 onDone={invalidate}
               />
             )}
-            {isPod && may('evict') && ns && (
-              <EvictButton cluster={cluster!} namespace={ns} pod={name!} />
+            {isPod && ns && (
+              <EvictButton cluster={cluster!} namespace={ns} pod={name!} allowed={may('evict')} />
             )}
-            {isNode && mayPatch && (
+            {isNode && (
               <>
-                <Button
+                <GatedButton
+                  allowed={mayPatch}
+                  deniedTitle="Requires patch on nodes"
                   size="sm"
                   onClick={() => doCordon(!(obj.spec as { unschedulable?: boolean })?.unschedulable)}
                 >
                   {(obj.spec as { unschedulable?: boolean })?.unschedulable ? 'Uncordon' : 'Cordon'}
-                </Button>
-                <DrainButton cluster={cluster!} node={name!} onDone={invalidate} />
+                </GatedButton>
+                <DrainButton cluster={cluster!} node={name!} allowed={mayPatch} onDone={invalidate} />
                 <TaintsButton
                   objRef={ref}
                   taints={((obj.spec as { taints?: Taint[] })?.taints ?? [])}
+                  allowed={mayPatch}
                   onDone={invalidate}
                 />
               </>
             )}
-            {mayDelete && (
-              <Button size="sm" variant="danger" onClick={() => setDeleteOpen(true)}>
-                Delete
-              </Button>
-            )}
+            <GatedButton
+              allowed={mayDelete}
+              deniedTitle={`Requires delete on ${resource}`}
+              size="sm"
+              variant="danger"
+              onClick={() => setDeleteOpen(true)}
+            >
+              Delete
+            </GatedButton>
           </div>
         </div>
 
@@ -560,13 +593,23 @@ function ResourceDetailInner() {
               <span className="ml-1.5 text-xs text-ink-faint">{events.data.total}</span>
             )}
           </TabButton>
-          {isPod && may('logs') && (
-            <TabButton active={tab === 'logs'} onClick={() => switchTab('logs')}>
+          {isPod && (
+            <TabButton
+              active={tab === 'logs'}
+              disabled={!may('logs')}
+              deniedTitle="Requires get on pods/log"
+              onClick={() => switchTab('logs')}
+            >
               Logs
             </TabButton>
           )}
-          {isPod && mayExec && (
-            <TabButton active={tab === 'terminal'} onClick={() => switchTab('terminal')}>
+          {isPod && (
+            <TabButton
+              active={tab === 'terminal'}
+              disabled={!mayExec}
+              deniedTitle="Requires create on pods/exec"
+              onClick={() => switchTab('terminal')}
+            >
               Terminal
             </TabButton>
           )}
@@ -630,8 +673,9 @@ function ResourceDetailInner() {
               />
             )}
 
-            {(isPod || kind === 'Service') && may('proxy') && ns && (
-              <ProxySection cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
+            {(isPod || kind === 'Service') && ns && (
+              <ProxySection
+                allowed={may('proxy')} cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
             )}
 
             <StatusSection status={status} />
@@ -829,10 +873,12 @@ function StatusSection({ status }: { status?: Record<string, unknown> }) {
 function PauseButton({
   paused,
   objRef,
+  allowed,
   onDone,
 }: {
   paused: boolean
   objRef: ResourceRef
+  allowed: boolean
   onDone: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -858,9 +904,16 @@ function PauseButton({
   }
 
   return (
-    <Button size="sm" onClick={toggle} disabled={busy} title="kubectl rollout pause / resume">
+    <GatedButton
+      allowed={allowed}
+      deniedTitle="Requires patch on deployments"
+      size="sm"
+      onClick={toggle}
+      disabled={busy}
+      title="kubectl rollout pause / resume"
+    >
       {paused ? 'Resume rollouts' : 'Pause rollouts'}
-    </Button>
+    </GatedButton>
   )
 }
 
@@ -874,10 +927,12 @@ interface Taint {
 function TaintsButton({
   objRef,
   taints,
+  allowed,
   onDone,
 }: {
   objRef: ResourceRef
   taints: Taint[]
+  allowed: boolean
   onDone: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -910,9 +965,15 @@ function TaintsButton({
 
   return (
     <>
-      <Button size="sm" onClick={openModal} title="kubectl taint">
+      <GatedButton
+        allowed={allowed}
+        deniedTitle="Requires patch on nodes"
+        size="sm"
+        onClick={openModal}
+        title="kubectl taint"
+      >
         Taints{taints.length > 0 && ` (${taints.length})`}
-      </Button>
+      </GatedButton>
       <Modal
         open={open}
         title="Node taints"
@@ -1004,12 +1065,14 @@ function ProxySection({
   namespace,
   name,
   obj,
+  allowed,
 }: {
   cluster: string
   kind: string
   namespace: string
   name: string
   obj: KubeObject
+  allowed: boolean
 }) {
   const ports: { label: string; port: number }[] = []
   if (kind === 'Service') {
@@ -1042,17 +1105,27 @@ function ProxySection({
         under your own identity.
       </p>
       <div className="flex flex-wrap gap-2">
-        {ports.map((p) => (
-          <a
-            key={`${p.label}-${p.port}`}
-            href={proxyURL(cluster, namespace, ptype, name, p.port)}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded bg-surface-2 px-2 py-1 font-mono text-xs text-accent ring-1 ring-border hover:bg-border/50"
-          >
-            {p.label} ↗
-          </a>
-        ))}
+        {ports.map((p) =>
+          allowed ? (
+            <a
+              key={`${p.label}-${p.port}`}
+              href={proxyURL(cluster, namespace, ptype, name, p.port)}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded bg-surface-2 px-2 py-1 font-mono text-xs text-accent ring-1 ring-border hover:bg-border/50"
+            >
+              {p.label} ↗
+            </a>
+          ) : (
+            <span
+              key={`${p.label}-${p.port}`}
+              title={`Requires get on ${ptype}/proxy`}
+              className="cursor-not-allowed rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink-faint opacity-40 ring-1 ring-border"
+            >
+              {p.label} ↗
+            </span>
+          ),
+        )}
       </div>
     </section>
   )
@@ -1063,11 +1136,13 @@ function RollbackButton({
   cluster,
   namespace,
   name,
+  allowed,
   onDone,
 }: {
   cluster: string
   namespace: string
   name: string
+  allowed: boolean
   onDone: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1102,9 +1177,15 @@ function RollbackButton({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)} title="Rollout history and rollback">
+      <GatedButton
+        allowed={allowed}
+        deniedTitle="Requires patch on deployments and list on replicasets"
+        size="sm"
+        onClick={() => setOpen(true)}
+        title="Rollout history and rollback"
+      >
         History
-      </Button>
+      </GatedButton>
       <Modal open={open} title={`Rollout history of ${name}`} wide onClose={() => setOpen(false)}>
         {history.isLoading && (
           <p className="flex items-center gap-2 py-6 text-sm text-ink-faint">
@@ -1221,16 +1302,25 @@ function CronJobActions({
 
   return (
     <>
-      {canRun && (
-        <Button size="sm" onClick={runNow} disabled={busy} title="Create a one-off Job from this CronJob's template">
-          Run now
-        </Button>
-      )}
-      {canSuspend && (
-        <Button size="sm" onClick={toggleSuspend} disabled={busy}>
-          {suspended ? 'Resume' : 'Suspend'}
-        </Button>
-      )}
+      <GatedButton
+        allowed={canRun}
+        deniedTitle="Requires create on jobs"
+        size="sm"
+        onClick={runNow}
+        disabled={busy}
+        title="Create a one-off Job from this CronJob's template"
+      >
+        Run now
+      </GatedButton>
+      <GatedButton
+        allowed={canSuspend}
+        deniedTitle="Requires patch on cronjobs"
+        size="sm"
+        onClick={toggleSuspend}
+        disabled={busy}
+      >
+        {suspended ? 'Resume' : 'Suspend'}
+      </GatedButton>
     </>
   )
 }
@@ -1240,10 +1330,12 @@ function EvictButton({
   cluster,
   namespace,
   pod,
+  allowed,
 }: {
   cluster: string
   namespace: string
   pod: string
+  allowed: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -1263,9 +1355,14 @@ function EvictButton({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <GatedButton
+        allowed={allowed}
+        deniedTitle="Requires create on pods/eviction"
+        size="sm"
+        onClick={() => setOpen(true)}
+      >
         Evict
-      </Button>
+      </GatedButton>
       <Modal
         open={open}
         title={`Evict ${pod}?`}
@@ -1295,10 +1392,12 @@ function EvictButton({
 function DrainButton({
   cluster,
   node,
+  allowed,
   onDone,
 }: {
   cluster: string
   node: string
+  allowed: boolean
   onDone: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1330,9 +1429,14 @@ function DrainButton({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <GatedButton
+        allowed={allowed}
+        deniedTitle="Requires patch on nodes and create on pods/eviction"
+        size="sm"
+        onClick={() => setOpen(true)}
+      >
         Drain
-      </Button>
+      </GatedButton>
       <Modal
         open={open}
         title={`Drain ${node}`}

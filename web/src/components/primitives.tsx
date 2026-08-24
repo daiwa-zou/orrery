@@ -132,6 +132,32 @@ export function Button({
   )
 }
 
+/**
+ * A Button gated by a permission check. Denied renders dimmed and inert with
+ * a tooltip naming the missing permission — visible but honest, so the UI
+ * teaches RBAC instead of silently rearranging itself per viewer.
+ *
+ * The tooltip lives on a wrapper span because browsers are inconsistent about
+ * showing title on a disabled control.
+ */
+export function GatedButton({
+  allowed,
+  deniedTitle,
+  title,
+  disabled,
+  ...rest
+}: {
+  allowed: boolean
+  /** Shown while hovering a denied button, e.g. "Requires patch on deployments". */
+  deniedTitle: string
+} & Parameters<typeof Button>[0]) {
+  return (
+    <span className="inline-flex" title={allowed ? title : deniedTitle}>
+      <Button {...rest} disabled={disabled || !allowed} />
+    </span>
+  )
+}
+
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg

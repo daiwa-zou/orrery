@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { metaChanges, validateLabelValue, validateMetaKey } from '../lib/labels'
-import { Button, LabelChips } from './primitives'
+import { Button, GatedButton, LabelChips } from './primitives'
 
 /**
  * Inline editing of metadata.labels / metadata.annotations — the UI half of
@@ -35,23 +35,23 @@ export function MetadataEditor({
     return (
       <div className="flex items-start gap-2">
         <LabelChips labels={values} />
-        {canEdit && (
-          <Button
-            size="sm"
-            variant="ghost"
-            title={`Edit ${field}`}
-            onClick={() => {
-              setBase({ ...(values ?? {}) })
-              setDraft({ ...(values ?? {}) })
-              setNewKey('')
-              setNewValue('')
-              setError(undefined)
-              setEditing(true)
-            }}
-          >
-            Edit
-          </Button>
-        )}
+        <GatedButton
+          allowed={canEdit}
+          deniedTitle="Requires patch on this resource"
+          size="sm"
+          variant="ghost"
+          title={`Edit ${field}`}
+          onClick={() => {
+            setBase({ ...(values ?? {}) })
+            setDraft({ ...(values ?? {}) })
+            setNewKey('')
+            setNewValue('')
+            setError(undefined)
+            setEditing(true)
+          }}
+        >
+          Edit
+        </GatedButton>
       </div>
     )
   }

@@ -7,7 +7,7 @@ import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
-import { Badge, Button, ErrorState, Modal, Spinner } from '../components/primitives'
+import { Badge, Button, ErrorState, GatedButton, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
 type BulkAction = 'delete' | 'restart'
@@ -276,7 +276,9 @@ export function ResourceList() {
     () => rows.filter((r) => selected.has(rowKey(r))),
     [rows, selected],
   )
-  const bulkEnabled = mayDelete || mayRestart
+  // Checkboxes follow what the resource supports; the action buttons dim by
+  // permission, so a read-only viewer sees the affordance and why it is inert.
+  const bulkEnabled = canDelete || canRestart
 
   if (error) return <ErrorState error={error} retry={refetch} />
 
@@ -333,8 +335,10 @@ export function ResourceList() {
         <Button size="sm" onClick={() => refetch()}>
           Refresh
         </Button>
-        {mayCreate && (
-          <Button
+        {canCreate && (
+          <GatedButton
+            allowed={mayCreate}
+            deniedTitle={`Requires create on ${resource}`}
             size="sm"
             variant="primary"
             title={`Create a ${meta?.kind ?? 'resource'} from YAML`}
@@ -347,7 +351,7 @@ export function ResourceList() {
             }
           >
             + New
-          </Button>
+          </GatedButton>
         )}
       </div>
 
@@ -356,23 +360,25 @@ export function ResourceList() {
           <span className="text-sm font-medium text-ink tabular-nums">
             {selectedRows.length} selected
           </span>
-          {mayRestart && (
-            <Button
+          {canRestart && (
+            <GatedButton
+              allowed={mayRestart}
+              deniedTitle={`Requires patch on ${resource}`}
               size="sm"
               onClick={() => setPendingBulk({ action: 'restart', rows: selectedRows })}
             >
               Restart
-            </Button>
+            </GatedButton>
           )}
-          {mayDelete && (
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={() => setPendingBulk({ action: 'delete', rows: selectedRows })}
-            >
-              Delete
-            </Button>
-          )}
+          <GatedButton
+            allowed={mayDelete}
+            deniedTitle={`Requires delete on ${resource}`}
+            size="sm"
+            variant="danger"
+            onClick={() => setPendingBulk({ action: 'delete', rows: selectedRows })}
+          >
+            Delete
+          </GatedButton>
           <div className="flex-1" />
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             Clear selection
@@ -420,16 +426,18 @@ export function ResourceList() {
             selected={bulkEnabled ? selected : undefined}
             onSelectedChange={bulkEnabled ? setSelected : undefined}
             rowActions={
-              mayDelete
+              canDelete
                 ? (row) => (
-                    <Button
+                    <GatedButton
+                      allowed={mayDelete}
+                      deniedTitle={`Requires delete on ${resource}`}
                       size="sm"
                       variant="ghost"
                       title={`Delete ${row.name}`}
                       onClick={() => setPendingBulk({ action: 'delete', rows: [row] })}
                     >
                       Delete
-                    </Button>
+                    </GatedButton>
                   )
                 : undefined
             }

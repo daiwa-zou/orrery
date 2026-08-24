@@ -14,7 +14,6 @@ import { AppShell } from './components/AppShell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { EmptyState, ErrorState, Spinner } from './components/primitives'
 import { ToastProvider } from './components/Toast'
-import { CanI } from './pages/CanI'
 import { CreateResource } from './pages/CreateResource'
 import { Events } from './pages/Events'
 import { Fleet } from './pages/Fleet'
@@ -138,7 +137,6 @@ function ClusterRoutes() {
       <Routes>
         <Route index element={<Overview />} />
         <Route path="events" element={<Events />} />
-        <Route path="can-i" element={<CanI />} />
         <Route path="r/:group/:version/:resource" element={<ResourceList />} />
         <Route path="r/:group/:version/:resource/create" element={<CreateResource />} />
         <Route
