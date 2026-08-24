@@ -16,8 +16,9 @@ oidc:
   clientSecret: 'orrery-dev-secret'
   redirectURL: 'http://localhost:5173/api/v1/auth/callback'
   scopes: [openid, profile, email, groups]
-  # Mirrors what the kube-apiserver would derive from the same token: the
-  # email claim is not prefixed, groups are.
+  # A configured prefix always applies — kube-apiserver semantics — so the
+  # impersonated username is oidc:<email>. Configure the apiserver with the
+  # same flags and RBAC bindings match exactly.
   usernameClaim: email
   groupsClaim: groups
   usernamePrefix: 'oidc:'
