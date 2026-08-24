@@ -1,0 +1,207 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when the configuration changes; otherwise a Helm
+        # upgrade that only touches config appears to do nothing.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "clusterlens.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "clusterlens.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: clusterlens
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ['-config', '/etc/clusterlens/config.yaml']
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: CLUSTERLENS_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.session.existingSecret }}
+                  key: {{ .Values.session.keyRef }}
+            {{- if .Values.oidc.enabled }}
+            - name: CLUSTERLENS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret }}
+                  key: {{ .Values.oidc.clientSecretKey }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clusterlens
+              readOnly: true
+            {{- if .Values.kubeconfigSecret }}
+            - name: kubeconfigs
+              mountPath: /etc/clusterlens/kubeconfigs
+              readOnly: true
+            {{- end }}
+          # Readiness is the HTTP surface being up. It deliberately does not
+          # depend on any managed cluster being reachable: one unreachable
+          # remote cluster must not take the whole dashboard out of service.
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "clusterlens.fullname" . }}
+        {{- if .Values.kubeconfigSecret }}
+        - name: kubeconfigs
+          secret:
+            secretName: {{ .Values.kubeconfigSecret }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+  selector:
+    {{- include "clusterlens.selectorLabels" . | nindent 4 }}
+{{- if .Values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if .Values.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "clusterlens.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+  annotations:
+    # Log follows, watches and exec sessions are long-lived. Proxies that
+    # default to a 60 second read timeout will sever them mid-stream.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "clusterlens.fullname" . }}
+                port:
+                  name: http
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

@@ -1,0 +1,331 @@
+package authz
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	authzv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
+)
+
+// allowFunc decides a review from its resource attributes.
+type allowFunc func(ra *authzv1.ResourceAttributes) bool
+
+// fakeClient returns a clientset that answers SubjectAccessReviews with decide,
+// counting how many reviews actually reached the "API server".
+func fakeClient(decide allowFunc) (*fake.Clientset, *atomic.Int64) {
+	client := fake.NewSimpleClientset()
+	var calls atomic.Int64
+
+	react := func(action ktesting.Action) (bool, runtime.Object, error) {
+		calls.Add(1)
+		create, ok := action.(ktesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		switch review := create.GetObject().(type) {
+		case *authzv1.SubjectAccessReview:
+			review.Status = authzv1.SubjectAccessReviewStatus{
+				Allowed: decide(review.Spec.ResourceAttributes),
+				Reason:  "test",
+			}
+			return true, review, nil
+		case *authzv1.SelfSubjectAccessReview:
+			review.Status = authzv1.SubjectAccessReviewStatus{
+				Allowed: decide(review.Spec.ResourceAttributes),
+				Reason:  "test",
+			}
+			return true, review, nil
+		}
+		return false, nil, nil
+	}
+
+	client.PrependReactor("create", "subjectaccessreviews", react)
+	client.PrependReactor("create", "selfsubjectaccessreviews", react)
+	return client, &calls
+}
+
+func TestAllowedReflectsTheApiServerVerdict(t *testing.T) {
+	client, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool {
+		return ra.Verb == "list"
+	})
+	c, err := NewChecker(128, time.Minute, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subj := Subject{User: "alice@example.com", Groups: []string{"oidc:devs"}}
+	ctx := context.Background()
+
+	allowed, err := c.Allowed(ctx, client, subj, Attributes{Verb: "list", Resource: "pods", Namespace: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed.Allowed {
+		t.Error("list should have been allowed")
+	}
+
+	denied, err := c.Allowed(ctx, client, subj, Attributes{Verb: "delete", Resource: "pods", Namespace: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denied.Allowed {
+		t.Error("delete should have been denied")
+	}
+}
+
+func TestAllowedPassesTheImpersonatedIdentity(t *testing.T) {
+	// The whole security model rests on the review naming the end user, not
+	// the dashboard's service account.
+	client := fake.NewSimpleClientset()
+	var gotUser string
+	var gotGroups []string
+
+	client.PrependReactor("create", "subjectaccessreviews",
+		func(action ktesting.Action) (bool, runtime.Object, error) {
+			review := action.(ktesting.CreateAction).GetObject().(*authzv1.SubjectAccessReview)
+			gotUser = review.Spec.User
+			gotGroups = review.Spec.Groups
+			review.Status = authzv1.SubjectAccessReviewStatus{Allowed: true}
+			return true, review, nil
+		})
+
+	c, _ := NewChecker(128, time.Minute, 50)
+	_, err := c.Allowed(context.Background(), client,
+		Subject{User: "alice@example.com", Groups: []string{"oidc:devs", "oidc:sre"}},
+		Attributes{Verb: "get", Resource: "pods"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotUser != "alice@example.com" {
+		t.Errorf("review was made for %q", gotUser)
+	}
+	if len(gotGroups) != 2 {
+		t.Errorf("groups were not forwarded: %v", gotGroups)
+	}
+}
+
+func TestAllowedCachesVerdicts(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	subj := Subject{User: "alice"}
+	attrs := Attributes{Verb: "list", Resource: "pods", Namespace: "demo"}
+
+	for i := 0; i < 10; i++ {
+		if _, err := c.Allowed(context.Background(), client, subj, attrs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A fifty-row table must not become fifty round trips.
+	if n := calls.Load(); n != 1 {
+		t.Errorf("made %d reviews for the same question, want 1", n)
+	}
+}
+
+func TestCacheKeyIncludesEverythingThatMatters(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Minute, 50)
+	ctx := context.Background()
+
+	base := Attributes{Verb: "list", Resource: "pods", Namespace: "demo"}
+	variants := []struct {
+		name  string
+		subj  Subject
+		attrs Attributes
+	}{
+		{"baseline", Subject{User: "alice"}, base},
+		{"different user", Subject{User: "bob"}, base},
+		{"different group set", Subject{User: "alice", Groups: []string{"g"}}, base},
+		{"different verb", Subject{User: "alice"}, Attributes{Verb: "delete", Resource: "pods", Namespace: "demo"}},
+		{"different namespace", Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods", Namespace: "other"}},
+		{"different resource", Subject{User: "alice"}, Attributes{Verb: "list", Resource: "secrets", Namespace: "demo"}},
+		{"subresource", Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods", Subresource: "log", Namespace: "demo"}},
+		{"named object", Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods", Namespace: "demo", Name: "p1"}},
+	}
+
+	for _, v := range variants {
+		if _, err := c.Allowed(ctx, client, v.subj, v.attrs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := calls.Load(); int(n) != len(variants) {
+		t.Errorf("made %d reviews for %d distinct questions; cache keys collide", n, len(variants))
+	}
+}
+
+func TestSubjectKeyIgnoresGroupOrder(t *testing.T) {
+	// Group order varies between tokens from the same provider; treating the
+	// two as different subjects would halve the cache hit rate for no reason.
+	a := Subject{User: "alice", Groups: []string{"b", "a"}}
+	b := Subject{User: "alice", Groups: []string{"a", "b"}}
+	if a.key() != b.key() {
+		t.Errorf("group order changed the subject key: %q vs %q", a.key(), b.key())
+	}
+}
+
+func TestAllowedExpiresCachedVerdicts(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, 20*time.Millisecond, 50)
+
+	subj := Subject{User: "alice"}
+	attrs := Attributes{Verb: "list", Resource: "pods"}
+	ctx := context.Background()
+
+	_, _ = c.Allowed(ctx, client, subj, attrs)
+	time.Sleep(40 * time.Millisecond)
+	_, _ = c.Allowed(ctx, client, subj, attrs)
+
+	// Revoking a RoleBinding has to take effect promptly.
+	if n := calls.Load(); n != 2 {
+		t.Errorf("made %d reviews, want 2 (the cached verdict should have expired)", n)
+	}
+}
+
+func TestConcurrentIdenticalChecksCollapse(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = c.Allowed(context.Background(), client,
+				Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"})
+		}()
+	}
+	wg.Wait()
+
+	// singleflight should collapse the stampede a freshly rendered table causes.
+	if n := calls.Load(); n > 2 {
+		t.Errorf("made %d concurrent reviews for one question, want 1", n)
+	}
+}
+
+func TestVisibleNamespacesShortCircuitsOnClusterWideAccess(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	all, namespaces, err := c.VisibleNamespaces(context.Background(), client,
+		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
+		[]string{"a", "b", "c", "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !all {
+		t.Error("a cluster-wide reader should short-circuit to all namespaces")
+	}
+	if len(namespaces) != 0 {
+		t.Errorf("no per-namespace list is needed when access is cluster-wide, got %v", namespaces)
+	}
+	// One review, not one per namespace.
+	if n := calls.Load(); n != 1 {
+		t.Errorf("made %d reviews, want 1", n)
+	}
+}
+
+func TestVisibleNamespacesFallsBackToScan(t *testing.T) {
+	client, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool {
+		// Cluster-wide denied; only two namespaces permitted.
+		return ra.Namespace == "team-a" || ra.Namespace == "team-c"
+	})
+	c, _ := NewChecker(512, time.Minute, 50)
+
+	all, namespaces, err := c.VisibleNamespaces(context.Background(), client,
+		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
+		[]string{"team-a", "team-b", "team-c", "kube-system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all {
+		t.Fatal("a narrowly bound user must not be treated as cluster-wide")
+	}
+	if len(namespaces) != 2 || namespaces[0] != "team-a" || namespaces[1] != "team-c" {
+		t.Errorf("scan returned %v, want [team-a team-c] sorted", namespaces)
+	}
+}
+
+func TestVisibleNamespacesReportsTruncation(t *testing.T) {
+	client, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool { return ra.Namespace != "" })
+	c, _ := NewChecker(1024, time.Minute, 3)
+
+	_, namespaces, err := c.VisibleNamespaces(context.Background(), client,
+		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
+		[]string{"a", "b", "c", "d", "e"})
+
+	// Silently showing three of five namespaces would look like the other two
+	// are empty, so truncation has to be reported.
+	if err == nil {
+		t.Error("a truncated scan must be reported to the caller")
+	}
+	if len(namespaces) != 3 {
+		t.Errorf("scanned %d namespaces, want the configured limit of 3", len(namespaces))
+	}
+}
+
+func TestAllowedManyReturnsOneVerdictPerQuestion(t *testing.T) {
+	client, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool { return ra.Verb == "get" })
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	questions := []Attributes{
+		{Verb: "get", Resource: "pods", Namespace: "demo"},
+		{Verb: "delete", Resource: "pods", Namespace: "demo"},
+		{Verb: "get", Resource: "secrets", Namespace: "demo"},
+	}
+	got := c.AllowedMany(context.Background(), client, Subject{User: "alice"}, questions)
+
+	if len(got) != len(questions) {
+		t.Fatalf("got %d verdicts for %d questions", len(got), len(questions))
+	}
+	if !got[AttributesKey(questions[0])].Allowed {
+		t.Error("get pods should be allowed")
+	}
+	if got[AttributesKey(questions[1])].Allowed {
+		t.Error("delete pods should be denied")
+	}
+}
+
+func TestPurgeClearsCache(t *testing.T) {
+	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Hour, 50)
+
+	subj := Subject{User: "alice"}
+	attrs := Attributes{Verb: "list", Resource: "pods"}
+	ctx := context.Background()
+
+	_, _ = c.Allowed(ctx, client, subj, attrs)
+	c.Purge()
+	_, _ = c.Allowed(ctx, client, subj, attrs)
+
+	if n := calls.Load(); n != 2 {
+		t.Errorf("made %d reviews; Purge did not clear the cache", n)
+	}
+}
+
+func TestSelfSubjectReviewUsedForPassthrough(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	var sawSelf bool
+	client.PrependReactor("create", "selfsubjectaccessreviews",
+		func(action ktesting.Action) (bool, runtime.Object, error) {
+			sawSelf = true
+			r := action.(ktesting.CreateAction).GetObject().(*authzv1.SelfSubjectAccessReview)
+			r.Status = authzv1.SubjectAccessReviewStatus{Allowed: true}
+			return true, r, nil
+		})
+
+	c, _ := NewChecker(128, time.Minute, 50)
+	if _, err := c.Allowed(context.Background(), client,
+		Subject{Self: true}, Attributes{Verb: "list", Resource: "pods"}); err != nil {
+		t.Fatal(err)
+	}
+	if !sawSelf {
+		t.Error("a Self subject must use SelfSubjectAccessReview")
+	}
+}

@@ -1,0 +1,222 @@
+package api
+
+import (
+	"net/http"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/daiwazou/clusterlens/backend/internal/authz"
+)
+
+// usage is a CPU/memory pair in the canonical units the frontend charts.
+type usage struct {
+	CPUMilli  int64 `json:"cpuMilli"`
+	MemoryMiB int64 `json:"memoryMiB"`
+}
+
+func usageFrom(list corev1.ResourceList) usage {
+	u := usage{}
+	if cpu, ok := list[corev1.ResourceCPU]; ok {
+		u.CPUMilli = cpu.MilliValue()
+	}
+	if mem, ok := list[corev1.ResourceMemory]; ok {
+		u.MemoryMiB = mem.Value() / (1024 * 1024)
+	}
+	return u
+}
+
+type nodeMetric struct {
+	Name        string  `json:"name"`
+	Usage       usage   `json:"usage"`
+	Capacity    usage   `json:"capacity"`
+	Allocatable usage   `json:"allocatable"`
+	CPUPercent  float64 `json:"cpuPercent"`
+	MemPercent  float64 `json:"memPercent"`
+}
+
+type metricsResponse struct {
+	Available bool         `json:"available"`
+	Reason    string       `json:"reason,omitempty"`
+	Nodes     []nodeMetric `json:"nodes,omitempty"`
+	Pods      []podMetric  `json:"pods,omitempty"`
+	Totals    *usage       `json:"totals,omitempty"`
+}
+
+type podMetric struct {
+	Name       string           `json:"name"`
+	Namespace  string           `json:"namespace"`
+	Usage      usage            `json:"usage"`
+	Containers map[string]usage `json:"containers,omitempty"`
+}
+
+// metricsUnavailable turns the many ways metrics-server can be missing into
+// one honest answer, instead of a 500 that looks like a dashboard bug.
+func metricsUnavailable(err error) (metricsResponse, bool) {
+	if err == nil {
+		return metricsResponse{}, false
+	}
+	if apierrors.IsNotFound(err) || apierrors.IsServiceUnavailable(err) || apierrors.IsTimeout(err) {
+		return metricsResponse{
+			Available: false,
+			Reason:    "metrics-server is not installed or not responding on this cluster",
+		}, true
+	}
+	return metricsResponse{}, false
+}
+
+// nodeMetrics reports per-node utilisation against capacity.
+func (a *API) nodeMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.clusterOnly(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	nodeRes, err := res.cluster.Discovery.Resolve(ctx, "", "v1", "nodes")
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	res.resource = nodeRes
+	if err := a.authorize(ctx, res, "list", "", "", ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	metrics, err := res.clients.Metrics.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
+	if resp, ok := metricsUnavailable(err); ok {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	// Capacity comes from the node cache, so this endpoint costs exactly one
+	// call to the metrics API and nothing to the API server.
+	nodes, err := res.cluster.Informers.List(ctx, nodeRes, "")
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	capacityByNode := make(map[string][2]usage, len(nodes))
+	for _, n := range nodes {
+		capacityByNode[n.GetName()] = [2]usage{
+			quantityUsage(n, "capacity"),
+			quantityUsage(n, "allocatable"),
+		}
+	}
+
+	out := metricsResponse{Available: true}
+	totals := usage{}
+	for _, m := range metrics.Items {
+		u := usageFrom(m.Usage)
+		nm := nodeMetric{Name: m.Name, Usage: u}
+		if cap, ok := capacityByNode[m.Name]; ok {
+			nm.Capacity, nm.Allocatable = cap[0], cap[1]
+			if nm.Allocatable.CPUMilli > 0 {
+				nm.CPUPercent = round1(float64(u.CPUMilli) / float64(nm.Allocatable.CPUMilli) * 100)
+			}
+			if nm.Allocatable.MemoryMiB > 0 {
+				nm.MemPercent = round1(float64(u.MemoryMiB) / float64(nm.Allocatable.MemoryMiB) * 100)
+			}
+		}
+		totals.CPUMilli += u.CPUMilli
+		totals.MemoryMiB += u.MemoryMiB
+		out.Nodes = append(out.Nodes, nm)
+	}
+	out.Totals = &totals
+	writeJSON(w, http.StatusOK, out)
+}
+
+// quantityUsage reads a node's capacity or allocatable block.
+func quantityUsage(n interface {
+	UnstructuredContent() map[string]any
+}, field string) usage {
+	content := n.UnstructuredContent()
+	status, _ := content["status"].(map[string]any)
+	block, _ := status[field].(map[string]any)
+	u := usage{}
+	if cpu, ok := block["cpu"].(string); ok {
+		if q, err := resource.ParseQuantity(cpu); err == nil {
+			u.CPUMilli = q.MilliValue()
+		}
+	}
+	if mem, ok := block["memory"].(string); ok {
+		if q, err := resource.ParseQuantity(mem); err == nil {
+			u.MemoryMiB = q.Value() / (1024 * 1024)
+		}
+	}
+	return u
+}
+
+// podMetrics reports per-pod usage, optionally scoped to a namespace.
+func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.clusterOnly(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace := r.URL.Query().Get("namespace")
+
+	podRes, err := res.cluster.Discovery.Resolve(ctx, "", "v1", "pods")
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	res.resource = podRes
+
+	if namespace != "" {
+		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
+	} else {
+		all, allowed, _ := res.cluster.Authz.VisibleNamespaces(ctx,
+			res.cluster.AuthzClient(res.clients),
+			res.cluster.AuthSubject(res.identity),
+			authz.Attributes{Verb: "list", Group: "", Version: "v1", Resource: "pods"},
+			a.namespaceNames(ctx, res.cluster))
+		if !all && len(allowed) == 0 {
+			a.writeErr(w, r, &forbiddenError{verb: "list", resource: "pods"})
+			return
+		}
+	}
+
+	metrics, err := res.clients.Metrics.MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{})
+	if resp, ok := metricsUnavailable(err); ok {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	out := metricsResponse{Available: true}
+	totals := usage{}
+	for _, m := range metrics.Items {
+		pm := podMetric{Name: m.Name, Namespace: m.Namespace, Containers: map[string]usage{}}
+		for _, c := range m.Containers {
+			cu := usageFrom(c.Usage)
+			pm.Containers[c.Name] = cu
+			pm.Usage.CPUMilli += cu.CPUMilli
+			pm.Usage.MemoryMiB += cu.MemoryMiB
+		}
+		totals.CPUMilli += pm.Usage.CPUMilli
+		totals.MemoryMiB += pm.Usage.MemoryMiB
+		out.Pods = append(out.Pods, pm)
+	}
+	out.Totals = &totals
+	writeJSON(w, http.StatusOK, out)
+}
+
+func round1(f float64) float64 {
+	return float64(int64(f*10+0.5)) / 10
+}

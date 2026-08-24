@@ -1,0 +1,98 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/example/clusterlens
+  tag: ''            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  host: clusterlens.example.com
+  tls:
+    enabled: true
+    secretName: clusterlens-tls
+
+# The externally reachable URL. It anchors the OIDC redirect and the WebSocket
+# origin check, so it must match what the browser actually uses.
+publicURL: https://clusterlens.example.com
+
+oidc:
+  enabled: true
+  issuer: https://accounts.example.com
+  clientID: clusterlens
+  # Supply the secret out of band and reference it here rather than putting it
+  # in values.yaml, which tends to end up in git.
+  existingSecret: clusterlens-oidc
+  clientSecretKey: clientSecret
+  scopes: [openid, profile, email, groups]
+  usernameClaim: email
+  groupsClaim: groups
+  usernamePrefix: 'oidc:'
+  groupsPrefix: 'oidc:'
+  allowedGroups: []
+
+session:
+  # A 32-byte base64 key shared by every replica. Without it each pod mints its
+  # own and users are signed out whenever they hit a different one.
+  existingSecret: clusterlens-session
+  keyRef: encryptionKey
+  ttl: 12h
+  idleTimeout: 2h
+
+cache:
+  idleTimeout: 10m
+  maxInformersPerCluster: 64
+  syncTimeout: 15s
+
+authz:
+  ttl: 30s
+  cacheSize: 65536
+
+# Clusters this dashboard manages.
+#
+# The in-cluster entry needs no credential. Remote clusters read a kubeconfig
+# from a mounted secret; create it with:
+#   kubectl create secret generic clusterlens-kubeconfigs --from-file=prod.yaml=...
+clusters:
+  - name: in-cluster
+    displayName: Local cluster
+    inCluster: true
+    authMode: impersonation
+    labels:
+      env: production
+
+kubeconfigSecret: ''   # name of a secret mounted at /etc/clusterlens/kubeconfigs
+
+resources:
+  requests:
+    cpu: 200m
+    # Informer caches dominate memory use. Budget roughly by the number of
+    # objects the dashboard is asked to hold; /api/v1/clusters/{c}/stats
+    # reports what is actually cached.
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,668 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
+
+	"github.com/daiwazou/clusterlens/backend/internal/authz"
+	"github.com/daiwazou/clusterlens/backend/internal/cluster"
+)
+
+// maxBodyBytes bounds manifest uploads. Kubernetes itself refuses objects
+// larger than about 1.5 MiB, so this is generous.
+const maxBodyBytes = 4 << 20
+
+// listResponse is what a table page returns.
+type listResponse struct {
+	Items    []map[string]any             `json:"items,omitempty"`
+	Objects  []*unstructured.Unstructured `json:"objects,omitempty"`
+	Columns  []Column                     `json:"columns,omitempty"`
+	Total    int                          `json:"total"`
+	Page     int                          `json:"page"`
+	PageSize int                          `json:"pageSize"`
+	Resource resourceMeta                 `json:"resource"`
+	Scope    scopeInfo                    `json:"scope"`
+	Warnings []string                     `json:"warnings,omitempty"`
+}
+
+type resourceMeta struct {
+	Group      string   `json:"group"`
+	Version    string   `json:"version"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	Namespaced bool     `json:"namespaced"`
+	Verbs      []string `json:"verbs"`
+}
+
+func metaOf(ar cluster.APIResource) resourceMeta {
+	return resourceMeta{
+		Group: ar.Group, Version: ar.Version, Name: ar.Name,
+		Kind: ar.Kind, Namespaced: ar.Namespaced, Verbs: ar.Verbs,
+	}
+}
+
+// scopeInfo tells the UI what the user was actually allowed to see, so a
+// partial list is never silently presented as the whole cluster.
+type scopeInfo struct {
+	AllNamespaces bool     `json:"allNamespaces"`
+	Namespaces    []string `json:"namespaces,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
+}
+
+// authorize runs an access review before touching the cache. Reads are served
+// from a cache populated with the dashboard's own credentials, so this check
+// is what stands between a user and data they may not see.
+func (a *API) authorize(ctx context.Context, res *resolved, verb, namespace, name, subresource string) error {
+	attrs := authz.Attributes{
+		Verb:        verb,
+		Group:       res.resource.Group,
+		Version:     res.resource.Version,
+		Resource:    res.resource.Name,
+		Subresource: subresource,
+		Namespace:   namespace,
+		Name:        name,
+	}
+	subj := res.cluster.AuthSubject(res.identity)
+	client := res.cluster.AuthzClient(res.clients)
+
+	d, err := res.cluster.Authz.Allowed(ctx, client, subj, attrs)
+	if err != nil {
+		return err
+	}
+	if !d.Allowed {
+		return &forbiddenError{verb: verb, resource: res.resource.Name, namespace: namespace, reason: d.Reason}
+	}
+	return nil
+}
+
+// namespaceNames lists namespaces from the cache, used for the fallback scan
+// that finds where a narrowly bound user is allowed to read.
+func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) []string {
+	nsRes, err := c.Discovery.Resolve(ctx, "", "v1", "namespaces")
+	if err != nil {
+		return nil
+	}
+	objs, err := c.Informers.List(ctx, nsRes, "")
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(objs))
+	for _, o := range objs {
+		out = append(out, o.GetName())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// listResources serves a page of a resource from the shared cache.
+func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	if !res.resource.Supports("list") {
+		a.writeErr(w, r, badRequest("resource %q cannot be listed", res.resource.Name))
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	if !res.resource.Namespaced {
+		namespace = ""
+	}
+
+	var (
+		scope    scopeInfo
+		warnings []string
+		objs     []*unstructured.Unstructured
+	)
+
+	if namespace != "" {
+		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
+		scope.Namespace = namespace
+		objs, err = res.cluster.Informers.List(ctx, res.resource, namespace)
+		if err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
+	} else {
+		all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
+			ctx,
+			res.cluster.AuthzClient(res.clients),
+			res.cluster.AuthSubject(res.identity),
+			authz.Attributes{
+				Verb: "list", Group: res.resource.Group, Version: res.resource.Version,
+				Resource: res.resource.Name,
+			},
+			a.namespaceNames(ctx, res.cluster),
+		)
+		if scanErr != nil && !all && len(allowed) == 0 {
+			a.writeErr(w, r, scanErr)
+			return
+		}
+		if scanErr != nil {
+			warnings = append(warnings, scanErr.Error())
+		}
+
+		switch {
+		case all:
+			scope.AllNamespaces = true
+			objs, err = res.cluster.Informers.List(ctx, res.resource, "")
+			if err != nil {
+				a.writeErr(w, r, err)
+				return
+			}
+		case len(allowed) == 0 || !res.resource.Namespaced:
+			a.writeErr(w, r, &forbiddenError{verb: "list", resource: res.resource.Name})
+			return
+		default:
+			scope.Namespaces = allowed
+			for _, ns := range allowed {
+				part, err := res.cluster.Informers.List(ctx, res.resource, ns)
+				if err != nil {
+					a.writeErr(w, r, err)
+					return
+				}
+				objs = append(objs, part...)
+			}
+		}
+	}
+
+	objs, err = filterObjects(objs, r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	set := a.tableFor(ctx, res.cluster, res.resource)
+	sortKey := r.URL.Query().Get("sort")
+	desc := r.URL.Query().Get("order") == "desc"
+
+	page := queryInt(r, "page", 1, 1, 1<<20)
+	pageSize := queryInt(r, "pageSize", 50, 1, 1000)
+	total := len(objs)
+
+	// Well-known keys sort straight off object metadata, which avoids
+	// projecting rows that the requested page will then throw away.
+	var rows []map[string]any
+	if isMetaSortKey(sortKey) {
+		sortByMeta(objs, sortKey, desc)
+		rows = projectPage(objs, set, page, pageSize, r)
+	} else {
+		all := make([]map[string]any, 0, len(objs))
+		for _, o := range objs {
+			all = append(all, buildRow(o, set, r))
+		}
+		sortRows(all, sortKey, desc)
+		rows = pageOf(all, page, pageSize)
+	}
+
+	resp := listResponse{
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		Resource: metaOf(res.resource),
+		Scope:    scope,
+		Warnings: warnings,
+	}
+
+	if r.URL.Query().Get("view") == "full" {
+		start, end := pageBounds(total, page, pageSize)
+		for _, o := range objs[start:end] {
+			resp.Objects = append(resp.Objects, cluster.TrimForResponse(o))
+		}
+	} else {
+		resp.Items = rows
+		resp.Columns = set.columns
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func buildRow(o *unstructured.Unstructured, set columnSet, r *http.Request) map[string]any {
+	row := set.row(o)
+	if queryBool(r, "labels", true) {
+		if l := o.GetLabels(); len(l) > 0 {
+			row["_labels"] = l
+		}
+	}
+	return row
+}
+
+func projectPage(objs []*unstructured.Unstructured, set columnSet, page, pageSize int, r *http.Request) []map[string]any {
+	start, end := pageBounds(len(objs), page, pageSize)
+	out := make([]map[string]any, 0, end-start)
+	for _, o := range objs[start:end] {
+		out = append(out, buildRow(o, set, r))
+	}
+	return out
+}
+
+func pageBounds(total, page, pageSize int) (int, int) {
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return start, end
+}
+
+func pageOf(rows []map[string]any, page, pageSize int) []map[string]any {
+	start, end := pageBounds(len(rows), page, pageSize)
+	return rows[start:end]
+}
+
+func isMetaSortKey(key string) bool {
+	switch key {
+	case "", "name", "namespace", "age", "creationTimestamp":
+		return true
+	}
+	return false
+}
+
+func sortByMeta(objs []*unstructured.Unstructured, key string, desc bool) {
+	less := func(i, j int) bool { return objs[i].GetName() < objs[j].GetName() }
+	switch key {
+	case "namespace":
+		less = func(i, j int) bool {
+			if objs[i].GetNamespace() != objs[j].GetNamespace() {
+				return objs[i].GetNamespace() < objs[j].GetNamespace()
+			}
+			return objs[i].GetName() < objs[j].GetName()
+		}
+	case "age", "creationTimestamp":
+		less = func(i, j int) bool {
+			ti, tj := objs[i].GetCreationTimestamp(), objs[j].GetCreationTimestamp()
+			if ti.Equal(&tj) {
+				return objs[i].GetName() < objs[j].GetName()
+			}
+			return ti.Before(&tj)
+		}
+	}
+	sort.SliceStable(objs, func(i, j int) bool {
+		if desc {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
+}
+
+func sortRows(rows []map[string]any, key string, desc bool) {
+	if key == "" {
+		key = "name"
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := compareCell(rows[i][key], rows[j][key])
+		if a == b {
+			return fmt.Sprint(rows[i]["name"]) < fmt.Sprint(rows[j]["name"])
+		}
+		if desc {
+			return b < a
+		}
+		return a < b
+	})
+}
+
+// compareCell reduces two cells to comparable strings, keeping numbers in
+// numeric order by zero-padding rather than lexical order.
+func compareCell(x, y any) (string, string) {
+	switch xv := x.(type) {
+	case int64:
+		if yv, ok := y.(int64); ok {
+			return fmt.Sprintf("%020d", xv), fmt.Sprintf("%020d", yv)
+		}
+	case float64:
+		if yv, ok := y.(float64); ok {
+			return fmt.Sprintf("%020.4f", xv), fmt.Sprintf("%020.4f", yv)
+		}
+	case bool:
+		if yv, ok := y.(bool); ok {
+			return fmt.Sprint(xv), fmt.Sprint(yv)
+		}
+	}
+	return strings.ToLower(fmt.Sprint(x)), strings.ToLower(fmt.Sprint(y))
+}
+
+// filterObjects applies the free-text, label and field filters in one pass.
+func filterObjects(objs []*unstructured.Unstructured, r *http.Request) ([]*unstructured.Unstructured, error) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+
+	var labelSel labels.Selector
+	if raw := r.URL.Query().Get("labelSelector"); raw != "" {
+		sel, err := labels.Parse(raw)
+		if err != nil {
+			return nil, badRequest("labelSelector: %v", err)
+		}
+		labelSel = sel
+	}
+
+	var fieldSel fields.Selector
+	if raw := r.URL.Query().Get("fieldSelector"); raw != "" {
+		sel, err := fields.ParseSelector(raw)
+		if err != nil {
+			return nil, badRequest("fieldSelector: %v", err)
+		}
+		fieldSel = sel
+	}
+
+	if q == "" && labelSel == nil && fieldSel == nil {
+		return objs, nil
+	}
+
+	out := objs[:0:0]
+	for _, o := range objs {
+		if q != "" && !strings.Contains(strings.ToLower(o.GetName()), q) {
+			continue
+		}
+		if labelSel != nil && !labelSel.Matches(labels.Set(o.GetLabels())) {
+			continue
+		}
+		if fieldSel != nil && !fieldSel.Matches(fieldSetFor(o)) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// fieldSetFor exposes the field selectors the API server supports for the
+// common resources, so a saved kubectl-style filter behaves the same here.
+func fieldSetFor(o *unstructured.Unstructured) fields.Set {
+	set := fields.Set{
+		"metadata.name":      o.GetName(),
+		"metadata.namespace": o.GetNamespace(),
+	}
+	if v := str(o, "status", "phase"); v != "" {
+		set["status.phase"] = v
+	}
+	if v := str(o, "spec", "nodeName"); v != "" {
+		set["spec.nodeName"] = v
+	}
+	if v := str(o, "type"); v != "" {
+		set["type"] = v
+	}
+	if v := str(o, "involvedObject", "name"); v != "" {
+		set["involvedObject.name"] = v
+		set["involvedObject.kind"] = str(o, "involvedObject", "kind")
+		set["involvedObject.namespace"] = str(o, "involvedObject", "namespace")
+		set["involvedObject.uid"] = str(o, "involvedObject", "uid")
+	}
+	return set
+}
+
+// getResource returns a single object, always read live rather than from the
+// cache: detail views need freshness for an edit round trip, and secrets are
+// deliberately redacted in the cache.
+func (a *API) getResource(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace, name := pathNamespace(r), chi.URLParam(r, "name")
+	if !res.resource.Namespaced {
+		namespace = ""
+	}
+	if err := a.authorize(ctx, res, "get", namespace, name, ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	obj, err := res.clients.Dynamic.
+		Resource(res.resource.GVR()).Namespace(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	if !queryBool(r, "managedFields", false) {
+		obj = cluster.TrimForResponse(obj)
+	}
+
+	if r.URL.Query().Get("format") == "yaml" {
+		raw, err := yaml.Marshal(obj.Object)
+		if err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		_, _ = w.Write(raw)
+		return
+	}
+	writeJSON(w, http.StatusOK, obj)
+}
+
+// decodeManifest accepts JSON or YAML, which is what a paste-a-manifest box
+// needs to be useful.
+func decodeManifest(r *http.Request) (*unstructured.Unstructured, error) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	if err != nil {
+		return nil, badRequest("read body: %v", err)
+	}
+	if len(raw) == 0 {
+		return nil, badRequest("empty request body")
+	}
+	jsonBytes, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return nil, badRequest("body is neither valid JSON nor YAML: %v", err)
+	}
+	obj := &unstructured.Unstructured{}
+	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
+		return nil, badRequest("decode manifest: %v", err)
+	}
+	if obj.GetKind() == "" {
+		return nil, badRequest("manifest has no kind")
+	}
+	return obj, nil
+}
+
+func (a *API) createResource(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	obj, err := decodeManifest(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	namespace := obj.GetNamespace()
+	if namespace == "" {
+		namespace = r.URL.Query().Get("namespace")
+	}
+	if !res.resource.Namespaced {
+		namespace = ""
+	} else if namespace == "" {
+		a.writeErr(w, r, badRequest("namespace is required for %s", res.resource.Kind))
+		return
+	}
+	if res.resource.Namespaced {
+		obj.SetNamespace(namespace)
+	}
+
+	if err := a.authorize(ctx, res, "create", namespace, obj.GetName(), ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	created, err := res.clients.Dynamic.
+		Resource(res.resource.GVR()).Namespace(namespace).
+		Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.invalidateIfCRD(res)
+	writeJSON(w, http.StatusCreated, cluster.TrimForResponse(created))
+}
+
+func (a *API) updateResource(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace, name := pathNamespace(r), chi.URLParam(r, "name")
+	if !res.resource.Namespaced {
+		namespace = ""
+	}
+	obj, err := decodeManifest(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	// Trust the URL over the body so a mangled manifest cannot rename or
+	// relocate the object being edited.
+	obj.SetName(name)
+	if res.resource.Namespaced {
+		obj.SetNamespace(namespace)
+	}
+
+	if err := a.authorize(ctx, res, "update", namespace, name, ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	updated, err := res.clients.Dynamic.
+		Resource(res.resource.GVR()).Namespace(namespace).
+		Update(ctx, obj, metav1.UpdateOptions{})
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.invalidateIfCRD(res)
+	writeJSON(w, http.StatusOK, cluster.TrimForResponse(updated))
+}
+
+// patchTypeFor maps the request's content type onto a Kubernetes patch type.
+func patchTypeFor(contentType string) (types.PatchType, error) {
+	switch strings.TrimSpace(strings.Split(contentType, ";")[0]) {
+	case "application/merge-patch+json", "":
+		return types.MergePatchType, nil
+	case "application/json-patch+json":
+		return types.JSONPatchType, nil
+	case "application/strategic-merge-patch+json":
+		return types.StrategicMergePatchType, nil
+	case "application/apply-patch+yaml":
+		return types.ApplyPatchType, nil
+	default:
+		return "", badRequest("unsupported patch content type %q", contentType)
+	}
+}
+
+func (a *API) patchResource(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace, name := pathNamespace(r), chi.URLParam(r, "name")
+	if !res.resource.Namespaced {
+		namespace = ""
+	}
+	pt, err := patchTypeFor(r.Header.Get("Content-Type"))
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	if err != nil {
+		a.writeErr(w, r, badRequest("read body: %v", err))
+		return
+	}
+	if err := a.authorize(ctx, res, "patch", namespace, name, ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	opts := metav1.PatchOptions{}
+	if pt == types.ApplyPatchType {
+		opts.FieldManager = "clusterlens"
+		opts.Force = ptr(true)
+	}
+	updated, err := res.clients.Dynamic.
+		Resource(res.resource.GVR()).Namespace(namespace).
+		Patch(ctx, name, pt, body, opts)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cluster.TrimForResponse(updated))
+}
+
+func (a *API) deleteResource(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.resolve(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace, name := pathNamespace(r), chi.URLParam(r, "name")
+	if !res.resource.Namespaced {
+		namespace = ""
+	}
+	if err := a.authorize(ctx, res, "delete", namespace, name, ""); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	opts := metav1.DeleteOptions{}
+	switch r.URL.Query().Get("propagationPolicy") {
+	case "Orphan":
+		opts.PropagationPolicy = propagation(metav1.DeletePropagationOrphan)
+	case "Background":
+		opts.PropagationPolicy = propagation(metav1.DeletePropagationBackground)
+	case "Foreground":
+		opts.PropagationPolicy = propagation(metav1.DeletePropagationForeground)
+	}
+	if g := queryInt(r, "gracePeriodSeconds", -1, -1, 86400); g >= 0 {
+		g64 := int64(g)
+		opts.GracePeriodSeconds = &g64
+	}
+
+	if err := res.clients.Dynamic.
+		Resource(res.resource.GVR()).Namespace(namespace).
+		Delete(ctx, name, opts); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.invalidateIfCRD(res)
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "name": name, "namespace": namespace})
+}
+
+// invalidateIfCRD drops cached discovery after a CRD changes, so a new custom
+// resource becomes browsable immediately instead of after the TTL.
+func (a *API) invalidateIfCRD(res *resolved) {
+	if res.resource.Kind == "CustomResourceDefinition" {
+		res.cluster.Discovery.Invalidate()
+	}
+}
+
+func propagation(p metav1.DeletionPropagation) *metav1.DeletionPropagation { return &p }
+
+func ptr[T any](v T) *T { return &v }

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clusterlens.fullname" . }}
+  labels:
+    {{- include "clusterlens.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      addr: ':8080'
+      publicURL: {{ .Values.publicURL | quote }}
+      metricsAddr: ':9090'
+      webRoot: /srv/web
+    oidc:
+      enabled: {{ .Values.oidc.enabled }}
+      {{- if .Values.oidc.enabled }}
+      issuer: {{ .Values.oidc.issuer | quote }}
+      clientID: {{ .Values.oidc.clientID | quote }}
+      # Read from the environment so the secret never lands in a ConfigMap.
+      clientSecret: ${CLUSTERLENS_OIDC_CLIENT_SECRET}
+      scopes: {{ toJson .Values.oidc.scopes }}
+      usernameClaim: {{ .Values.oidc.usernameClaim | quote }}
+      groupsClaim: {{ .Values.oidc.groupsClaim | quote }}
+      usernamePrefix: {{ .Values.oidc.usernamePrefix | quote }}
+      groupsPrefix: {{ .Values.oidc.groupsPrefix | quote }}
+      {{- with .Values.oidc.allowedGroups }}
+      allowedGroups: {{ toJson . }}
+      {{- end }}
+      {{- end }}
+    session:
+      encryptionKey: ${CLUSTERLENS_SESSION_KEY}
+      ttl: {{ .Values.session.ttl }}
+      idleTimeout: {{ .Values.session.idleTimeout }}
+      secure: true
+    cache:
+      idleTimeout: {{ .Values.cache.idleTimeout }}
+      maxInformersPerCluster: {{ .Values.cache.maxInformersPerCluster }}
+      syncTimeout: {{ .Values.cache.syncTimeout }}
+    authz:
+      ttl: {{ .Values.authz.ttl }}
+      cacheSize: {{ .Values.authz.cacheSize }}
+    clusters: {{ toJson .Values.clusters }}

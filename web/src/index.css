@@ -1,0 +1,81 @@
+@import 'tailwindcss';
+
+/* Design tokens. The palette is defined once here and consumed through
+   Tailwind utilities, so light and dark stay in step. */
+@theme {
+  --color-canvas: oklch(0.19 0.012 260);
+  --color-surface: oklch(0.23 0.014 260);
+  --color-surface-2: oklch(0.27 0.016 260);
+  --color-border: oklch(0.33 0.018 260);
+  --color-border-strong: oklch(0.42 0.02 260);
+
+  --color-ink: oklch(0.96 0.005 260);
+  --color-ink-muted: oklch(0.74 0.014 260);
+  --color-ink-faint: oklch(0.58 0.016 260);
+
+  --color-accent: oklch(0.68 0.16 250);
+  --color-accent-soft: oklch(0.32 0.07 250);
+
+  --color-ok: oklch(0.74 0.16 155);
+  --color-warn: oklch(0.80 0.15 80);
+  --color-danger: oklch(0.68 0.19 25);
+  --color-info: oklch(0.72 0.12 230);
+  --color-idle: oklch(0.62 0.02 260);
+
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-feature-settings: 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A quiet scrollbar; the default macOS overlay is fine but Linux/Windows
+   defaults are visually loud against a dark surface. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-in {
+  animation: fade-in 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in {
+    animation: none;
+  }
+}

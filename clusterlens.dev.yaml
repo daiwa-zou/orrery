@@ -1,0 +1,49 @@
+# Local development configuration.
+#
+# Two clusters deliberately differ in how they authenticate, so both code
+# paths get exercised:
+#   lens-a  serviceaccount — the dashboard's own credential, full access
+#   lens-b  impersonation  — every call is made as the end user, whose RBAC
+#                            here grants read-only access
+server:
+  addr: ':8080'
+  publicURL: 'http://localhost:5173'
+  corsOrigins:
+    - 'http://localhost:5173'
+  metricsAddr: ':9090'
+
+oidc:
+  enabled: false
+
+session:
+  secure: false
+
+cache:
+  idleTimeout: 10m
+  maxInformersPerCluster: 64
+  syncTimeout: 20s
+
+authz:
+  ttl: 15s
+
+log:
+  level: debug
+
+clusters:
+  - name: lens-a
+    displayName: 'Lens A — primary'
+    kubeconfig: /Users/daiwazou/.kube/config
+    context: kind-lens-a
+    authMode: serviceaccount
+    labels:
+      env: dev
+      region: local
+
+  - name: lens-b
+    displayName: 'Lens B — read only'
+    kubeconfig: /Users/daiwazou/.kube/config
+    context: kind-lens-b
+    authMode: impersonation
+    labels:
+      env: staging
+      region: local

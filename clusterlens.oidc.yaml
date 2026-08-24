@@ -1,0 +1,52 @@
+# Development configuration with OIDC sign-in against the local Dex instance.
+#
+# Both clusters use impersonation, so every call to an API server is made as
+# the signed-in user and RBAC is evaluated against their real identity.
+server:
+  addr: ':8080'
+  publicURL: 'http://localhost:5173'
+  corsOrigins:
+    - 'http://localhost:5173'
+  metricsAddr: ':9090'
+
+oidc:
+  enabled: true
+  issuer: 'http://localhost:5556/dex'
+  clientID: 'clusterlens'
+  clientSecret: 'clusterlens-dev-secret'
+  redirectURL: 'http://localhost:5173/api/v1/auth/callback'
+  scopes: [openid, profile, email, groups]
+  # Mirrors what the kube-apiserver would derive from the same token: the
+  # email claim is not prefixed, groups are.
+  usernameClaim: email
+  groupsClaim: groups
+  usernamePrefix: 'oidc:'
+  groupsPrefix: 'oidc:'
+  offlineAccess: false
+
+session:
+  # Fixed key so restarts during development do not sign everyone out.
+  encryptionKey: 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY='
+  secure: false
+  ttl: 12h
+
+authz:
+  ttl: 15s
+
+log:
+  level: debug
+
+clusters:
+  - name: lens-a
+    displayName: 'Lens A — primary'
+    kubeconfig: /Users/daiwazou/.kube/config
+    context: kind-lens-a
+    authMode: impersonation
+    labels: {env: dev, region: local}
+
+  - name: lens-b
+    displayName: 'Lens B — staging'
+    kubeconfig: /Users/daiwazou/.kube/config
+    context: kind-lens-b
+    authMode: impersonation
+    labels: {env: staging, region: local}

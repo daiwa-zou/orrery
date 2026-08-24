@@ -1,0 +1,25 @@
+# A local OIDC provider for developing and testing the login flow.
+# The mock connector authenticates instantly as a fixed user with groups,
+# which is exactly what is needed to exercise claim mapping end to end.
+issuer: http://localhost:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: clusterlens
+    name: Clusterlens
+    secret: clusterlens-dev-secret
+    redirectURIs:
+      - 'http://localhost:5173/api/v1/auth/callback'
+
+connectors:
+  - type: mockCallback
+    id: mock
+    name: Example

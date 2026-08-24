@@ -1,0 +1,412 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	oidc "github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+
+	"github.com/daiwazou/clusterlens/backend/internal/config"
+)
+
+// stateCookieName holds the in-flight login. Keeping the state, nonce and PKCE
+// verifier in an encrypted cookie rather than server memory means any replica
+// can complete a login that another replica started.
+const stateCookieName = "clusterlens_oidc_state"
+
+const stateTTL = 10 * time.Minute
+
+// loginState is the sealed payload carried across the provider round trip.
+type loginState struct {
+	State    string `json:"s"`
+	Nonce    string `json:"n"`
+	Verifier string `json:"v"`
+	ReturnTo string `json:"r"`
+	IssuedAt int64  `json:"t"`
+}
+
+// Authenticator drives the OIDC authorization-code flow with PKCE.
+type Authenticator struct {
+	cfg      config.OIDCConfig
+	sessCfg  config.SessionConfig
+	provider *oidc.Provider
+	verifier *oidc.IDTokenVerifier
+	oauth    *oauth2.Config
+	codec    *CookieCodec
+	sessions *SessionManager
+
+	// endSessionURL is taken from the discovery document when the operator did
+	// not configure one.
+	endSessionURL string
+
+	refreshMu sync.Mutex
+}
+
+// NewAuthenticator performs OIDC discovery and builds the flow configuration.
+func NewAuthenticator(ctx context.Context, cfg *config.Config, sessions *SessionManager) (*Authenticator, error) {
+	key, err := cfg.SessionKey()
+	if err != nil {
+		return nil, err
+	}
+	codec, err := NewCookieCodec(key)
+	if err != nil {
+		return nil, err
+	}
+
+	pctx := ctx
+	if cfg.OIDC.InsecureSkipIssuerVerify {
+		pctx = oidc.InsecureIssuerURLContext(ctx, cfg.OIDC.Issuer)
+	}
+	provider, err := oidc.NewProvider(pctx, cfg.OIDC.Issuer)
+	if err != nil {
+		return nil, fmt.Errorf("oidc discovery for %s: %w", cfg.OIDC.Issuer, err)
+	}
+
+	a := &Authenticator{
+		cfg:      cfg.OIDC,
+		sessCfg:  cfg.Session,
+		provider: provider,
+		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.OIDC.ClientID}),
+		oauth: &oauth2.Config{
+			ClientID:     cfg.OIDC.ClientID,
+			ClientSecret: cfg.OIDC.ClientSecret,
+			RedirectURL:  cfg.OIDC.RedirectURL,
+			Endpoint:     provider.Endpoint(),
+			Scopes:       cfg.OIDC.Scopes,
+		},
+		codec:         codec,
+		sessions:      sessions,
+		endSessionURL: cfg.OIDC.EndSessionURL,
+	}
+
+	if a.endSessionURL == "" {
+		var meta struct {
+			EndSessionEndpoint string `json:"end_session_endpoint"`
+		}
+		if err := provider.Claims(&meta); err == nil {
+			a.endSessionURL = meta.EndSessionEndpoint
+		}
+	}
+	return a, nil
+}
+
+// Login starts the authorization-code flow.
+func (a *Authenticator) Login(w http.ResponseWriter, r *http.Request) {
+	state, err := randomToken(24)
+	if err != nil {
+		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		return
+	}
+	nonce, err := randomToken(24)
+	if err != nil {
+		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		return
+	}
+	verifier := oauth2.GenerateVerifier()
+
+	ls := loginState{
+		State:    state,
+		Nonce:    nonce,
+		Verifier: verifier,
+		ReturnTo: safeReturnTo(r.URL.Query().Get("returnTo")),
+		IssuedAt: time.Now().Unix(),
+	}
+	raw, err := json.Marshal(ls)
+	if err != nil {
+		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		return
+	}
+	sealed, err := a.codec.Encode(string(raw))
+	if err != nil {
+		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     stateCookieName,
+		Value:    sealed,
+		Path:     "/",
+		Domain:   a.sessCfg.Domain,
+		MaxAge:   int(stateTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   a.sessCfg.Secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	opts := []oauth2.AuthCodeOption{
+		oidc.Nonce(nonce),
+		oauth2.S256ChallengeOption(verifier),
+	}
+	// A refresh token generally requires consent to have been granted; ask for
+	// it explicitly so long-lived sessions do not silently break.
+	if a.cfg.OfflineAccess {
+		opts = append(opts, oauth2.AccessTypeOffline)
+	}
+	http.Redirect(w, r, a.oauth.AuthCodeURL(state, opts...), http.StatusFound)
+}
+
+// Callback completes the flow and establishes a session.
+func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if errCode := q.Get("error"); errCode != "" {
+		a.fail(w, r, fmt.Sprintf("%s: %s", errCode, q.Get("error_description")))
+		return
+	}
+
+	c, err := r.Cookie(stateCookieName)
+	if err != nil {
+		a.fail(w, r, "login state missing or expired; please try again")
+		return
+	}
+	// The state cookie is single-use.
+	http.SetCookie(w, &http.Cookie{
+		Name: stateCookieName, Value: "", Path: "/", Domain: a.sessCfg.Domain,
+		MaxAge: -1, HttpOnly: true, Secure: a.sessCfg.Secure, SameSite: http.SameSiteLaxMode,
+	})
+
+	plain, err := a.codec.Decode(c.Value)
+	if err != nil {
+		a.fail(w, r, "login state is not valid")
+		return
+	}
+	var ls loginState
+	if err := json.Unmarshal([]byte(plain), &ls); err != nil {
+		a.fail(w, r, "login state is not valid")
+		return
+	}
+	if time.Since(time.Unix(ls.IssuedAt, 0)) > stateTTL {
+		a.fail(w, r, "login took too long; please try again")
+		return
+	}
+	if subtleCompare(ls.State, q.Get("state")) != true {
+		a.fail(w, r, "state mismatch")
+		return
+	}
+
+	token, err := a.oauth.Exchange(r.Context(), q.Get("code"), oauth2.VerifierOption(ls.Verifier))
+	if err != nil {
+		a.fail(w, r, "could not exchange authorization code")
+		return
+	}
+	rawID, ok := token.Extra("id_token").(string)
+	if !ok || rawID == "" {
+		a.fail(w, r, "provider returned no id_token")
+		return
+	}
+	idToken, err := a.verifier.Verify(r.Context(), rawID)
+	if err != nil {
+		a.fail(w, r, "id_token verification failed")
+		return
+	}
+	if idToken.Nonce != ls.Nonce {
+		a.fail(w, r, "nonce mismatch")
+		return
+	}
+
+	user, err := a.userFromToken(idToken)
+	if err != nil {
+		a.fail(w, r, err.Error())
+		return
+	}
+
+	sess, err := a.sessions.NewSession(r.Context(), *user)
+	if err != nil {
+		a.fail(w, r, "could not create session")
+		return
+	}
+	sess.IDToken = rawID
+	sess.AccessToken = token.AccessToken
+	sess.RefreshToken = token.RefreshToken
+	sess.TokenExpiry = token.Expiry
+	if err := a.sessions.Save(r.Context(), sess); err != nil {
+		a.fail(w, r, "could not persist session")
+		return
+	}
+	if err := a.sessions.SetCookies(w, sess); err != nil {
+		a.fail(w, r, "could not set session cookie")
+		return
+	}
+	http.Redirect(w, r, ls.ReturnTo, http.StatusFound)
+}
+
+// userFromToken applies the configured claim mapping and access rules.
+func (a *Authenticator) userFromToken(idToken *oidc.IDToken) (*User, error) {
+	var claims map[string]any
+	if err := idToken.Claims(&claims); err != nil {
+		return nil, errors.New("could not read token claims")
+	}
+
+	for k, want := range a.cfg.RequiredClaims {
+		if got, _ := claims[k].(string); got != want {
+			return nil, fmt.Errorf("claim %q does not permit access", k)
+		}
+	}
+
+	rawName := stringClaim(claims, a.cfg.UsernameClaim)
+	if rawName == "" {
+		rawName = idToken.Subject
+	}
+	groups := stringSliceClaim(claims, a.cfg.GroupsClaim)
+
+	if len(a.cfg.AllowedGroups) > 0 && !anyOverlap(groups, a.cfg.AllowedGroups) {
+		return nil, errors.New("you are not a member of a group permitted to sign in")
+	}
+
+	u := &User{
+		Subject: idToken.Subject,
+		// The email claim is special-cased by the apiserver's own mapper: it is
+		// not prefixed when it is the username claim, so mirror that here or
+		// impersonation will not match the cluster's RBAC bindings.
+		Username: applyPrefix(a.cfg.UsernamePrefix, rawName, a.cfg.UsernameClaim == "email"),
+		Email:    stringClaim(claims, "email"),
+		Name:     stringClaim(claims, "name"),
+		Picture:  stringClaim(claims, "picture"),
+	}
+	for _, g := range groups {
+		u.Groups = append(u.Groups, applyPrefix(a.cfg.GroupsPrefix, g, false))
+	}
+	return u, nil
+}
+
+// applyPrefix mirrors kube-apiserver claim-prefix semantics.
+func applyPrefix(prefix, value string, skip bool) string {
+	if skip || prefix == "" || prefix == "-" {
+		return value
+	}
+	return prefix + value
+}
+
+// Refresh renews an access/ID token that is close to expiry. Callers hold no
+// lock; the mutex only serialises concurrent refreshes of the same process.
+func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
+	if s.RefreshToken == "" {
+		return errors.New("session has no refresh token")
+	}
+	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
+
+	// Re-read: another goroutine may have refreshed while we waited.
+	if !s.TokenExpiry.IsZero() && time.Until(s.TokenExpiry) > time.Minute {
+		return nil
+	}
+
+	src := a.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: s.RefreshToken})
+	tok, err := src.Token()
+	if err != nil {
+		return fmt.Errorf("refresh token: %w", err)
+	}
+	if raw, ok := tok.Extra("id_token").(string); ok && raw != "" {
+		if _, err := a.verifier.Verify(ctx, raw); err != nil {
+			return fmt.Errorf("refreshed id_token invalid: %w", err)
+		}
+		s.IDToken = raw
+	}
+	s.AccessToken = tok.AccessToken
+	if tok.RefreshToken != "" {
+		s.RefreshToken = tok.RefreshToken
+	}
+	s.TokenExpiry = tok.Expiry
+	return a.sessions.Save(ctx, s)
+}
+
+// NeedsRefresh reports whether the session's tokens are near or past expiry.
+func NeedsRefresh(s *Session) bool {
+	return s.RefreshToken != "" && !s.TokenExpiry.IsZero() && time.Until(s.TokenExpiry) < time.Minute
+}
+
+// Logout destroys the session and, when the provider supports it, ends the
+// session upstream too.
+func (a *Authenticator) Logout(w http.ResponseWriter, r *http.Request) {
+	var idToken string
+	if s, err := a.sessions.FromRequest(r); err == nil {
+		idToken = s.IDToken
+		_ = a.sessions.Destroy(r.Context(), s.ID)
+	}
+	a.sessions.ClearCookies(w)
+
+	if a.endSessionURL == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"loggedOut": true})
+		return
+	}
+	u, err := url.Parse(a.endSessionURL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"loggedOut": true})
+		return
+	}
+	q := u.Query()
+	if idToken != "" {
+		q.Set("id_token_hint", idToken)
+	}
+	q.Set("client_id", a.cfg.ClientID)
+	u.RawQuery = q.Encode()
+	writeJSON(w, http.StatusOK, map[string]any{"loggedOut": true, "endSessionURL": u.String()})
+}
+
+// fail redirects back to the SPA with a human-readable reason rather than
+// rendering a bare error page mid-flow.
+func (a *Authenticator) fail(w http.ResponseWriter, r *http.Request, reason string) {
+	target := "/login?error=" + url.QueryEscape(reason)
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// safeReturnTo blocks open redirects by accepting only same-site paths.
+func safeReturnTo(v string) string {
+	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") {
+		return "/"
+	}
+	return v
+}
+
+func stringClaim(claims map[string]any, key string) string {
+	if key == "" {
+		return ""
+	}
+	v, _ := claims[key].(string)
+	return v
+}
+
+// stringSliceClaim tolerates providers that emit a single string where the
+// spec allows an array.
+func stringSliceClaim(claims map[string]any, key string) []string {
+	if key == "" {
+		return nil
+	}
+	switch v := claims[key].(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	}
+	return nil
+}
+
+func anyOverlap(have, want []string) bool {
+	set := make(map[string]struct{}, len(have))
+	for _, h := range have {
+		set[h] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := set[w]; ok {
+			return true
+		}
+	}
+	return false
+}
