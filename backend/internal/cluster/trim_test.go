@@ -22,7 +22,7 @@ func TestTrimForCacheRemovesManagedFields(t *testing.T) {
 		},
 	}}
 
-	TrimForCache(obj)
+	obj = TrimForCache(obj)
 
 	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "metadata", "managedFields"); found {
 		t.Error("managedFields survived the trim")
@@ -46,7 +46,7 @@ func TestTrimForCacheDropsEmptyAnnotationMap(t *testing.T) {
 		},
 	}}
 
-	TrimForCache(obj)
+	obj = TrimForCache(obj)
 
 	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "metadata", "annotations"); found {
 		t.Error("expected the now-empty annotations map to be removed")
@@ -63,7 +63,7 @@ func TestTrimForCacheRedactsSecretValues(t *testing.T) {
 		"data": map[string]any{"token": "c3VwZXItc2VjcmV0", "other": "eA=="},
 	}}
 
-	TrimForCache(obj)
+	obj = TrimForCache(obj)
 
 	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "data"); found {
 		t.Fatal("secret data must never reach the shared cache")
@@ -88,11 +88,50 @@ func TestTrimForCacheLeavesNonSecretsAlone(t *testing.T) {
 		"data":       map[string]any{"mode": "production"},
 	}}
 
-	TrimForCache(obj)
+	trimmed := TrimForCache(obj)
 
-	data, found, _ := unstructured.NestedMap(obj.Object, "data")
+	// Nothing to trim means the very same object comes back: with a resync
+	// period configured the transform re-runs over objects already stored in
+	// the indexer, and copying (or mutating) them there would be wrong.
+	if trimmed != obj {
+		t.Error("an already-trimmed object should be returned unchanged, not copied")
+	}
+	data, found, _ := unstructured.NestedMap(trimmed.Object, "data")
 	if !found || data["mode"] != "production" {
 		t.Errorf("ConfigMap data should be untouched, got %v", data)
+	}
+}
+
+func TestTrimForCacheDoesNotMutateInput(t *testing.T) {
+	// The input may be an object already stored in the indexer (resync path),
+	// so trimming must never write through the pointer it was handed.
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":          "s",
+			"managedFields": []any{map[string]any{"manager": "kubectl"}},
+		},
+		"data": map[string]any{"token": "c3VwZXItc2VjcmV0"},
+	}}
+
+	trimmed := TrimForCache(obj)
+
+	if trimmed == obj {
+		t.Fatal("a trimmed object must be a copy")
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "metadata", "managedFields"); !found {
+		t.Error("the input object was mutated in place")
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "data"); !found {
+		t.Error("the input object's secret data was removed in place")
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(trimmed.Object, "data"); found {
+		t.Error("the trimmed copy still carries secret data")
+	}
+	// Trimming the result again must be a no-op returning the same pointer.
+	if again := TrimForCache(trimmed); again != trimmed {
+		t.Error("TrimForCache is not idempotent")
 	}
 }
 

@@ -177,10 +177,14 @@ func Default() *Config {
 			MetricsAddr:     "",
 		},
 		OIDC: OIDCConfig{
-			Scopes:         []string{"openid", "profile", "email", "groups"},
-			UsernameClaim:  "email",
-			GroupsClaim:    "groups",
-			UsernamePrefix: "oidc:",
+			Scopes:        []string{"openid", "profile", "email", "groups"},
+			UsernameClaim: "email",
+			GroupsClaim:   "groups",
+			// No default username prefix: a configured prefix always applies
+			// (kube-apiserver semantics), and the apiserver's own default for
+			// an email claim is the bare address. Defaulting to "oidc:" here
+			// would silently impersonate identities no RBAC binding names.
+			UsernamePrefix: "",
 			GroupsPrefix:   "oidc:",
 			OfflineAccess:  true,
 		},

@@ -261,26 +261,42 @@ func (a *Authenticator) userFromToken(idToken *oidc.IDToken) (*User, error) {
 
 	u := &User{
 		Subject: idToken.Subject,
-		// The email claim is special-cased by the apiserver's own mapper: it is
-		// not prefixed when it is the username claim, so mirror that here or
-		// impersonation will not match the cluster's RBAC bindings.
-		Username: applyPrefix(a.cfg.UsernamePrefix, rawName, a.cfg.UsernameClaim == "email"),
+		// Mirrors kube-apiserver's mapper: a configured prefix always applies,
+		// "-" explicitly disables prefixing, and only the *default* differs by
+		// claim — no prefix for email, issuer# for anything else. Skipping a
+		// configured prefix for email claims would impersonate the wrong
+		// identity against RBAC bindings written for the prefixed form.
+		Username: a.mapUsername(rawName),
 		Email:    stringClaim(claims, "email"),
 		Name:     stringClaim(claims, "name"),
 		Picture:  stringClaim(claims, "picture"),
 	}
 	for _, g := range groups {
-		u.Groups = append(u.Groups, applyPrefix(a.cfg.GroupsPrefix, g, false))
+		u.Groups = append(u.Groups, applyPrefix(a.cfg.GroupsPrefix, g))
 	}
 	return u, nil
 }
 
-// applyPrefix mirrors kube-apiserver claim-prefix semantics.
-func applyPrefix(prefix, value string, skip bool) string {
-	if skip || prefix == "" || prefix == "-" {
+// applyPrefix mirrors kube-apiserver claim-prefix semantics: an explicitly
+// configured prefix always applies, and "-" means "no prefix".
+func applyPrefix(prefix, value string) string {
+	if prefix == "" || prefix == "-" {
 		return value
 	}
 	return prefix + value
+}
+
+// mapUsername applies the configured username prefix, defaulting the way the
+// apiserver does when none is set: bare for the email claim, issuer-qualified
+// for every other claim so usernames from different issuers cannot collide.
+func (a *Authenticator) mapUsername(rawName string) string {
+	if a.cfg.UsernamePrefix != "" {
+		return applyPrefix(a.cfg.UsernamePrefix, rawName)
+	}
+	if a.cfg.UsernameClaim == "email" {
+		return rawName
+	}
+	return a.cfg.Issuer + "#" + rawName
 }
 
 // Refresh renews an access/ID token that is close to expiry. Callers hold no
@@ -292,7 +308,14 @@ func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 	a.refreshMu.Lock()
 	defer a.refreshMu.Unlock()
 
-	// Re-read: another goroutine may have refreshed while we waited.
+	// Re-read from the store: s is this request's private copy, so checking it
+	// again learns nothing. Another request may have refreshed while we waited
+	// on the lock — presenting the same refresh token twice trips providers
+	// with rotation reuse detection, which invalidates the whole token family
+	// and logs the user out.
+	if fresh, err := a.sessions.Get(ctx, s.ID); err == nil {
+		*s = *fresh
+	}
 	if !s.TokenExpiry.IsZero() && time.Until(s.TokenExpiry) > time.Minute {
 		return nil
 	}
@@ -357,8 +380,11 @@ func (a *Authenticator) fail(w http.ResponseWriter, r *http.Request, reason stri
 }
 
 // safeReturnTo blocks open redirects by accepting only same-site paths.
+// "/\evil.example.com" counts as protocol-relative too: browsers normalise the
+// backslash to a slash in the authority position.
 func safeReturnTo(v string) string {
-	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") {
+	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") ||
+		strings.HasPrefix(v, "/\\") {
 		return "/"
 	}
 	return v

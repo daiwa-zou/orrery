@@ -152,6 +152,11 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 
+	// A follow can run for days; like watches, it must not outlive the
+	// permission that opened it. The API server only checked at request time.
+	reauth := time.NewTicker(reauthorizeInterval)
+	defer reauth.Stop()
+
 	batch := make([]string, 0, maxBatchLines)
 	flush := func() bool {
 		if len(batch) == 0 {
@@ -169,6 +174,12 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ws.Done():
 			return
+		case <-reauth.C:
+			if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
+				flush()
+				ws.wsError("access to this pod's logs was revoked")
+				return
+			}
 		case <-ticker.C:
 			if !flush() {
 				return

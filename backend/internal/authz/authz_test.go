@@ -190,6 +190,13 @@ func TestAllowedExpiresCachedVerdicts(t *testing.T) {
 
 func TestConcurrentIdenticalChecksCollapse(t *testing.T) {
 	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	// Make every review slow enough that the goroutines genuinely overlap;
+	// otherwise early flights can finish before late goroutines even start,
+	// and the count depends on scheduler timing rather than on singleflight.
+	client.PrependReactor("create", "*", func(ktesting.Action) (bool, runtime.Object, error) {
+		time.Sleep(20 * time.Millisecond)
+		return false, nil, nil
+	})
 	c, _ := NewChecker(128, time.Minute, 50)
 
 	var wg sync.WaitGroup

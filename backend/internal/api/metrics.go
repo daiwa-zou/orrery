@@ -8,6 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
+
 	"github.com/daiwazou/clusterlens/backend/internal/authz"
 )
 
@@ -172,6 +174,10 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	res.resource = podRes
 
+	// permitted is nil when the caller may see every namespace; otherwise it is
+	// the filter applied to the response below. "May list pods in at least one
+	// namespace" must never gate a cluster-wide answer.
+	var permitted map[string]struct{}
 	if namespace != "" {
 		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
 			a.writeErr(w, r, err)
@@ -187,9 +193,32 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 			a.writeErr(w, r, &forbiddenError{verb: "list", resource: "pods"})
 			return
 		}
+		if !all {
+			permitted = make(map[string]struct{}, len(allowed))
+			for _, ns := range allowed {
+				permitted[ns] = struct{}{}
+			}
+		}
 	}
 
 	metrics, err := res.clients.Metrics.MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{})
+	if apierrors.IsForbidden(err) && permitted != nil {
+		// Under impersonation a namespace-scoped user cannot list cluster-wide;
+		// gather the namespaces they can see instead of handing them a 403.
+		merged := metrics
+		if merged == nil {
+			merged = &v1beta1.PodMetricsList{}
+		}
+		merged.Items = nil
+		for ns := range permitted {
+			nsList, nsErr := res.clients.Metrics.MetricsV1beta1().PodMetricses(ns).List(ctx, metav1.ListOptions{})
+			if nsErr != nil {
+				continue
+			}
+			merged.Items = append(merged.Items, nsList.Items...)
+		}
+		metrics, err = merged, nil
+	}
 	if resp, ok := metricsUnavailable(err); ok {
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -202,6 +231,11 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 	out := metricsResponse{Available: true}
 	totals := usage{}
 	for _, m := range metrics.Items {
+		if permitted != nil {
+			if _, ok := permitted[m.Namespace]; !ok {
+				continue
+			}
+		}
 		pm := podMetric{Name: m.Name, Namespace: m.Namespace, Containers: map[string]usage{}}
 		for _, c := range m.Containers {
 			cu := usageFrom(c.Usage)

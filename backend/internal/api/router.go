@@ -42,11 +42,16 @@ func (a *API) Router() http.Handler {
 		if a.authn != nil {
 			r.Get("/auth/login", a.authn.Login)
 			r.Get("/auth/callback", a.authn.Callback)
-			r.Post("/auth/logout", a.authn.Logout)
 		}
 
 		r.Group(func(r chi.Router) {
 			r.Use(a.mw.Authenticated)
+
+			if a.authn != nil {
+				// Logout is a state-changing POST like any other; without the
+				// CSRF check any origin could force-logout a signed-in user.
+				r.With(a.mw.CSRF).Post("/auth/logout", a.authn.Logout)
+			}
 
 			r.Get("/me", a.whoami)
 			r.Get("/clusters", a.listClusters)

@@ -38,11 +38,15 @@ function CountTile({
   summary?: CountSummary
   to?: string
 }) {
-  if (!summary || summary.forbidden) {
+  if (!summary || summary.forbidden || summary.unavailable) {
     return (
       <div className="rounded-md bg-surface-2 px-3 py-2.5 ring-1 ring-border">
         <p className="text-xs text-ink-faint">{label}</p>
-        <p className="mt-1 text-sm text-ink-faint">not permitted</p>
+        {/* "you may not" and "we could not" are different answers; showing
+            the wrong one sends people chasing RBAC bugs that do not exist. */}
+        <p className="mt-1 text-sm text-ink-faint">
+          {summary?.unavailable ? 'temporarily unavailable' : 'not permitted'}
+        </p>
       </div>
     )
   }

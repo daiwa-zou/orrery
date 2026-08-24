@@ -623,6 +623,12 @@ function DrainButton({
             <DrainList title="Would evict" items={result.evicted} tone="info" />
             <DrainList title="Skipped" items={result.skipped} tone="idle" />
             <DrainList title="Failed" items={result.failed} tone="danger" />
+            {(result.notPermitted ?? 0) > 0 && (
+              <p className="text-xs text-ink-faint">
+                {result.notPermitted} pod(s) on this node are outside your permissions and were
+                not touched.
+              </p>
+            )}
           </div>
         )}
       </Modal>

@@ -212,6 +212,11 @@ func (m *SessionManager) Save(ctx context.Context, s *Session) error {
 	return m.store.Put(ctx, s)
 }
 
+// Get re-reads a session from the backing store by id.
+func (m *SessionManager) Get(ctx context.Context, id string) (*Session, error) {
+	return m.store.Get(ctx, id)
+}
+
 func (m *SessionManager) sameSite() http.SameSite {
 	switch m.cfg.SameSite {
 	case "strict":

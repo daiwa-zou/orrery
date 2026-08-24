@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
@@ -99,10 +100,7 @@ func (t *terminalSession) Read(p []byte) (int, error) {
 	select {
 	case <-t.ctx.Done():
 		return 0, io.EOF
-	case chunk, ok := <-t.stdin:
-		if !ok {
-			return 0, io.EOF
-		}
+	case chunk := <-t.stdin:
 		n := copy(p, chunk)
 		if n < len(chunk) {
 			t.pending = chunk[n:]
@@ -130,10 +128,11 @@ func (t *terminalSession) Next() *remotecommand.TerminalSize {
 }
 
 func (t *terminalSession) close() {
-	t.closeOnce.Do(func() {
-		t.cancel()
-		close(t.stdin)
-	})
+	// The channel is deliberately never closed: readLoop may be blocked on a
+	// send at this exact moment, and a send racing a close panics the whole
+	// process. Cancelling the context is enough — Read returns io.EOF and the
+	// parked sender's ctx.Done() case fires.
+	t.closeOnce.Do(t.cancel)
 }
 
 // execIntoPod opens an interactive shell in a container.
@@ -185,6 +184,25 @@ func (a *API) execIntoPod(w http.ResponseWriter, r *http.Request) {
 
 	session := newTerminalSession(ctx, ws)
 	go session.readLoop()
+
+	// An interactive shell is the most privileged stream the dashboard offers;
+	// like watches, it must not outlive the permission that opened it.
+	go func() {
+		t := time.NewTicker(reauthorizeInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := a.authorize(ctx, res, "create", namespace, pod, "exec"); err != nil {
+					ws.wsError("access to this pod was revoked")
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 
 	executor, err := a.newExecutor(res, namespace, pod, container, command)
 	if err != nil {

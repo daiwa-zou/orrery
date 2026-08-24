@@ -75,7 +75,9 @@ func (a *API) scaleWorkload(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	if err := a.authorize(ctx, res, "update", req.Namespace, req.Name, "scale"); err != nil {
+	// The operation below is a Patch, so ask about patch — asking about update
+	// would pass users who cannot actually perform it and vice versa.
+	if err := a.authorize(ctx, res, "patch", req.Namespace, req.Name, "scale"); err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
@@ -90,7 +92,7 @@ func (a *API) scaleWorkload(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scaled": true, "name": req.Name, "namespace": req.Namespace,
-		"replicas": req.Replicas, "object": updated,
+		"replicas": req.Replicas, "object": cluster.TrimForResponse(updated),
 	})
 }
 
@@ -185,7 +187,10 @@ type drainResult struct {
 	Evicted  []string `json:"evicted"`
 	Skipped  []string `json:"skipped"`
 	Failed   []string `json:"failed"`
-	DryRun   bool     `json:"dryRun"`
+	// NotPermitted counts pods on the node the caller may not evict. A count,
+	// not a list: their identities are exactly what the caller may not see.
+	NotPermitted int  `json:"notPermitted,omitempty"`
+	DryRun       bool `json:"dryRun"`
 }
 
 // drainNode cordons a node and evicts its pods, honouring PodDisruptionBudgets
@@ -246,16 +251,20 @@ func (a *API) drainNode(w http.ResponseWriter, r *http.Request) {
 		ns, name := pod.GetNamespace(), pod.GetName()
 		ref := ns + "/" + name
 
+		// The pod list came from the shared cache, so this check must come
+		// before any reporting: a drain response naming pods the caller could
+		// not see is an inventory of other tenants' workloads.
+		if err := a.authorize(ctx, &evictRes, "create", ns, name, "eviction"); err != nil {
+			result.NotPermitted++
+			continue
+		}
+
 		if reason, skip := skipDrain(pod, req); skip {
 			result.Skipped = append(result.Skipped, ref+" ("+reason+")")
 			continue
 		}
 		if req.DryRun {
 			result.Evicted = append(result.Evicted, ref)
-			continue
-		}
-		if err := a.authorize(ctx, &evictRes, "create", ns, name, "eviction"); err != nil {
-			result.Failed = append(result.Failed, ref+" (not permitted)")
 			continue
 		}
 		eviction := &policyv1.Eviction{

@@ -100,10 +100,15 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case <-reauth.C:
-			if _, err := a.watchScope(ctx, res, attrs, namespace); err != nil {
+			// Adopt the recomputed scope, not just the yes/no: losing one
+			// namespace out of several must stop that namespace's objects from
+			// streaming, and only total revocation closes the socket.
+			next, err := a.watchScope(ctx, res, attrs, namespace)
+			if err != nil {
 				ws.wsError("access to this resource was revoked")
 				return
 			}
+			visible = next
 
 		case ev, ok := <-sub.Events:
 			if !ok {

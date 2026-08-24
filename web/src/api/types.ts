@@ -115,6 +115,8 @@ export interface CountSummary {
   total: number
   byStatus?: Record<string, number>
   forbidden?: boolean
+  /** The server could not compute this (cache not synced) — not an RBAC "no". */
+  unavailable?: boolean
 }
 
 export interface Usage {

@@ -192,14 +192,17 @@ func (r *Registry) Get(name string) (*Cluster, error) {
 	return e.Cluster, nil
 }
 
-// Entries returns every registered cluster in configuration order.
-func (r *Registry) Entries() []*Entry {
+// Entries returns a snapshot of every registered cluster in configuration
+// order. Values, not pointers: retryLoop writes Cluster and Err under the
+// write lock, so handing out the live structs would let callers read those
+// fields unsynchronised.
+func (r *Registry) Entries() []Entry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]*Entry, 0, len(r.order))
+	out := make([]Entry, 0, len(r.order))
 	for _, name := range r.order {
 		if e, ok := r.entries[name]; ok {
-			out = append(out, e)
+			out = append(out, *e)
 		}
 	}
 	return out

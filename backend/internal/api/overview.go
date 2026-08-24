@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/daiwazou/clusterlens/backend/internal/authz"
@@ -13,9 +15,22 @@ import (
 
 // countSummary is a count the caller may not have been allowed to compute.
 type countSummary struct {
-	Total     int            `json:"total"`
-	ByStatus  map[string]int `json:"byStatus,omitempty"`
-	Forbidden bool           `json:"forbidden,omitempty"`
+	Total    int            `json:"total"`
+	ByStatus map[string]int `json:"byStatus,omitempty"`
+	// Forbidden: the caller lacks permission. Unavailable: the dashboard could
+	// not answer (informer not synced, discovery miss). Conflating the two
+	// sends users chasing RBAC problems that do not exist.
+	Forbidden   bool `json:"forbidden,omitempty"`
+	Unavailable bool `json:"unavailable,omitempty"`
+}
+
+// mark records why a summary has no data.
+func (s *countSummary) mark(err error) {
+	if isForbidden(err) {
+		s.Forbidden = true
+	} else {
+		s.Unavailable = true
+	}
 }
 
 type overviewResponse struct {
@@ -30,35 +45,39 @@ type overviewResponse struct {
 }
 
 // visibleObjects reads a resource from cache within the caller's permitted
-// namespaces, returning ok=false when they may not read it at all.
-func (a *API) visibleObjects(ctx context.Context, res *resolved, group, version, resource string) ([]*unstructured.Unstructured, bool) {
+// namespaces. A *forbiddenError means the caller may not read it; any other
+// error means the answer could not be produced — an informer timeout must not
+// be reported to the user as an RBAC problem, or operators chase permission
+// bugs that do not exist.
+func (a *API) visibleObjects(ctx context.Context, res *resolved, group, version, resource string) ([]*unstructured.Unstructured, error) {
 	ar, err := res.cluster.Discovery.Resolve(ctx, group, version, resource)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	scoped := *res
 	scoped.resource = ar
 
 	if !ar.Namespaced {
 		if err := a.authorize(ctx, &scoped, "list", "", "", ""); err != nil {
-			return nil, false
+			return nil, err
 		}
-		objs, err := res.cluster.Informers.List(ctx, ar, "")
-		return objs, err == nil
+		return res.cluster.Informers.List(ctx, ar, "")
 	}
 
-	all, allowed, _ := res.cluster.Authz.VisibleNamespaces(ctx,
+	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(ctx,
 		res.cluster.AuthzClient(res.clients),
 		res.cluster.AuthSubject(res.identity),
 		authz.Attributes{Verb: "list", Group: ar.Group, Version: ar.Version, Resource: ar.Name},
 		a.namespaceNames(ctx, res.cluster))
 
 	if all {
-		objs, err := res.cluster.Informers.List(ctx, ar, "")
-		return objs, err == nil
+		return res.cluster.Informers.List(ctx, ar, "")
 	}
 	if len(allowed) == 0 {
-		return nil, false
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		return nil, &forbiddenError{verb: "list", resource: ar.Name}
 	}
 	var out []*unstructured.Unstructured
 	for _, ns := range allowed {
@@ -68,7 +87,13 @@ func (a *API) visibleObjects(ctx context.Context, res *resolved, group, version,
 		}
 		out = append(out, part...)
 	}
-	return out, true
+	return out, nil
+}
+
+// isForbidden distinguishes "you may not" from "we could not".
+func isForbidden(err error) bool {
+	var f *forbiddenError
+	return errors.As(err, &f)
 }
 
 // clusterOverview is the landing page: everything is read from the shared
@@ -87,7 +112,7 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Nodes: capacity and readiness.
-	if nodes, ok := a.visibleObjects(ctx, res, "", "v1", "nodes"); ok {
+	if nodes, err := a.visibleObjects(ctx, res, "", "v1", "nodes"); err == nil {
 		out.Nodes = countSummary{Total: len(nodes), ByStatus: map[string]int{}}
 		capacity := usage{}
 		for _, n := range nodes {
@@ -98,18 +123,18 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Capacity = &capacity
 	} else {
-		out.Nodes.Forbidden = true
+		out.Nodes.mark(err)
 	}
 
-	if ns, ok := a.visibleObjects(ctx, res, "", "v1", "namespaces"); ok {
+	if ns, err := a.visibleObjects(ctx, res, "", "v1", "namespaces"); err == nil {
 		out.Namespaces = countSummary{Total: len(ns)}
 	} else {
-		out.Namespaces.Forbidden = true
+		out.Namespaces.mark(err)
 	}
 
 	// Pods: phase breakdown plus the sum of container requests, which is the
 	// number that actually explains scheduling pressure.
-	if pods, ok := a.visibleObjects(ctx, res, "", "v1", "pods"); ok {
+	if pods, err := a.visibleObjects(ctx, res, "", "v1", "pods"); err == nil {
 		out.Pods = countSummary{Total: len(pods), ByStatus: map[string]int{}}
 		requested := usage{}
 		for _, p := range pods {
@@ -123,7 +148,7 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Requested = &requested
 	} else {
-		out.Pods.Forbidden = true
+		out.Pods.mark(err)
 	}
 
 	for _, wl := range []struct{ key, group, version, resource string }{
@@ -135,9 +160,11 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		{"services", "", "v1", "services"},
 		{"ingresses", "networking.k8s.io", "v1", "ingresses"},
 	} {
-		objs, ok := a.visibleObjects(ctx, res, wl.group, wl.version, wl.resource)
-		if !ok {
-			out.Workloads[wl.key] = countSummary{Forbidden: true}
+		objs, err := a.visibleObjects(ctx, res, wl.group, wl.version, wl.resource)
+		if err != nil {
+			s := countSummary{}
+			s.mark(err)
+			out.Workloads[wl.key] = s
 			continue
 		}
 		summary := countSummary{Total: len(objs), ByStatus: map[string]int{}}
@@ -205,8 +232,8 @@ func workloadHealth(o *unstructured.Unstructured) string {
 // recentWarnings surfaces the newest Warning events, the single most useful
 // thing to put on a cluster landing page.
 func (a *API) recentWarnings(ctx context.Context, res *resolved, limit int) []map[string]any {
-	events, ok := a.visibleObjects(ctx, res, "", "v1", "events")
-	if !ok {
+	events, err := a.visibleObjects(ctx, res, "", "v1", "events")
+	if err != nil {
 		return nil
 	}
 	warnings := make([]*unstructured.Unstructured, 0, 32)
@@ -244,50 +271,28 @@ func eventTime(e *unstructured.Unstructured) string {
 	return e.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05Z")
 }
 
-// parseCPUMilli handles the "100m" / "0.5" / "2" forms without pulling in the
-// full quantity parser for a hot loop.
+// parseCPUMilli and parseMemMiB use the real quantity parser: a hand-rolled
+// one silently mangles the legal forms it forgot ("1e3", bare bytes, "1Pi",
+// negative signs), and metrics.go already uses this parser for the same job —
+// two parsers means two answers for one cluster.
 func parseCPUMilli(s string) int64 {
 	if s == "" {
 		return 0
 	}
-	if strings.HasSuffix(s, "m") {
-		return int64(parseFloat(strings.TrimSuffix(s, "m")))
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		return 0
 	}
-	return int64(parseFloat(s) * 1000)
+	return q.MilliValue()
 }
 
 func parseMemMiB(s string) int64 {
-	mult := map[string]float64{
-		"Ki": 1.0 / 1024, "Mi": 1, "Gi": 1024, "Ti": 1024 * 1024,
-		"K": 1000.0 / (1024 * 1024), "M": 1000000.0 / (1024 * 1024), "G": 1000000000.0 / (1024 * 1024),
+	if s == "" {
+		return 0
 	}
-	for _, suffix := range []string{"Ki", "Mi", "Gi", "Ti", "K", "M", "G"} {
-		if strings.HasSuffix(s, suffix) {
-			return int64(parseFloat(strings.TrimSuffix(s, suffix)) * mult[suffix])
-		}
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		return 0
 	}
-	return int64(parseFloat(s) / (1024 * 1024))
-}
-
-func parseFloat(s string) float64 {
-	var v float64
-	var frac float64 = 0
-	var seenDot bool
-	div := 1.0
-	for _, r := range s {
-		switch {
-		case r >= '0' && r <= '9':
-			if seenDot {
-				div *= 10
-				frac += float64(r-'0') / div
-			} else {
-				v = v*10 + float64(r-'0')
-			}
-		case r == '.':
-			seenDot = true
-		default:
-			return v + frac
-		}
-	}
-	return v + frac
+	return q.Value() / (1024 * 1024)
 }

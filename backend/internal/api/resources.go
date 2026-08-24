@@ -633,7 +633,11 @@ func (a *API) patchResource(w http.ResponseWriter, r *http.Request) {
 	opts := metav1.PatchOptions{}
 	if pt == types.ApplyPatchType {
 		opts.FieldManager = "clusterlens"
-		opts.Force = ptr(true)
+		// Force is opt-in: silently stealing fields from another manager is
+		// exactly the conflict server-side apply exists to surface.
+		if queryBool(r, "force", false) {
+			opts.Force = ptr(true)
+		}
 	}
 	updated, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(namespace).

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -212,7 +214,15 @@ func (c *Cluster) ClientsFor(id Identity) (*Clients, error) {
 		if id.Username == "" {
 			return nil, fmt.Errorf("cluster %s: impersonation requires a username", c.Cfg.Name)
 		}
-		key := "imp:" + id.Username + "\x1e" + fmt.Sprint(id.Groups)
+		// Quote every part: fmt.Sprint([]string) is ambiguous ("a b" vs "a","b")
+		// and an attacker-influenced username could otherwise be crafted to
+		// collide with another identity's cache key.
+		parts := make([]string, 0, len(id.Groups)+1)
+		parts = append(parts, strconv.Quote(id.Username))
+		for _, g := range id.Groups {
+			parts = append(parts, strconv.Quote(g))
+		}
+		key := "imp:" + strings.Join(parts, "\x1e")
 		return c.cachedClients(key, func() (*rest.Config, bool) {
 			rc := rest.CopyConfig(c.base.Rest)
 			rc.Impersonate = rest.ImpersonationConfig{

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +23,22 @@ var crdResource = cluster.APIResource{
 }
 
 // printerColumn is one compiled additionalPrinterColumn.
+//
+// The mutex is load-bearing: JSONPath.FindResults mutates parser state on the
+// shared object, and one compiled columnSet is cached and used by every
+// concurrent list, watch and event projection for the CRD. Serialising the
+// evaluation is cheap; a corrupted parse tree that blanks a column until the
+// cache expires is not.
 type printerColumn struct {
 	column Column
+	mu     *sync.Mutex
 	path   *jsonpath.JSONPath
+}
+
+func (pc printerColumn) findResults(obj map[string]any) ([][]reflect.Value, error) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.path.FindResults(obj)
 }
 
 type tableCacheEntry struct {
@@ -160,7 +174,7 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 		if col.Type == ColNumber {
 			col.Align = "right"
 		}
-		compiled = append(compiled, printerColumn{column: col, path: jp})
+		compiled = append(compiled, printerColumn{column: col, mu: &sync.Mutex{}, path: jp})
 	}
 	if len(compiled) == 0 {
 		return columnSet{}
@@ -176,7 +190,7 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 		row: func(u *unstructured.Unstructured) map[string]any {
 			r := baseRow(u)
 			for _, pc := range compiled {
-				results, err := pc.path.FindResults(u.Object)
+				results, err := pc.findResults(u.Object)
 				if err != nil || len(results) == 0 || len(results[0]) == 0 {
 					continue
 				}

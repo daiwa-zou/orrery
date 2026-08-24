@@ -188,19 +188,30 @@ func normalizeGroupParam(g string) string {
 // cacheStats exposes what the dashboard is currently caching. It is the first
 // thing to look at when a deployment's memory use is surprising.
 func (a *API) cacheStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	res, err := a.clusterOnly(r)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
+	// The stats come straight from the shared cache, and the set of running
+	// informers reveals which CRDs exist and how many objects each holds. Only
+	// report the resources this user could list cluster-wide themselves.
 	stats := res.cluster.Informers.Stats()
+	visible := stats[:0]
 	totalObjects := 0
 	for _, s := range stats {
+		check := *res
+		check.resource = cluster.APIResource{Group: s.Group, Version: s.Version, Name: s.Resource}
+		if err := a.authorize(ctx, &check, "list", "", "", ""); err != nil {
+			continue
+		}
+		visible = append(visible, s)
 		totalObjects += s.Objects
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cluster":      res.cluster.Cfg.Name,
-		"informers":    stats,
+		"informers":    visible,
 		"totalObjects": totalObjects,
 	})
 }
@@ -229,9 +240,9 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	objs, ok := a.visibleObjects(ctx, res, "", "v1", "events")
-	if !ok {
-		a.writeErr(w, r, &forbiddenError{verb: "list", resource: "events"})
+	objs, err := a.visibleObjects(ctx, res, "", "v1", "events")
+	if err != nil {
+		a.writeErr(w, r, err)
 		return
 	}
 

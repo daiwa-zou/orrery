@@ -83,7 +83,11 @@ type Checker struct {
 
 type nsEntry struct {
 	namespaces []string
-	expires    time.Time
+	// truncated records that the scan hit scanLimit, so a cache hit reports
+	// the same partial-answer error the original scan did. Losing it turned
+	// "we could not check everything" into a flat (and wrong) "forbidden".
+	truncated bool
+	expires   time.Time
 }
 
 // NewChecker builds a checker with an LRU of the given size and TTL.
@@ -214,6 +218,9 @@ func (c *Checker) VisibleNamespaces(
 	c.nsMu.Lock()
 	if e, ok := c.nsCache[cacheKey]; ok && time.Now().Before(e.expires) {
 		c.nsMu.Unlock()
+		if e.truncated {
+			return false, e.namespaces, fmt.Errorf("namespace scan truncated at %d namespaces", c.scanLimit)
+		}
 		return false, e.namespaces, nil
 	}
 	c.nsMu.Unlock()
@@ -250,7 +257,15 @@ func (c *Checker) VisibleNamespaces(
 	sort.Strings(allowed)
 
 	c.nsMu.Lock()
-	c.nsCache[cacheKey] = nsEntry{namespaces: allowed, expires: time.Now().Add(c.ttl)}
+	// Expired entries are never read again; sweep them here so the map cannot
+	// grow without bound on a multi-tenant deployment.
+	now := time.Now()
+	for k, e := range c.nsCache {
+		if now.After(e.expires) {
+			delete(c.nsCache, k)
+		}
+	}
+	c.nsCache[cacheKey] = nsEntry{namespaces: allowed, truncated: truncated, expires: now.Add(c.ttl)}
 	c.nsMu.Unlock()
 
 	if truncated {

@@ -242,6 +242,8 @@ export const api = {
       evicted: string[]
       skipped: string[]
       failed: string[]
+      /** Pods on the node the caller may not evict — a count, not names. */
+      notPermitted?: number
       dryRun: boolean
     }>(`/clusters/${cluster}/actions/drain`, { method: 'POST', body: JSON.stringify(opts) }),
 

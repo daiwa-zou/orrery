@@ -241,20 +241,38 @@ func TestSessionsGetDistinctTokens(t *testing.T) {
 }
 
 func TestApplyPrefixMirrorsApiserverSemantics(t *testing.T) {
-	// The apiserver does not prefix the email claim when it is the username
-	// claim. Diverging here would produce impersonation headers that do not
-	// match the cluster's RBAC bindings.
-	if got := applyPrefix("oidc:", "alice@example.com", true); got != "alice@example.com" {
-		t.Errorf("email claim was prefixed: %q", got)
-	}
-	if got := applyPrefix("oidc:", "alice", false); got != "oidc:alice" {
+	if got := applyPrefix("oidc:", "alice"); got != "oidc:alice" {
 		t.Errorf("prefix not applied: %q", got)
 	}
-	if got := applyPrefix("-", "alice", false); got != "alice" {
+	if got := applyPrefix("-", "alice"); got != "alice" {
 		t.Errorf(`"-" should disable prefixing, got %q`, got)
 	}
-	if got := applyPrefix("", "alice", false); got != "alice" {
+	if got := applyPrefix("", "alice"); got != "alice" {
 		t.Errorf("empty prefix changed the value: %q", got)
+	}
+}
+
+func TestMapUsernameMirrorsApiserverSemantics(t *testing.T) {
+	mk := func(claim, prefix string) *Authenticator {
+		return &Authenticator{cfg: config.OIDCConfig{
+			Issuer: "https://issuer.example", UsernameClaim: claim, UsernamePrefix: prefix,
+		}}
+	}
+	// A configured prefix ALWAYS applies — including to the email claim. The
+	// apiserver's email special case only changes the default when no prefix
+	// is set. Skipping a configured prefix would impersonate an identity no
+	// RBAC binding names.
+	if got := mk("email", "oidc:").mapUsername("alice@example.com"); got != "oidc:alice@example.com" {
+		t.Errorf("configured prefix was not applied to email claim: %q", got)
+	}
+	if got := mk("email", "").mapUsername("alice@example.com"); got != "alice@example.com" {
+		t.Errorf("default for email claim should be the bare address: %q", got)
+	}
+	if got := mk("sub", "").mapUsername("alice"); got != "https://issuer.example#alice" {
+		t.Errorf("default for non-email claims should be issuer-qualified: %q", got)
+	}
+	if got := mk("sub", "-").mapUsername("alice"); got != "alice" {
+		t.Errorf(`"-" should disable prefixing entirely: %q`, got)
 	}
 }
 
@@ -288,6 +306,7 @@ func TestSafeReturnToBlocksOpenRedirects(t *testing.T) {
 		"":                         "/",
 		"https://evil.example.com": "/",
 		"//evil.example.com":       "/",
+		`/\evil.example.com`:       "/",
 		"javascript:alert(1)":      "/",
 	}
 	for in, want := range cases {

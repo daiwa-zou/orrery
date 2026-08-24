@@ -485,6 +485,9 @@ func (m *InformerManager) Watch(ctx context.Context, ar APIResource, namespace s
 // the admin view.
 type InformerStat struct {
 	GVR         string `json:"gvr"`
+	Group       string `json:"-"`
+	Version     string `json:"-"`
+	Resource    string `json:"-"`
 	Objects     int    `json:"objects"`
 	Subscribers int    `json:"subscribers"`
 	IdleSeconds int64  `json:"idleSeconds"`
@@ -499,6 +502,9 @@ func (m *InformerManager) Stats() []InformerStat {
 	for gvr, e := range m.entries {
 		out = append(out, InformerStat{
 			GVR:         gvr.String(),
+			Group:       gvr.Group,
+			Version:     gvr.Version,
+			Resource:    gvr.Resource,
 			Objects:     len(e.informer.GetIndexer().ListKeys()),
 			Subscribers: e.bc.Count(),
 			IdleSeconds: int64(e.idleFor().Seconds()),
