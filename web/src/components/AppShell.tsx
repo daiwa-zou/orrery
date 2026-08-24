@@ -1,11 +1,21 @@
 import clsx from 'clsx'
-import { useMemo, useState } from 'react'
-import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Link,
+  NavLink,
+  useMatch,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom'
 import { api } from '../api/client'
 import { useClusters, useDiscovery, useMe, useNamespaces } from '../api/hooks'
 import type { ClusterSummary, HealthStatus } from '../api/types'
+import { navLabel } from '../lib/format'
+import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
 import { Badge, Button, Spinner } from './primitives'
-import { buildNav, type NavSection } from './nav'
+import { CommandPalette } from './CommandPalette'
+import { buildNav, type NavItem } from './nav'
 
 const HEALTH_TONE: Record<HealthStatus, 'ok' | 'warn' | 'danger' | 'idle'> = {
   healthy: 'ok',
@@ -160,51 +170,78 @@ function NamespacePicker({ cluster }: { cluster: string }) {
   )
 }
 
+/**
+ * One collapsible group of resource links.
+ *
+ * Open state lives in the parent so it can be persisted per cluster; this
+ * component only reports the toggle.
+ */
 function NavGroup({
-  section,
+  title,
+  items,
   cluster,
   namespace,
-  defaultOpen,
+  open,
+  onToggle,
+  showGroup,
 }: {
-  section: NavSection
+  title: string
+  items: NavItem[]
   cluster: string
   namespace: string
-  defaultOpen: boolean
+  open: boolean
+  onToggle: () => void
+  /** Appends the API group to each row — needed where kinds are unfamiliar. */
+  showGroup?: boolean
 }) {
-  const [open, setOpen] = useState(defaultOpen)
+  if (items.length === 0) return null
 
   return (
-    <div className="mb-1">
+    <div className="mt-4 first:mt-0">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-semibold tracking-wide text-ink-faint uppercase hover:text-ink-muted"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="group flex w-full items-center gap-1.5 px-3 py-1 text-[10px] font-semibold tracking-wider text-ink-faint uppercase transition-colors hover:text-ink-muted"
       >
-        <span className="truncate">{section.title}</span>
-        <span aria-hidden className="ml-2 text-[9px]">
+        <span
+          aria-hidden
+          className="w-2 text-[9px] opacity-60 transition-opacity group-hover:opacity-100"
+        >
           {open ? '▾' : '▸'}
         </span>
+        <span className="truncate">{title}</span>
+        {!open && <span className="ml-auto tabular-nums opacity-70">{items.length}</span>}
       </button>
 
       {open && (
-        <ul>
-          {section.items.map((item) => {
+        <ul className="mt-0.5">
+          {items.map((item) => {
             const groupSeg = item.group === '' ? 'core' : item.group
             const to = `/c/${cluster}/r/${groupSeg}/${item.version}/${item.resource}`
             const search = item.namespaced && namespace ? `?namespace=${namespace}` : ''
+
             return (
               <li key={`${item.group}/${item.resource}`}>
                 <NavLink
                   to={to + search}
+                  title={showGroup ? `${item.kind} · ${item.group || 'core'}` : item.kind}
                   className={({ isActive }) =>
                     clsx(
-                      'block truncate rounded px-3 py-1 text-sm transition-colors',
+                      // A left rule marks the active row instead of a filled
+                      // block, which keeps the column quiet when scanning it.
+                      'flex items-baseline gap-2 border-l-2 py-[3px] pr-3 pl-4 text-[13px] transition-colors',
                       isActive
-                        ? 'bg-accent-soft/50 text-ink'
-                        : 'text-ink-muted hover:bg-surface-2 hover:text-ink',
+                        ? 'border-accent bg-accent-soft/25 text-ink'
+                        : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
                     )
                   }
                 >
-                  {item.label}
+                  <span className="truncate">{navLabel(item.kind)}</span>
+                  {showGroup && item.group && (
+                    <span className="ml-auto shrink-0 truncate font-mono text-[10px] text-ink-faint">
+                      {item.group.replace(/\.k8s\.io$/, '')}
+                    </span>
+                  )}
                 </NavLink>
               </li>
             )
@@ -280,30 +317,105 @@ function UserMenu() {
   )
 }
 
+const CUSTOM_SECTION = 'Custom resources'
+const ALL_SECTION = 'All resources'
+
+/** Custom-resource groups are the usual reason to browse, so a short list opens. */
+const AUTO_OPEN_CUSTOM_LIMIT = 8
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { cluster } = useParams<{ cluster: string }>()
   const [params] = useSearchParams()
   const namespace = params.get('namespace') ?? ''
   const { data: discovery, isLoading: discoveryLoading } = useDiscovery(cluster)
 
-  const sections = useMemo(() => buildNav(discovery), [discovery])
-  const [filter, setFilter] = useState('')
+  const nav = useMemo(() => buildNav(discovery), [discovery])
 
-  const visible = useMemo(() => {
-    if (!filter.trim()) return sections
-    const needle = filter.trim().toLowerCase()
-    return sections
-      .map((s) => ({
-        ...s,
-        items: s.items.filter(
-          (i) =>
-            i.label.toLowerCase().includes(needle) ||
-            i.resource.toLowerCase().includes(needle) ||
-            i.group.toLowerCase().includes(needle),
-        ),
-      }))
-      .filter((s) => s.items.length > 0)
-  }, [sections, filter])
+  // AppShell renders *outside* the nested resource routes, so useParams cannot
+  // see the resource being viewed. Matching the path explicitly is what gives
+  // the sidebar and the breadcrumb something to work with.
+  const resourceMatch = useMatch({ path: '/c/:cluster/r/:group/:version/:resource', end: false })
+  const detailMatch = useMatch('/c/:cluster/r/:group/:version/:resource/:namespace/:name')
+  const currentResource = resourceMatch?.params.resource
+  const currentGroup = resourceMatch?.params.group
+
+  const matchesRoute = useCallback(
+    (item: NavItem) =>
+      item.resource === currentResource &&
+      (currentGroup === 'core' ? item.group === '' : item.group === currentGroup),
+    [currentResource, currentGroup],
+  )
+
+  const defaultOpen = useMemo(() => {
+    const titles = nav.primary.map((s) => s.title)
+    if (nav.custom.length > 0 && nav.custom.length <= AUTO_OPEN_CUSTOM_LIMIT) {
+      titles.push(CUSTOM_SECTION)
+    }
+    return titles
+  }, [nav])
+
+  const [openSections, setOpenSections] = useState<string[]>(defaultOpen)
+
+  // Open state is per cluster, because the resources differ between them.
+  useEffect(() => {
+    if (!cluster) return
+    setOpenSections(readJSON<string[]>(navStateKey(cluster), defaultOpen))
+  }, [cluster, defaultOpen])
+
+  const toggleSection = useCallback(
+    (title: string) => {
+      setOpenSections((prev) => {
+        const next = prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]
+        if (cluster) writeJSON(navStateKey(cluster), next)
+        return next
+      })
+    },
+    [cluster],
+  )
+
+  // Whatever you are looking at is always visible, whatever the stored state
+  // says, so a deep link never lands you inside a collapsed group.
+  const activeSection = useMemo(() => {
+    if (!currentResource) return undefined
+    for (const section of nav.primary) {
+      if (section.items.some(matchesRoute)) return section.title
+    }
+    if (nav.custom.some(matchesRoute)) return CUSTOM_SECTION
+    if (nav.rest.some(matchesRoute)) return ALL_SECTION
+    return undefined
+  }, [nav, currentResource, matchesRoute])
+
+  const isOpen = (title: string) => openSections.includes(title) || title === activeSection
+
+  // Remember where you have been, to prefill the palette.
+  useEffect(() => {
+    if (!cluster || !currentResource) return
+    const item = [...nav.primary.flatMap((s) => s.items), ...nav.custom, ...nav.rest].find(
+      matchesRoute,
+    )
+    if (!item) return
+    recordRecent({
+      cluster,
+      group: item.group,
+      version: item.version,
+      resource: item.resource,
+      kind: item.kind,
+      namespaced: item.namespaced,
+    })
+  }, [cluster, currentResource, matchesRoute, nav])
+
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="flex h-full">
@@ -311,7 +423,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="border-b border-border p-3">
           <Link to="/" className="mb-3 flex items-center gap-2">
             <svg viewBox="0 0 32 32" className="size-6" aria-hidden>
-              <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" strokeWidth="3" className="text-accent" />
+              <circle
+                cx="16"
+                cy="16"
+                r="13"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                className="text-accent"
+              />
               <circle cx="16" cy="16" r="4" className="fill-accent" />
             </svg>
             <span className="text-sm font-semibold tracking-tight text-ink">Clusterlens</span>
@@ -323,22 +443,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <>
             <div className="space-y-2 border-b border-border p-3">
               <NamespacePicker cluster={cluster} />
-              <input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter resources"
-                aria-label="Filter resource types"
-                className="w-full rounded-md bg-surface-2 px-2 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
-              />
+              <button
+                onClick={() => setPaletteOpen(true)}
+                className="flex w-full items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5 text-left text-sm text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
+              >
+                <span>Search</span>
+                <kbd className="ml-auto rounded border border-border px-1 font-sans text-[10px]">
+                  ⌘K
+                </kbd>
+              </button>
             </div>
 
-            <nav className="flex-1 overflow-y-auto py-2">
+            <nav className="flex-1 overflow-y-auto px-0 py-2">
               <NavLink
                 to={`/c/${cluster}`}
                 end
                 className={({ isActive }) =>
                   clsx(
-                    'mx-3 mb-2 block rounded px-3 py-1.5 text-sm transition-colors',
+                    'mx-3 block rounded px-3 py-1.5 text-[13px] transition-colors',
                     isActive
                       ? 'bg-accent-soft/50 text-ink'
                       : 'text-ink-muted hover:bg-surface-2 hover:text-ink',
@@ -354,16 +476,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </p>
               )}
 
-              {visible.map((section, i) => (
+              <div className="mt-2">
+                {nav.primary.map((section) => (
+                  <NavGroup
+                    key={section.title}
+                    title={section.title}
+                    items={section.items}
+                    cluster={cluster}
+                    namespace={namespace}
+                    open={isOpen(section.title)}
+                    onToggle={() => toggleSection(section.title)}
+                  />
+                ))}
+
                 <NavGroup
-                  key={section.title}
-                  section={section}
+                  title={CUSTOM_SECTION}
+                  items={nav.custom}
                   cluster={cluster}
                   namespace={namespace}
-                  // Curated sections open; the long tail of API groups does not.
-                  defaultOpen={!section.collapsible && i < 3}
+                  open={isOpen(CUSTOM_SECTION)}
+                  onToggle={() => toggleSection(CUSTOM_SECTION)}
+                  showGroup
                 />
-              ))}
+
+                <NavGroup
+                  title={ALL_SECTION}
+                  items={nav.rest}
+                  cluster={cluster}
+                  namespace={namespace}
+                  open={isOpen(ALL_SECTION)}
+                  onToggle={() => toggleSection(ALL_SECTION)}
+                  showGroup
+                />
+              </div>
             </nav>
           </>
         )}
@@ -371,7 +516,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4">
-          <Breadcrumbs />
+          <Breadcrumbs
+            cluster={cluster}
+            resource={currentResource}
+            name={detailMatch?.params.name}
+          />
           <div className="flex items-center gap-2">
             {namespace && <Badge tone="info">ns: {namespace}</Badge>}
             <UserMenu />
@@ -379,12 +528,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
         <main className="min-h-0 flex-1 overflow-auto">{children}</main>
       </div>
+
+      {cluster && (
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          cluster={cluster}
+          namespace={namespace}
+          primary={nav.primary.flatMap((s) => s.items)}
+        />
+      )}
     </div>
   )
 }
 
-function Breadcrumbs() {
-  const { cluster, resource, name } = useParams()
+function Breadcrumbs({
+  cluster,
+  resource,
+  name,
+}: {
+  cluster?: string
+  resource?: string
+  name?: string
+}) {
   if (!cluster) return <span className="text-sm text-ink-faint">Clusterlens</span>
 
   return (

@@ -1,17 +1,29 @@
 import type { APIResource, DiscoveryResponse } from '../api/types'
 
 /**
- * The navigation is curated rather than generated. A raw discovery dump lists
- * two hundred resources in alphabetical order, which is technically complete
- * and practically unusable — so the resources people reach for daily get
- * named sections in a deliberate order, and everything else is grouped by its
- * API group underneath.
+ * The navigation is curated, and deliberately short.
+ *
+ * A cluster serves upwards of sixty listable resources across twenty API
+ * groups before anyone installs an operator. Showing all of them gives every
+ * resource equal weight, which in practice means `flowcontrol.apiserver.k8s.io`
+ * competes for attention with Pods. So the nav is split into three tiers: the
+ * handful people open daily, the custom resources that are usually the reason
+ * to go looking, and everything else behind one disclosure.
+ *
+ * Nothing is unreachable — the command palette searches all of it.
  */
+export interface Nav {
+  /** Always visible, grouped into named sections. */
+  primary: NavSection[]
+  /** Resources from API groups Kubernetes does not ship: real CRDs. */
+  custom: NavItem[]
+  /** Everything else, flat and alphabetical. */
+  rest: NavItem[]
+}
+
 export interface NavSection {
   title: string
   items: NavItem[]
-  /** Custom-resource sections start collapsed; curated ones do not. */
-  collapsible?: boolean
 }
 
 export interface NavItem {
@@ -23,80 +35,58 @@ export interface NavItem {
   kind: string
 }
 
+/**
+ * The daily set. Anything not named here still appears under "All resources"
+ * and in the palette, so the bar for inclusion is "most people, most days"
+ * rather than "someone, sometime".
+ */
 const CURATED: { title: string; resources: string[] }[] = [
   {
     title: 'Workloads',
-    resources: [
-      'pods',
-      'deployments',
-      'statefulsets',
-      'daemonsets',
-      'replicasets',
-      'jobs',
-      'cronjobs',
-      'replicationcontrollers',
-    ],
+    resources: ['pods', 'deployments', 'statefulsets', 'daemonsets', 'jobs', 'cronjobs'],
   },
-  {
-    title: 'Networking',
-    resources: ['services', 'ingresses', 'endpoints', 'networkpolicies', 'ingressclasses'],
-  },
-  {
-    title: 'Storage',
-    resources: ['persistentvolumeclaims', 'persistentvolumes', 'storageclasses'],
-  },
-  {
-    title: 'Configuration',
-    resources: [
-      'configmaps',
-      'secrets',
-      'horizontalpodautoscalers',
-      'poddisruptionbudgets',
-      'resourcequotas',
-      'limitranges',
-      'priorityclasses',
-    ],
-  },
-  {
-    title: 'Access control',
-    resources: [
-      'serviceaccounts',
-      'roles',
-      'rolebindings',
-      'clusterroles',
-      'clusterrolebindings',
-    ],
-  },
-  {
-    title: 'Cluster',
-    resources: ['nodes', 'namespaces', 'events', 'customresourcedefinitions'],
-  },
+  { title: 'Networking', resources: ['services', 'ingresses'] },
+  { title: 'Storage', resources: ['persistentvolumeclaims'] },
+  { title: 'Configuration', resources: ['configmaps', 'secrets'] },
+  { title: 'Cluster', resources: ['nodes', 'namespaces', 'events'] },
 ]
 
-/** API groups whose resources are Kubernetes' own, not a user's CRDs. */
-const BUILTIN_GROUPS = new Set([
-  '',
-  'apps',
-  'batch',
-  'autoscaling',
-  'networking.k8s.io',
-  'policy',
-  'rbac.authorization.k8s.io',
-  'storage.k8s.io',
-  'scheduling.k8s.io',
-  'apiextensions.k8s.io',
-  'coordination.k8s.io',
-  'admissionregistration.k8s.io',
-  'apiregistration.k8s.io',
-  'authentication.k8s.io',
-  'authorization.k8s.io',
-  'certificates.k8s.io',
-  'discovery.k8s.io',
-  'events.k8s.io',
-  'flowcontrol.apiserver.k8s.io',
-  'node.k8s.io',
-  'metrics.k8s.io',
-])
+/**
+ * Kubernetes' own API groups that predate the `*.k8s.io` convention and so
+ * cannot be recognised by suffix.
+ */
+const LEGACY_BUILTIN_GROUPS = new Set(['', 'apps', 'batch', 'autoscaling', 'policy', 'extensions'])
+
+/**
+ * Whether a group belongs to a user rather than to Kubernetes.
+ *
+ * This is a rule rather than a list on purpose. An enumerated set of built-in
+ * groups silently rots: `resource.k8s.io` shipped and immediately started
+ * masquerading as somebody's CRD, which is exactly the noise the Custom
+ * resources section exists to avoid. Every upstream group is either a legacy
+ * bare name or lives under `.k8s.io`, while third-party CRDs use their own
+ * domains — cert-manager.io, argoproj.io, monitoring.coreos.com.
+ *
+ * Projects on `x-k8s.io` (Cluster API and friends) deliberately fall on the
+ * custom side: they really are installed as CRDs.
+ */
+export function isCustomGroup(group: string): boolean {
+  if (LEGACY_BUILTIN_GROUPS.has(group)) return false
+  return group !== 'k8s.io' && !group.endsWith('.k8s.io')
+}
+
+/**
+ * Whether a resource can be opened as a list at all.
+ *
+ * metrics.k8s.io advertises `list` but is an aggregated API with no watch
+ * support, so the cache backing every list view cannot be built for it —
+ * navigating there produces an error page. Usage is surfaced through the
+ * dedicated metrics endpoints instead. The palette and the nav must agree on
+ * this, or search offers a link that is guaranteed to break.
+ */
+export function isBrowsable(group: string): boolean {
+  return group !== 'metrics.k8s.io'
+}
 
 function toItem(r: APIResource): NavItem {
   return {
@@ -109,22 +99,26 @@ function toItem(r: APIResource): NavItem {
   }
 }
 
-export function buildNav(discovery?: DiscoveryResponse): NavSection[] {
-  if (!discovery) return []
+const byKind = (a: NavItem, b: NavItem) => a.kind.localeCompare(b.kind)
+
+export function buildNav(discovery?: DiscoveryResponse): Nav {
+  const empty: Nav = { primary: [], custom: [], rest: [] }
+  if (!discovery) return empty
 
   const all: APIResource[] = discovery.groups.flatMap((g) => g.resources)
+
   const byName = new Map<string, APIResource>()
   for (const r of all) {
     // Prefer the built-in owner of a name so a CRD called "jobs" cannot
-    // displace batch/v1 Jobs in the Workloads section.
+    // displace batch/v1 Jobs from the Workloads section.
     const existing = byName.get(r.name)
-    if (!existing || (BUILTIN_GROUPS.has(r.group) && !BUILTIN_GROUPS.has(existing.group))) {
+    if (!existing || (!isCustomGroup(r.group) && isCustomGroup(existing.group))) {
       byName.set(r.name, r)
     }
   }
 
   const claimed = new Set<string>()
-  const sections: NavSection[] = []
+  const primary: NavSection[] = []
 
   for (const section of CURATED) {
     const items: NavItem[] = []
@@ -134,38 +128,29 @@ export function buildNav(discovery?: DiscoveryResponse): NavSection[] {
       items.push(toItem(r))
       claimed.add(`${r.group}/${r.name}`)
     }
-    if (items.length > 0) sections.push({ title: section.title, items })
+    if (items.length > 0) primary.push({ title: section.title, items })
   }
 
-  // Anything left over, grouped by API group. Custom resources are the point
-  // of this section, but leftover built-ins land here too rather than being
-  // silently unreachable.
-  const leftovers = new Map<string, NavItem[]>()
+  const custom: NavItem[] = []
+  const rest: NavItem[] = []
+
   for (const r of all) {
-    const key = `${r.group}/${r.name}`
-    if (claimed.has(key)) continue
-    if (r.group === 'metrics.k8s.io') continue
-    const bucket = leftovers.get(r.group) ?? []
-    bucket.push(toItem(r))
-    leftovers.set(r.group, bucket)
+    if (claimed.has(`${r.group}/${r.name}`)) continue
+    if (!isBrowsable(r.group)) continue
+
+    if (isCustomGroup(r.group)) custom.push(toItem(r))
+    else rest.push(toItem(r))
   }
 
-  const customGroups = [...leftovers.entries()].sort(([a], [b]) => {
-    // User-defined groups first: they are why someone opens this section.
-    const aBuiltin = BUILTIN_GROUPS.has(a)
-    const bBuiltin = BUILTIN_GROUPS.has(b)
-    if (aBuiltin !== bBuiltin) return aBuiltin ? 1 : -1
-    return a.localeCompare(b)
-  })
+  custom.sort(byKind)
+  rest.sort(byKind)
 
-  for (const [group, items] of customGroups) {
-    items.sort((a, b) => a.label.localeCompare(b.label))
-    sections.push({
-      title: group === '' ? 'Core (other)' : group,
-      items,
-      collapsible: true,
-    })
-  }
+  return { primary, custom, rest }
+}
 
-  return sections
+/** Total resources reachable from the nav, for the "All resources" count. */
+export function navItemCount(nav: Nav): number {
+  return (
+    nav.primary.reduce((n, s) => n + s.items.length, 0) + nav.custom.length + nav.rest.length
+  )
 }

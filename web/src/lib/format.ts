@@ -133,10 +133,6 @@ export function ratioTone(value: string): Tone {
   return 'warn'
 }
 
-export function pluralize(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`
-}
-
 /**
  * Kind to the plural resource name the API uses. Only needed for owner links,
  * where all we have is a kind; everywhere else the resource name comes from
@@ -175,4 +171,44 @@ export function ellipsize(value: string, max = 44): string {
   const head = Math.ceil((max - 1) / 2)
   const tail = Math.floor((max - 1) / 2)
   return `${value.slice(0, head)}…${value.slice(value.length - tail)}`
+}
+
+/**
+ * Nav labels for kinds whose real name does not fit a 256px sidebar, plus the
+ * handful whose plural is irregular. Everything else is pluralised by rule.
+ */
+const NAV_LABELS: Record<string, string> = {
+  PersistentVolumeClaim: 'PVCs',
+  PersistentVolume: 'PVs',
+  HorizontalPodAutoscaler: 'HPAs',
+  PodDisruptionBudget: 'PDBs',
+  CustomResourceDefinition: 'CRDs',
+  ValidatingWebhookConfiguration: 'Validating webhooks',
+  MutatingWebhookConfiguration: 'Mutating webhooks',
+  ValidatingAdmissionPolicyBinding: 'Admission policy bindings',
+  ValidatingAdmissionPolicy: 'Admission policies',
+  // Already plural; the rule below would produce "Endpointses".
+  Endpoints: 'Endpoints',
+}
+
+/**
+ * Pluralises a Kubernetes kind for display. Nav entries name a collection, so
+ * "Pods" reads better than "Pod" above a table of them.
+ */
+export function pluralize(kind: string): string {
+  if (!kind) return kind
+  const lower = kind.toLowerCase()
+
+  if (/(?:s|x|ch|sh)$/.test(lower)) return `${kind}es`
+  if (/[^aeiou]y$/.test(lower)) return `${kind.slice(0, -1)}ies`
+  return `${kind}s`
+}
+
+/**
+ * The label a kind gets in the sidebar: a short override when one exists,
+ * otherwise its plural. The full kind is still shown in the command palette so
+ * an abbreviation never leaves you guessing.
+ */
+export function navLabel(kind: string): string {
+  return NAV_LABELS[kind] ?? pluralize(kind)
 }
