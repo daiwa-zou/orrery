@@ -14,6 +14,7 @@ import { AppShell } from './components/AppShell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { EmptyState, ErrorState, Spinner } from './components/primitives'
 import { ToastProvider } from './components/Toast'
+import { CreateResource } from './pages/CreateResource'
 import { Events } from './pages/Events'
 import { Fleet } from './pages/Fleet'
 import { Login } from './pages/Login'
@@ -137,6 +138,7 @@ function ClusterRoutes() {
         <Route index element={<Overview />} />
         <Route path="events" element={<Events />} />
         <Route path="r/:group/:version/:resource" element={<ResourceList />} />
+        <Route path="r/:group/:version/:resource/create" element={<CreateResource />} />
         <Route
           path="r/:group/:version/:resource/:namespace/:name"
           element={<ResourceDetail />}

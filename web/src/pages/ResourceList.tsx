@@ -121,8 +121,18 @@ export function ResourceList() {
     RESTARTABLE.has(meta.name) &&
     meta.verbs.includes('patch')
 
+  const canCreate = meta?.verbs.includes('create') ?? false
+
   // Ask once whether this user may act in this scope, so actions are only
-  // offered when they would actually work.
+  // offered when they would actually work. The verb order here is the index
+  // order of the answers below.
+  const checkVerbs = useMemo(() => {
+    const verbs: string[] = []
+    if (canDelete) verbs.push('delete')
+    if (canRestart) verbs.push('patch')
+    if (canCreate) verbs.push('create')
+    return verbs
+  }, [canDelete, canRestart, canCreate])
   const checks = useMemo(() => {
     if (!meta) return []
     const base = {
@@ -131,14 +141,14 @@ export function ResourceList() {
       resource: meta.name,
       namespace: namespace || undefined,
     }
-    const out: AccessCheck[] = []
-    if (canDelete) out.push({ ...base, verb: 'delete' })
-    if (canRestart) out.push({ ...base, verb: 'patch' })
-    return out
-  }, [meta, namespace, canDelete, canRestart])
+    return checkVerbs.map((verb): AccessCheck => ({ ...base, verb }))
+  }, [meta, namespace, checkVerbs])
   const access = useAccess(cluster, checks)
-  const mayDelete = canDelete && (access.data?.[0]?.allowed ?? false)
-  const mayRestart = canRestart && (access.data?.[canDelete ? 1 : 0]?.allowed ?? false)
+  const may = (verb: string) =>
+    access.data?.[checkVerbs.indexOf(verb)]?.allowed ?? false
+  const mayDelete = canDelete && may('delete')
+  const mayRestart = canRestart && may('patch')
+  const mayCreate = canCreate && may('create')
 
   const update = useCallback(
     (patch: Record<string, string | null>) => {
@@ -323,6 +333,22 @@ export function ResourceList() {
         <Button size="sm" onClick={() => refetch()}>
           Refresh
         </Button>
+        {mayCreate && (
+          <Button
+            size="sm"
+            variant="primary"
+            title={`Create a ${meta?.kind ?? 'resource'} from YAML`}
+            onClick={() =>
+              navigate(
+                `/c/${cluster}/r/${group}/${version}/${resource}/create${
+                  namespace ? `?namespace=${namespace}` : ''
+                }`,
+              )
+            }
+          >
+            + New
+          </Button>
+        )}
       </div>
 
       {selectedRows.length > 0 && (

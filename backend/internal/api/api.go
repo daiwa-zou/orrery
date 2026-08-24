@@ -110,6 +110,9 @@ func (a *API) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, errBadRequest):
 		status = http.StatusBadRequest
 		errKind = "bad_request"
+	case errors.Is(err, errNotFound):
+		status = http.StatusNotFound
+		errKind = "not_found"
 	}
 
 	if status >= 500 {
@@ -122,6 +125,12 @@ var errBadRequest = errors.New("bad request")
 
 func badRequest(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", errBadRequest, fmt.Sprintf(format, args...))
+}
+
+var errNotFound = errors.New("not found")
+
+func notFound(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", errNotFound, fmt.Sprintf(format, args...))
 }
 
 // forbiddenError is raised when our own access review says no, before any call

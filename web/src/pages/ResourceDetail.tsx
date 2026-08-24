@@ -272,6 +272,8 @@ function ResourceDetailInner() {
   const kind = obj?.kind ?? ''
   const isPod = kind === 'Pod'
   const isNode = kind === 'Node'
+  const isDeployment = kind === 'Deployment'
+  const isCronJob = kind === 'CronJob'
   const containers = containerNames(obj)
 
   const access = useAccess(
@@ -441,6 +443,21 @@ function ResourceDetailInner() {
               <Button size="sm" onClick={doRestart} title="Stamps the pod template to trigger a rollout">
                 Restart
               </Button>
+            )}
+            {isDeployment && mayUpdate && ns && (
+              <RollbackButton cluster={cluster!} namespace={ns} name={name!} onDone={invalidate} />
+            )}
+            {isCronJob && mayUpdate && ns && (
+              <CronJobActions
+                cluster={cluster!}
+                namespace={ns}
+                name={name!}
+                suspended={(obj.spec as { suspend?: boolean })?.suspend === true}
+                onDone={invalidate}
+              />
+            )}
+            {isPod && mayDelete && ns && (
+              <EvictButton cluster={cluster!} namespace={ns} pod={name!} />
             )}
             {isNode && mayUpdate && (
               <>
@@ -722,6 +739,229 @@ function StatusSection({ status }: { status?: Record<string, unknown> }) {
         </pre>
       )}
     </section>
+  )
+}
+
+/** kubectl rollout history + undo, as a modal. */
+function RollbackButton({
+  cluster,
+  namespace,
+  name,
+  onDone,
+}: {
+  cluster: string
+  namespace: string
+  name: string
+  onDone: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  const history = useQuery({
+    queryKey: ['rollout-history', cluster, namespace, name],
+    queryFn: () => api.rolloutHistory(cluster, namespace, name),
+    enabled: open,
+  })
+
+  const undo = async (toRevision: number) => {
+    setBusy(true)
+    try {
+      const res = await api.rolloutUndo(cluster, namespace, name, toRevision)
+      toast.push({
+        tone: 'ok',
+        title: `Rolled ${name} back to revision ${res.toRevision}`,
+        description: 'A new rollout with the old template is under way.',
+      })
+      setOpen(false)
+      onDone()
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Rollback failed', description: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revisions = history.data?.revisions ?? []
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)} title="Rollout history and rollback">
+        History
+      </Button>
+      <Modal open={open} title={`Rollout history of ${name}`} wide onClose={() => setOpen(false)}>
+        {history.isLoading && (
+          <p className="flex items-center gap-2 py-6 text-sm text-ink-faint">
+            <Spinner /> Reading ReplicaSet revisions
+          </p>
+        )}
+        {history.error != null && <ErrorState error={history.error} retry={history.refetch} />}
+        {history.data && revisions.length === 0 && (
+          <p className="py-6 text-center text-sm text-ink-faint">No revisions recorded.</p>
+        )}
+        {revisions.length > 0 && (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-ink-faint uppercase">
+                <th className="py-1.5 pr-3 font-medium">Revision</th>
+                <th className="py-1.5 pr-3 font-medium">Images</th>
+                <th className="py-1.5 pr-3 text-right font-medium">Age</th>
+                <th className="py-1.5 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {revisions.map((rev) => (
+                <tr key={rev.revision} className="border-b border-border/50">
+                  <td className="py-1.5 pr-3 tabular-nums">
+                    {rev.revision}
+                    {rev.current && (
+                      <Badge tone="info" title="The template currently deployed">
+                        current
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="max-w-[20rem] truncate py-1.5 pr-3 font-mono text-xs text-ink-muted" title={rev.images.join('\n')}>
+                    {rev.images.join(', ') || '—'}
+                  </td>
+                  <td className="py-1.5 pr-3 text-right">
+                    <Age timestamp={rev.createdAt} />
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {!rev.current && (
+                      <Button size="sm" disabled={busy} onClick={() => undo(rev.revision)}>
+                        Roll back
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Modal>
+    </>
+  )
+}
+
+/** Run-now and suspend/resume — the two things kubectl users reach for on a CronJob. */
+function CronJobActions({
+  cluster,
+  namespace,
+  name,
+  suspended,
+  onDone,
+}: {
+  cluster: string
+  namespace: string
+  name: string
+  suspended: boolean
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+  const navigate = useNavigate()
+
+  const runNow = async () => {
+    setBusy(true)
+    try {
+      const res = await api.triggerCronJob(cluster, namespace, name)
+      toast.push({
+        tone: 'ok',
+        title: `Started job ${res.job}`,
+        description: 'Created from this CronJob’s template, marked as a manual run.',
+      })
+      navigate(`/c/${cluster}/r/batch/v1/jobs/${namespace}/${res.job}`)
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Run failed', description: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleSuspend = async () => {
+    setBusy(true)
+    try {
+      await api.suspendCronJob(cluster, namespace, name, !suspended)
+      toast.push({
+        tone: 'ok',
+        title: suspended ? `${name} resumed` : `${name} suspended`,
+        description: suspended
+          ? 'Scheduled runs will happen again.'
+          : 'No new runs will be scheduled until it is resumed.',
+      })
+      onDone()
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Update failed', description: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={runNow} disabled={busy} title="Create a one-off Job from this CronJob's template">
+        Run now
+      </Button>
+      <Button size="sm" onClick={toggleSuspend} disabled={busy}>
+        {suspended ? 'Resume' : 'Suspend'}
+      </Button>
+    </>
+  )
+}
+
+/** Eviction respects PodDisruptionBudgets, unlike a plain delete. */
+function EvictButton({
+  cluster,
+  namespace,
+  pod,
+}: {
+  cluster: string
+  namespace: string
+  pod: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  const evict = async () => {
+    setBusy(true)
+    try {
+      await api.evict(cluster, namespace, pod)
+      toast.push({ tone: 'ok', title: `Evicting ${pod}` })
+      setOpen(false)
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Eviction failed', description: (e as Error).message })
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Evict
+      </Button>
+      <Modal
+        open={open}
+        title={`Evict ${pod}?`}
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={evict} disabled={busy}>
+              Evict
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-ink-muted">
+          Eviction goes through the eviction API, so PodDisruptionBudgets are honoured — the
+          request is refused rather than violating a budget. A controller-managed pod will be
+          recreated elsewhere.
+        </p>
+      </Modal>
+    </>
   )
 }
 

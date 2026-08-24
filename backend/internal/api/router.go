@@ -68,6 +68,7 @@ func (a *API) Router() http.Handler {
 
 				r.Get("/resources/{group}/{version}/{resource}", a.listResources)
 				r.Get("/resources/{group}/{version}/{resource}/{namespace}/{name}", a.getResource)
+				r.Get("/rollout/history", a.rolloutHistory)
 
 				// ---- streams ----
 				// A browser cannot attach a CSRF header to a WebSocket
@@ -90,6 +91,9 @@ func (a *API) Router() http.Handler {
 
 					r.Post("/actions/scale", a.scaleWorkload)
 					r.Post("/actions/restart", a.restartWorkload)
+					r.Post("/actions/rollout-undo", a.rolloutUndo)
+					r.Post("/actions/trigger-cronjob", a.triggerCronJob)
+					r.Post("/actions/suspend-cronjob", a.suspendCronJob)
 					r.Post("/actions/cordon", a.cordonNode)
 					r.Post("/actions/drain", a.drainNode)
 					r.Post("/actions/evict", a.evictPod)

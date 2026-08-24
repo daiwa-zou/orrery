@@ -124,6 +124,16 @@ function qs(params: Record<string, unknown>): string {
   return s ? `?${s}` : ''
 }
 
+export interface Revision {
+  revision: number
+  name: string
+  images: string[]
+  replicas: number
+  current: boolean
+  changeCause?: string
+  createdAt: string
+}
+
 export interface ResourceRef {
   cluster: string
   group: string
@@ -249,6 +259,29 @@ export const api = {
     request<{ restarted: boolean }>(`/clusters/${cluster}/actions/restart`, {
       method: 'POST',
       body: JSON.stringify({ ...ref, group: groupSegment(ref.group) }),
+    }),
+
+  rolloutHistory: (cluster: string, namespace: string, name: string) =>
+    request<{ revisions: Revision[] }>(
+      `/clusters/${cluster}/rollout/history${qs({ namespace, name })}`,
+    ),
+
+  rolloutUndo: (cluster: string, namespace: string, name: string, toRevision?: number) =>
+    request<{ rolledBack: boolean; toRevision: number }>(
+      `/clusters/${cluster}/actions/rollout-undo`,
+      { method: 'POST', body: JSON.stringify({ namespace, name, toRevision }) },
+    ),
+
+  triggerCronJob: (cluster: string, namespace: string, name: string) =>
+    request<{ triggered: boolean; job: string; namespace: string }>(
+      `/clusters/${cluster}/actions/trigger-cronjob`,
+      { method: 'POST', body: JSON.stringify({ namespace, name }) },
+    ),
+
+  suspendCronJob: (cluster: string, namespace: string, name: string, suspend: boolean) =>
+    request<{ suspended: boolean }>(`/clusters/${cluster}/actions/suspend-cronjob`, {
+      method: 'POST',
+      body: JSON.stringify({ namespace, name, suspend }),
     }),
 
   cordon: (cluster: string, node: string, unschedulable: boolean) =>
