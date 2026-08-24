@@ -2,11 +2,12 @@ import clsx from 'clsx'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type ResourceRef } from '../api/client'
+import { api, proxyURL, type ResourceRef } from '../api/client'
 import { useAccess, useEvents, useResource } from '../api/hooks'
 import type { KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
+import { MetadataEditor } from '../components/MetadataEditor'
 import { Terminal } from '../components/Terminal'
 import { YamlEditor } from '../components/YamlEditor'
 import {
@@ -15,7 +16,6 @@ import {
   Button,
   ErrorState,
   Field,
-  LabelChips,
   Modal,
   Spinner,
   StatusBadge,
@@ -284,14 +284,16 @@ function ResourceDetailInner() {
           { verb: 'delete', group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name },
           { verb: 'update', group: ref.group, version: ref.version, resource: ref.resource, subresource: 'scale', namespace: ns, name },
           { verb: 'create', group: '', version: 'v1', resource: 'pods', subresource: 'exec', namespace: ns, name },
+          { verb: 'patch', group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name },
         ]
       : [],
   )
-  const [mayUpdate, mayDelete, mayScale, mayExec] = [
+  const [mayUpdate, mayDelete, mayScale, mayExec, mayPatch] = [
     access.data?.[0]?.allowed ?? false,
     access.data?.[1]?.allowed ?? false,
     access.data?.[2]?.allowed ?? false,
     access.data?.[3]?.allowed ?? false,
+    access.data?.[4]?.allowed ?? false,
   ]
 
   const owners = obj?.metadata.ownerReferences ?? []
@@ -343,6 +345,22 @@ function ResourceDetailInner() {
       invalidate()
     } catch (e) {
       toast.push({ tone: 'danger', title: 'Cordon failed', description: (e as Error).message })
+    }
+  }
+
+  const saveMetadata = (field: 'labels' | 'annotations') => async (
+    changes: Record<string, string | null>,
+  ) => {
+    try {
+      await api.patch(ref, { metadata: { [field]: changes } })
+      toast.push({
+        tone: 'ok',
+        title: `${field === 'labels' ? 'Labels' : 'Annotations'} of ${name} updated`,
+      })
+      invalidate()
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Update failed', description: (e as Error).message })
+      throw e // Keeps the editor open with the draft intact.
     }
   }
 
@@ -445,7 +463,14 @@ function ResourceDetailInner() {
               </Button>
             )}
             {isDeployment && mayUpdate && ns && (
-              <RollbackButton cluster={cluster!} namespace={ns} name={name!} onDone={invalidate} />
+              <>
+                <RollbackButton cluster={cluster!} namespace={ns} name={name!} onDone={invalidate} />
+                <PauseButton
+                  paused={(obj.spec as { paused?: boolean })?.paused === true}
+                  objRef={ref}
+                  onDone={invalidate}
+                />
+              </>
             )}
             {isCronJob && mayUpdate && ns && (
               <CronJobActions
@@ -468,6 +493,11 @@ function ResourceDetailInner() {
                   {(obj.spec as { unschedulable?: boolean })?.unschedulable ? 'Uncordon' : 'Cordon'}
                 </Button>
                 <DrainButton cluster={cluster!} node={name!} onDone={invalidate} />
+                <TaintsButton
+                  objRef={ref}
+                  taints={((obj.spec as { taints?: Taint[] })?.taints ?? [])}
+                  onDone={invalidate}
+                />
               </>
             )}
             {mayDelete && (
@@ -522,10 +552,20 @@ function ResourceDetailInner() {
                   <span className="font-mono text-xs">{obj.metadata.uid}</span>
                 </Field>
                 <Field label="Labels">
-                  <LabelChips labels={obj.metadata.labels} />
+                  <MetadataEditor
+                    field="labels"
+                    values={obj.metadata.labels}
+                    canEdit={mayPatch}
+                    onSave={saveMetadata('labels')}
+                  />
                 </Field>
                 <Field label="Annotations">
-                  <LabelChips labels={obj.metadata.annotations} />
+                  <MetadataEditor
+                    field="annotations"
+                    values={obj.metadata.annotations}
+                    canEdit={mayPatch}
+                    onSave={saveMetadata('annotations')}
+                  />
                 </Field>
                 {owners.length > 0 && (
                   <Field label="Controlled by">
@@ -549,6 +589,10 @@ function ResourceDetailInner() {
                   setTab('logs')
                 }}
               />
+            )}
+
+            {(isPod || kind === 'Service') && ns && (
+              <ProxySection cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
             )}
 
             <StatusSection status={status} />
@@ -738,6 +782,239 @@ function StatusSection({ status }: { status?: Record<string, unknown> }) {
           {JSON.stringify(rest, null, 2)}
         </pre>
       )}
+    </section>
+  )
+}
+
+/** kubectl rollout pause / resume. */
+function PauseButton({
+  paused,
+  objRef,
+  onDone,
+}: {
+  paused: boolean
+  objRef: ResourceRef
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  const toggle = async () => {
+    setBusy(true)
+    try {
+      await api.patch(objRef, { spec: { paused: paused ? null : true } })
+      toast.push({
+        tone: 'ok',
+        title: paused ? 'Rollouts resumed' : 'Rollouts paused',
+        description: paused
+          ? 'Template changes trigger rollouts again.'
+          : 'Template changes accumulate without triggering a rollout until resumed.',
+      })
+      onDone()
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Update failed', description: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Button size="sm" onClick={toggle} disabled={busy} title="kubectl rollout pause / resume">
+      {paused ? 'Resume rollouts' : 'Pause rollouts'}
+    </Button>
+  )
+}
+
+interface Taint {
+  key: string
+  value?: string
+  effect: string
+}
+
+/** kubectl taint, as a modal editor over spec.taints. */
+function TaintsButton({
+  objRef,
+  taints,
+  onDone,
+}: {
+  objRef: ResourceRef
+  taints: Taint[]
+  onDone: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<Taint[]>(taints)
+  const [key, setKey] = useState('')
+  const [value, setValue] = useState('')
+  const [effect, setEffect] = useState('NoSchedule')
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  const openModal = () => {
+    setDraft(taints)
+    setOpen(true)
+  }
+
+  const apply = async () => {
+    setBusy(true)
+    try {
+      // Merge patch replaces the whole array, which is exactly right here.
+      await api.patch(objRef, { spec: { taints: draft.length > 0 ? draft : null } })
+      toast.push({ tone: 'ok', title: 'Taints updated' })
+      setOpen(false)
+      onDone()
+    } catch (e) {
+      toast.push({ tone: 'danger', title: 'Taint update failed', description: (e as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={openModal} title="kubectl taint">
+        Taints{taints.length > 0 && ` (${taints.length})`}
+      </Button>
+      <Modal
+        open={open}
+        title="Node taints"
+        wide
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={apply} disabled={busy}>
+              Apply taints
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-3 text-sm text-ink-muted">
+          Taints repel pods without a matching toleration. NoSchedule blocks new pods, NoExecute
+          also evicts running ones.
+        </p>
+        {draft.length === 0 && <p className="text-sm text-ink-faint">No taints.</p>}
+        <ul className="space-y-1">
+          {draft.map((t, i) => (
+            <li key={`${t.key}-${i}`} className="flex items-center gap-2 font-mono text-xs">
+              <span className="flex-1 truncate text-ink">
+                {t.key}
+                {t.value ? `=${t.value}` : ''}:{t.effect}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDraft(draft.filter((_, j) => j !== i))}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="key"
+            aria-label="Taint key"
+            className="w-40 rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+          />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="value (optional)"
+            aria-label="Taint value"
+            className="w-36 rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+          />
+          <select
+            value={effect}
+            onChange={(e) => setEffect(e.target.value)}
+            aria-label="Taint effect"
+            className="rounded bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
+          >
+            <option>NoSchedule</option>
+            <option>PreferNoSchedule</option>
+            <option>NoExecute</option>
+          </select>
+          <Button
+            size="sm"
+            disabled={!key.trim()}
+            onClick={() => {
+              setDraft([...draft, { key: key.trim(), value: value.trim() || undefined, effect }])
+              setKey('')
+              setValue('')
+            }}
+          >
+            Add
+          </Button>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+/**
+ * Read-only HTTP proxy links — the browser's kubectl port-forward. Each port
+ * opens through the API server's proxy subresource under the viewer's own
+ * identity, so RBAC still applies.
+ */
+function ProxySection({
+  cluster,
+  kind,
+  namespace,
+  name,
+  obj,
+}: {
+  cluster: string
+  kind: string
+  namespace: string
+  name: string
+  obj: KubeObject
+}) {
+  const ports: { label: string; port: number }[] = []
+  if (kind === 'Service') {
+    const spec = obj.spec as { ports?: { name?: string; port: number }[] }
+    for (const p of spec?.ports ?? []) {
+      ports.push({ label: p.name ? `${p.name} (${p.port})` : String(p.port), port: p.port })
+    }
+  } else {
+    const spec = obj.spec as { containers?: { name: string; ports?: { containerPort: number; name?: string }[] }[] }
+    for (const c of spec?.containers ?? []) {
+      for (const p of c.ports ?? []) {
+        ports.push({
+          label: `${c.name}:${p.name ?? p.containerPort}`,
+          port: p.containerPort,
+        })
+      }
+    }
+  }
+  if (ports.length === 0) return null
+
+  const ptype = kind === 'Service' ? 'services' : 'pods'
+
+  return (
+    <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
+      <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">
+        HTTP proxy
+      </h2>
+      <p className="mb-2 text-xs text-ink-muted">
+        Opens the port through the API server&apos;s proxy — port-forward for HTTP, read-only,
+        under your own identity.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {ports.map((p) => (
+          <a
+            key={`${p.label}-${p.port}`}
+            href={proxyURL(cluster, namespace, ptype, name, p.port)}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded bg-surface-2 px-2 py-1 font-mono text-xs text-accent ring-1 ring-border hover:bg-border/50"
+          >
+            {p.label} ↗
+          </a>
+        ))}
+      </div>
     </section>
   )
 }

@@ -124,6 +124,33 @@ function qs(params: Record<string, unknown>): string {
   return s ? `?${s}` : ''
 }
 
+export interface ExplainField {
+  name: string
+  type: string
+  description?: string
+  required?: boolean
+  hasChildren?: boolean
+}
+
+export interface ExplainResponse {
+  kind: string
+  fieldPath?: string
+  type: string
+  description?: string
+  fields?: ExplainField[]
+}
+
+/** URL of the read-only HTTP proxy into a pod or service port. */
+export function proxyURL(
+  cluster: string,
+  namespace: string,
+  ptype: 'pods' | 'services',
+  name: string,
+  port: string | number,
+): string {
+  return `${BASE}/clusters/${cluster}/proxy/${namespace}/${ptype}/${name}:${port}/`
+}
+
 export interface Revision {
   revision: number
   name: string
@@ -204,6 +231,18 @@ export const api = {
       { method: 'PUT', body, headers: { 'Content-Type': 'application/yaml' } },
     ),
 
+  /** JSON merge patch (RFC 7386): a null value deletes that key. */
+  patch: (ref: ResourceRef, body: unknown) =>
+    request<KubeObject>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
+        `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/merge-patch+json' },
+      },
+    ),
+
   create: (ref: Omit<ResourceRef, 'name'>, body: string) =>
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/${ref.resource}` +
@@ -260,6 +299,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ...ref, group: groupSegment(ref.group) }),
     }),
+
+  explain: (
+    cluster: string,
+    params: { group: string; version: string; kind: string; field?: string },
+    signal?: AbortSignal,
+  ) => request<ExplainResponse>(`/clusters/${cluster}/explain${qs(params)}`, {}, signal),
 
   rolloutHistory: (cluster: string, namespace: string, name: string) =>
     request<{ revisions: Revision[] }>(

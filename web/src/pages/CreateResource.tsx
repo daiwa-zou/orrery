@@ -6,6 +6,7 @@ import { yaml } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { api } from '../api/client'
 import { useDiscovery } from '../api/hooks'
+import { ExplainPanel } from '../components/ExplainPanel'
 import { Button, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
@@ -51,6 +52,7 @@ export function CreateResource() {
   const [draft, setDraft] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [explainOpen, setExplainOpen] = useState(true)
   const value = draft ?? template
 
   const create = async () => {
@@ -89,6 +91,9 @@ export function CreateResource() {
           The manifest is submitted as written — the same contract as kubectl create -f.
         </span>
         <div className="flex-1" />
+        <Button size="sm" onClick={() => setExplainOpen((v) => !v)} title="kubectl explain, inline">
+          {explainOpen ? 'Hide reference' : 'Field reference'}
+        </Button>
         <Button size="sm" onClick={() => navigate(-1)} disabled={busy}>
           Cancel
         </Button>
@@ -104,15 +109,25 @@ export function CreateResource() {
         </p>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <CodeMirror
-          value={value}
-          height="100%"
-          theme={oneDark}
-          extensions={[yaml()]}
-          onChange={setDraft}
-          basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: false }}
-        />
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+          <CodeMirror
+            value={value}
+            height="100%"
+            theme={oneDark}
+            extensions={[yaml()]}
+            onChange={setDraft}
+            basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: false }}
+          />
+        </div>
+        {explainOpen && meta && cluster && (
+          <ExplainPanel
+            cluster={cluster}
+            group={meta.group}
+            version={meta.version}
+            kind={meta.kind}
+          />
+        )}
       </div>
     </div>
   )

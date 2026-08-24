@@ -1,7 +1,8 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml } from '@codemirror/lang-yaml'
+import { unifiedMergeView } from '@codemirror/merge'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Spinner } from './primitives'
 
 interface YamlEditorProps {
@@ -27,6 +28,7 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [dirty, setDirty] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
   // The value that was on screen when a save succeeded. Until the refetch
   // lands, the prop still holds this pre-save text; adopting it would make the
   // editor visibly revert the change that was just applied.
@@ -73,6 +75,16 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
     setError(undefined)
   }
 
+  // kubectl diff, inline: deleted server lines appear struck through above
+  // the draft's replacements, so Apply is never a leap of faith.
+  const diffExtensions = useMemo(
+    () =>
+      showDiff
+        ? [yaml(), unifiedMergeView({ original: value, mergeControls: false })]
+        : [yaml()],
+    [showDiff, value],
+  )
+
   return (
     <div className="flex h-full flex-col">
       {(notice || onSave) && (
@@ -82,6 +94,14 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
           {dirty && <span className="text-xs text-warn">unsaved changes</span>}
           {onSave && !readOnly && (
             <>
+              <Button
+                size="sm"
+                onClick={() => setShowDiff((v) => !v)}
+                disabled={!dirty && !showDiff}
+                title="Show what Apply would change, kubectl diff style"
+              >
+                {showDiff ? 'Hide diff' : 'Diff'}
+              </Button>
               <Button size="sm" onClick={revert} disabled={!dirty || saving}>
                 Revert
               </Button>
@@ -105,7 +125,7 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
           value={draft}
           height="100%"
           theme={oneDark}
-          extensions={[yaml()]}
+          extensions={diffExtensions}
           editable={!readOnly}
           onChange={(next) => {
             setDraft(next)

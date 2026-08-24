@@ -69,6 +69,10 @@ func (a *API) Router() http.Handler {
 				r.Get("/resources/{group}/{version}/{resource}", a.listResources)
 				r.Get("/resources/{group}/{version}/{resource}/{namespace}/{name}", a.getResource)
 				r.Get("/rollout/history", a.rolloutHistory)
+				r.Get("/explain", a.explainHandler)
+				// Read-only HTTP proxy into pods and services — the browser's
+				// kubectl port-forward. GET/HEAD only, enforced inside.
+				r.HandleFunc("/proxy/{namespace}/{ptype}/{name}/*", a.proxyHTTP)
 
 				// ---- streams ----
 				// A browser cannot attach a CSRF header to a WebSocket

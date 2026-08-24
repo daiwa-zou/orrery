@@ -15,6 +15,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/openapi"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -168,6 +169,13 @@ func clientsFor(rc *rest.Config, self bool) (*Clients, error) {
 // Base returns the dashboard's own clients, used for informers and for
 // SubjectAccessReview.
 func (c *Cluster) Base() *Clients { return c.base }
+
+// OpenAPIClient exposes the cluster's OpenAPI v3 discovery. The document is
+// the API's shape, not object data, and is served with the dashboard's own
+// credentials — the same standing kubectl explain relies on.
+func (c *Cluster) OpenAPIClient() openapi.Client {
+	return c.base.Kube.Discovery().OpenAPIV3()
+}
 
 // AuthSubject converts an identity into the subject of an access review.
 func (c *Cluster) AuthSubject(id Identity) authz.Subject {
