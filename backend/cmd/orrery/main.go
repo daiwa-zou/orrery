@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
-	"github.com/daiwazou/orrery/backend/internal/server"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/server"
 )
 
 func main() {

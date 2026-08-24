@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // EventType mirrors the Kubernetes watch verbs plus two control signals the

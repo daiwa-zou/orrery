@@ -9,7 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/daiwazou/orrery/backend/internal/auth"
+	"github.com/daiwa-zou/orrery/backend/internal/auth"
 )
 
 const (

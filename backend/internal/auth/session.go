@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // ErrNoSession is returned when a request carries no usable session.

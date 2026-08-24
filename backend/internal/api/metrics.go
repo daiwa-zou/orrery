@@ -10,7 +10,7 @@ import (
 
 	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
-	"github.com/daiwazou/orrery/backend/internal/authz"
+	"github.com/daiwa-zou/orrery/backend/internal/authz"
 )
 
 // usage is a CPU/memory pair in the canonical units the frontend charts.

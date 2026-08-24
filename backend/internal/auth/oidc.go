@@ -14,7 +14,7 @@ import (
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // stateCookieName holds the in-flight login. Keeping the state, nonce and PKCE

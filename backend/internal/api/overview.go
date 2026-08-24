@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/daiwazou/orrery/backend/internal/authz"
+	"github.com/daiwa-zou/orrery/backend/internal/authz"
 )
 
 // countSummary is a count the caller may not have been allowed to compute.

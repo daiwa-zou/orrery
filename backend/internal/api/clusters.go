@@ -5,10 +5,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/daiwazou/orrery/backend/internal/auth"
-	"github.com/daiwazou/orrery/backend/internal/authz"
-	"github.com/daiwazou/orrery/backend/internal/cluster"
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/auth"
+	"github.com/daiwa-zou/orrery/backend/internal/authz"
+	"github.com/daiwa-zou/orrery/backend/internal/cluster"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // clusterSummary is the cluster switcher's view of one cluster.

@@ -16,8 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
-	"github.com/daiwazou/orrery/backend/internal/authz"
-	"github.com/daiwazou/orrery/backend/internal/cluster"
+	"github.com/daiwa-zou/orrery/backend/internal/authz"
+	"github.com/daiwa-zou/orrery/backend/internal/cluster"
 )
 
 // maxBodyBytes bounds manifest uploads. Kubernetes itself refuses objects

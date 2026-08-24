@@ -9,7 +9,7 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // Entry is a registered cluster, which may not currently be usable.

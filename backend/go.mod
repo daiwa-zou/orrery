@@ -1,4 +1,4 @@
-module github.com/daiwazou/orrery/backend
+module github.com/daiwa-zou/orrery/backend
 
 go 1.26.0
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 func testKey(t *testing.T) []byte {

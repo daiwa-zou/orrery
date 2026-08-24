@@ -19,8 +19,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 
-	"github.com/daiwazou/orrery/backend/internal/authz"
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/authz"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // Identity is the end user as the cluster layer needs to see them, decoupled

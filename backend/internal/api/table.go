@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/jsonpath"
 
-	"github.com/daiwazou/orrery/backend/internal/cluster"
+	"github.com/daiwa-zou/orrery/backend/internal/cluster"
 )
 
 // crdColumnsGVR is where additional printer columns live.

@@ -13,10 +13,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/daiwazou/orrery/backend/internal/api"
-	"github.com/daiwazou/orrery/backend/internal/auth"
-	"github.com/daiwazou/orrery/backend/internal/cluster"
-	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwa-zou/orrery/backend/internal/api"
+	"github.com/daiwa-zou/orrery/backend/internal/auth"
+	"github.com/daiwa-zou/orrery/backend/internal/cluster"
+	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
 // Server owns the listeners and the resources behind them.
