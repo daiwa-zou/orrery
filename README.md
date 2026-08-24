@@ -202,7 +202,12 @@ GET    /api/v1/clusters/{c}/stats
 ```
 
 List endpoints take `namespace`, `q`, `labelSelector`, `fieldSelector`, `sort`,
-`order`, `page`, `pageSize` and `view=table|full`.
+`order`, `page`, `pageSize` and `view=table|full`. `q` is free text matched
+against name, namespace and labels (`app=web` works). The watch endpoint
+accepts the same `q`/`labelSelector`/`fieldSelector` and translates edits
+across the filter boundary into ADDED/DELETED, so a filtered page only hears
+about objects it shows. Unsupported `fieldSelector` fields are rejected with
+a 400 naming the supported set rather than silently matching nothing.
 
 Sessions are cookie-based: the session cookie is `HttpOnly` and encrypted, and
 mutating requests carry a double-submit CSRF token in `X-CSRF-Token`.

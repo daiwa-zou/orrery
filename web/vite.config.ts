@@ -11,7 +11,9 @@ export default defineConfig({
       // backend, so the browser sees one origin and cookies behave exactly as
       // they will in production.
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        // Overridable so a second checkout or a rebuilt backend can be tested
+        // without stealing port 8080 from a backend already running.
+        target: process.env.ORRERY_API ?? 'http://127.0.0.1:8080',
         changeOrigin: true,
         ws: true,
       },

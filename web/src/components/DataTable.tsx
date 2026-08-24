@@ -22,6 +22,8 @@ export interface DataTableProps {
    */
   selected?: ReadonlySet<string>
   onSelectedChange?: (next: Set<string>) => void
+  /** Makes label chips (columns of type "labels") clickable filter toggles. */
+  onLabelClick?: (key: string, value: string) => void
   emptyTitle?: string
   emptyDescription?: ReactNode
   loading?: boolean
@@ -44,7 +46,15 @@ function priorityClass(priority?: number): string {
   return PRIORITY_CLASS[Math.min(priority, 3)] ?? PRIORITY_CLASS[3]
 }
 
-function Cell({ column, row }: { column: Column; row: Row }) {
+function Cell({
+  column,
+  row,
+  onLabelClick,
+}: {
+  column: Column
+  row: Row
+  onLabelClick?: (key: string, value: string) => void
+}) {
   const value = row[column.key]
 
   if (value === undefined || value === null || value === '') {
@@ -52,6 +62,39 @@ function Cell({ column, row }: { column: Column; row: Row }) {
   }
 
   switch (column.type) {
+    case 'labels': {
+      const labels = Object.entries(value as Record<string, string>).sort(([a], [b]) =>
+        a.localeCompare(b),
+      )
+      if (labels.length === 0) return <span className="text-ink-faint">—</span>
+      return (
+        <span className="flex max-w-[28rem] flex-wrap gap-1">
+          {labels.map(([k, v]) => (
+            <button
+              key={k}
+              type="button"
+              disabled={!onLabelClick}
+              title={onLabelClick ? `Toggle label filter ${k}=${v}` : undefined}
+              className={clsx(
+                'max-w-[16rem] truncate rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border',
+                onLabelClick && 'cursor-pointer hover:text-ink hover:ring-accent',
+              )}
+              onClick={
+                onLabelClick
+                  ? (e) => {
+                      // The row itself navigates; a chip click must not.
+                      e.stopPropagation()
+                      onLabelClick(k, v)
+                    }
+                  : undefined
+              }
+            >
+              {k}={v}
+            </button>
+          ))}
+        </span>
+      )
+    }
     case 'status':
       return <StatusBadge value={String(value)} />
 
@@ -125,6 +168,7 @@ export function DataTable({
   rowActions,
   selected,
   onSelectedChange,
+  onLabelClick,
   emptyTitle = 'Nothing here',
   emptyDescription,
   loading,
@@ -160,6 +204,9 @@ export function DataTable({
             )}
             {columns.map((column) => {
               const active = sort === column.key
+              // A labels cell holds a map; there is no meaningful order to
+              // offer, so the header is inert rather than a silent no-op.
+              const sortable = onSort && column.type !== 'labels' ? onSort : undefined
               return (
                 <th
                   key={column.key}
@@ -168,22 +215,22 @@ export function DataTable({
                     'group px-3 py-2 text-xs font-medium tracking-wide text-ink-faint uppercase',
                     column.align === 'right' && 'text-right',
                     priorityClass(column.priority),
-                    onSort && 'cursor-pointer select-none hover:text-ink-muted',
+                    sortable && 'cursor-pointer select-none hover:text-ink-muted',
                   )}
-                  onClick={onSort ? () => onSort(column.key) : undefined}
+                  onClick={sortable ? () => sortable(column.key) : undefined}
                   onKeyDown={
-                    onSort
+                    sortable
                       ? (e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault()
-                            onSort(column.key)
+                            sortable(column.key)
                           }
                         }
                       : undefined
                   }
-                  tabIndex={onSort ? 0 : undefined}
+                  tabIndex={sortable ? 0 : undefined}
                   aria-sort={
-                    onSort
+                    sortable
                       ? active
                         ? order === 'desc'
                           ? 'descending'
@@ -193,7 +240,7 @@ export function DataTable({
                   }
                 >
                   {column.label}
-                  {onSort && <SortIndicator active={active} order={order} />}
+                  {sortable && <SortIndicator active={active} order={order} />}
                 </th>
               )
             })}
@@ -258,7 +305,7 @@ export function DataTable({
                         )}
                       </span>
                     ) : (
-                      <Cell column={column} row={row} />
+                      <Cell column={column} row={row} onLabelClick={onLabelClick} />
                     )}
                   </td>
                 ))}

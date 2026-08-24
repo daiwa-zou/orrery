@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -53,6 +54,49 @@ func TestFilterObjectsByName(t *testing.T) {
 	// Matching is case-insensitive; people type lower case.
 	if len(got) != 2 {
 		t.Errorf("got %v, want the two web entries", names(got))
+	}
+}
+
+func TestFilterObjectsQueryMatchesNamespaceAndLabels(t *testing.T) {
+	objs := []*unstructured.Unstructured{
+		obj("payments-api", "prod", nil, nil),
+		obj("worker", "payments", nil, nil),
+		obj("cache", "demo", map[string]string{"team": "payments"}, nil),
+		obj("unrelated", "demo", map[string]string{"app": "web"}, nil),
+	}
+
+	got, err := filterObjects(objs, req("q=payments"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Name, namespace and label values all count as matches.
+	if len(got) != 3 {
+		t.Errorf("q=payments matched %v, want name+namespace+label hits", names(got))
+	}
+
+	// "key=value" reaches labels without selector syntax.
+	got, err = filterObjects(objs, req("q=app%3Dweb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].GetName() != "unrelated" {
+		t.Errorf("q=app=web matched %v, want [unrelated]", names(got))
+	}
+}
+
+func TestFilterObjectsRejectsUnsupportedFieldKey(t *testing.T) {
+	objs := []*unstructured.Unstructured{obj("a", "demo", nil, nil)}
+
+	// A field this server never projects must 400, not silently match nothing.
+	_, err := filterObjects(objs, req("fieldSelector=spec.serviceAccountName%3Dx"))
+	if err == nil {
+		t.Fatal("an unsupported field selector key should be rejected")
+	}
+	if !strings.Contains(err.Error(), "spec.serviceAccountName") {
+		t.Errorf("the error should name the offending field, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "spec.nodeName") {
+		t.Errorf("the error should list the supported fields, got %q", err)
 	}
 }
 

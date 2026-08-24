@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useDiscovery, useEvents } from '../api/hooks'
 import type { APIResource, Row } from '../api/types'
 import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
 import { Button, ErrorState, Spinner } from '../components/primitives'
+import { useDebouncedInput } from '../lib/useDebouncedInput'
 
 /**
  * Cluster-wide event feed. The per-object feed lives on the detail page; this
@@ -18,10 +19,24 @@ export function Events() {
 
   const namespace = params.get('namespace') ?? ''
   const warningsOnly = params.get('warnings') === '1'
-  const [q, setQ] = useState('')
+  // The filter lives in the URL like every other list filter, so a filtered
+  // event view can be shared or revisited; it is applied server-side, before
+  // the limit, so matches beyond the newest 500 events still surface.
+  const q = params.get('q') ?? ''
+  const commitQ = useCallback(
+    (v: string) => {
+      const next = new URLSearchParams(params)
+      if (v === '') next.delete('q')
+      else next.set('q', v)
+      setParams(next, { replace: true })
+    },
+    [params, setParams],
+  )
+  const [qInput, setQInput] = useDebouncedInput(q, commitQ)
 
   const { data, isLoading, error, refetch, isFetching } = useEvents(cluster, {
     namespace: namespace || undefined,
+    q: q || undefined,
     warningsOnly,
     limit: 500,
   })
@@ -57,16 +72,7 @@ export function Events() {
     [data],
   )
 
-  const rows = useMemo(() => {
-    const items = data?.items ?? []
-    if (!q) return items
-    const needle = q.toLowerCase()
-    return items.filter((row) =>
-      ['object', 'reason', 'message', 'namespace'].some((key) =>
-        String(row[key] ?? '').toLowerCase().includes(needle),
-      ),
-    )
-  }, [data, q])
+  const rows = data?.items ?? []
 
   const toggleWarnings = () => {
     const next = new URLSearchParams(params)
@@ -113,10 +119,11 @@ export function Events() {
         </label>
 
         <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
           placeholder="Filter events"
           aria-label="Filter events"
+          title="Matches object, reason, message or namespace"
           className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
         <Button size="sm" onClick={() => refetch()}>

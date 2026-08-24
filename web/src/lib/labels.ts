@@ -50,6 +50,30 @@ export function validateLabelValue(value: string): string | undefined {
 }
 
 /**
+ * Toggles a `key=value` equality term in a comma-separated label selector,
+ * which is what clicking a label chip does. Clicking a chip already in the
+ * selector removes it; clicking a different value for a key that already has
+ * an equality term replaces that term, because requiring two values for one
+ * key can never match.
+ */
+export function toggleSelectorTerm(selector: string, key: string, value: string): string {
+  const term = `${key}=${value}`
+  const parts = selector
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+
+  const had = parts.includes(term)
+  const kept = parts.filter((p) => {
+    if (p === term) return false
+    const eq = p.match(/^([^!=<>()\s]+)\s*==?\s*/)
+    return !(eq && eq[1] === key)
+  })
+
+  return (had ? kept : [...kept, term]).join(',')
+}
+
+/**
  * The merge patch that turns `before` into `after`: changed and added keys
  * carry their new value, removed keys carry null (which deletes the key under
  * RFC 7386 merge-patch semantics). Empty result means nothing changed.

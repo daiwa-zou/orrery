@@ -262,6 +262,7 @@ export const api = {
     cluster: string,
     params: {
       namespace?: string
+      q?: string
       involvedName?: string
       involvedKind?: string
       involvedUID?: string

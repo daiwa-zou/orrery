@@ -228,9 +228,11 @@ function NamespacePicker({ cluster }: { cluster: string }) {
           const next = new URLSearchParams(params)
           if (e.target.value) next.set('namespace', e.target.value)
           else next.delete('namespace')
-          // Changing scope invalidates the page you were on.
+          // Changing scope invalidates the page you were on. Replace, like
+          // every other filter control, so Back leaves the page rather than
+          // replaying each namespace hop.
           next.delete('page')
-          setParams(next)
+          setParams(next, { replace: true })
         }}
         className="w-full rounded-md bg-surface-2 px-2 py-1.5 text-sm text-ink ring-1 ring-border"
       >

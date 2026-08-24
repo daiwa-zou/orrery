@@ -1,5 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { metaChanges, validateLabelValue, validateMetaKey } from './labels'
+import { metaChanges, toggleSelectorTerm, validateLabelValue, validateMetaKey } from './labels'
+
+describe('toggleSelectorTerm', () => {
+  it('adds a term to an empty selector', () => {
+    expect(toggleSelectorTerm('', 'app', 'web')).toBe('app=web')
+  })
+
+  it('appends to an existing selector', () => {
+    expect(toggleSelectorTerm('tier=front', 'app', 'web')).toBe('tier=front,app=web')
+  })
+
+  it('removes the term when it is already present', () => {
+    expect(toggleSelectorTerm('tier=front,app=web', 'app', 'web')).toBe('tier=front')
+    expect(toggleSelectorTerm('app=web', 'app', 'web')).toBe('')
+  })
+
+  it('replaces an equality term for the same key', () => {
+    // app=web AND app=api can never match; the newer click wins.
+    expect(toggleSelectorTerm('app=api,tier=front', 'app', 'web')).toBe('tier=front,app=web')
+    expect(toggleSelectorTerm('app==api', 'app', 'web')).toBe('app=web')
+  })
+
+  it('leaves non-equality terms for the key alone', () => {
+    expect(toggleSelectorTerm('app!=api', 'app', 'web')).toBe('app!=api,app=web')
+    expect(toggleSelectorTerm('app in (a,b)', 'app', 'web')).toBe('app in (a,b),app=web')
+  })
+
+  it('survives messy whitespace', () => {
+    expect(toggleSelectorTerm(' tier=front , app=web ', 'app', 'web')).toBe('tier=front')
+  })
+})
 
 describe('validateMetaKey', () => {
   it('accepts plain names and prefixed keys', () => {

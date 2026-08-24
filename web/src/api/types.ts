@@ -9,6 +9,8 @@ export type ColumnType =
   | 'list'
   | 'bool'
   | 'ratio'
+  /** Client-side only: renders Row._labels as clickable filter chips. */
+  | 'labels'
 
 export interface Column {
   key: string

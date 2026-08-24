@@ -250,6 +250,7 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("involvedName")
 	kind := r.URL.Query().Get("involvedKind")
 	onlyWarnings := queryBool(r, "warningsOnly", false)
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 
 	set := a.tableFor(ctx, res.cluster, eventRes)
 	rows := make([]map[string]any, 0, 64)
@@ -269,7 +270,13 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 		if onlyWarnings && str(e, "type") != "Warning" {
 			continue
 		}
-		rows = append(rows, set.row(e))
+		row := set.row(e)
+		// Free text scans the projected columns the table shows, so what
+		// matches is exactly what the reader can see.
+		if q != "" && !rowMatchesQuery(row, q, eventSearchKeys) {
+			continue
+		}
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return strings.Compare(asString(rows[j]["lastSeen"]), asString(rows[i]["lastSeen"])) < 0
@@ -287,6 +294,17 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+var eventSearchKeys = []string{"object", "reason", "message", "namespace"}
+
+func rowMatchesQuery(row map[string]any, q string, keys []string) bool {
+	for _, k := range keys {
+		if v, ok := row[k]; ok && strings.Contains(strings.ToLower(asString(v)), q) {
+			return true
+		}
+	}
+	return false
 }
 
 // whoami reports the signed-in identity and how the server is configured, so

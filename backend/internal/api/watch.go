@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/daiwa-zou/orrery/backend/internal/authz"
 	"github.com/daiwa-zou/orrery/backend/internal/cluster"
@@ -38,6 +39,17 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 	if !res.resource.Namespaced {
 		namespace = ""
 	}
+
+	// The stream applies the same q/labelSelector/fieldSelector the list
+	// endpoint does, so a narrowly filtered page is not woken by every change
+	// elsewhere in the namespace. Parse before upgrading: a bad selector is a
+	// plain 400, same as on the list endpoint.
+	filter, err := parseListFilter(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	events := newWatchEventFilter(filter)
 
 	// Authorize before upgrading: a plain HTTP error is far easier for the
 	// client to handle than a socket that opens and immediately closes.
@@ -75,7 +87,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]map[string]any, 0, len(initial))
 	for _, o := range initial {
-		if !visible.permits(o) {
+		if !visible.permits(o) || !events.admitInitial(o) {
 			continue
 		}
 		items = append(items, buildRow(o, set, r))
@@ -131,8 +143,12 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 				if ev.Object == nil || !visible.permits(ev.Object) {
 					continue
 				}
+				send, ok := events.translate(ev.Type, ev.Object)
+				if !ok {
+					continue
+				}
 				if err := ws.WriteJSON(map[string]any{
-					"type": string(ev.Type),
+					"type": string(send),
 					"item": buildRow(ev.Object, set, r),
 				}); err != nil {
 					return
@@ -140,6 +156,68 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// watchEventFilter translates raw informer events into the stream a filtered
+// subscriber should see. The subtlety is edits across the filter boundary: an
+// object modified so it no longer matches must leave the page as DELETED, and
+// one modified into the filter must arrive as ADDED — a raw MODIFIED would be
+// spliced into (or silently missing from) rows it does not belong to.
+type watchEventFilter struct {
+	filter listFilter
+	// matched is the set of object UIDs the subscriber currently sees; nil
+	// when no filter is active, making the whole type a pass-through.
+	matched map[types.UID]struct{}
+}
+
+func newWatchEventFilter(f listFilter) *watchEventFilter {
+	wf := &watchEventFilter{filter: f}
+	if !f.empty() {
+		wf.matched = make(map[types.UID]struct{})
+	}
+	return wf
+}
+
+// admitInitial reports whether an object belongs in the INIT snapshot, and
+// records it so later events know it was shown.
+func (wf *watchEventFilter) admitInitial(o *unstructured.Unstructured) bool {
+	if wf.matched == nil {
+		return true
+	}
+	if !wf.filter.matches(o) {
+		return false
+	}
+	wf.matched[o.GetUID()] = struct{}{}
+	return true
+}
+
+// translate maps an informer event to what the subscriber should be sent;
+// ok=false means the event is invisible under the filter.
+func (wf *watchEventFilter) translate(t cluster.EventType, o *unstructured.Unstructured) (cluster.EventType, bool) {
+	if wf.matched == nil {
+		return t, true
+	}
+	uid := o.GetUID()
+	_, known := wf.matched[uid]
+
+	if t == cluster.EventDeleted {
+		delete(wf.matched, uid)
+		// An unknown-but-matching delete can happen when the object raced in
+		// before the INIT snapshot; a spurious DELETED only costs a refetch.
+		return cluster.EventDeleted, known || wf.filter.matches(o)
+	}
+	if wf.filter.matches(o) {
+		wf.matched[uid] = struct{}{}
+		if known {
+			return cluster.EventModified, true
+		}
+		return cluster.EventAdded, true
+	}
+	if known {
+		delete(wf.matched, uid)
+		return cluster.EventDeleted, true
+	}
+	return t, false
 }
 
 // watchVisibility encodes which namespaces a stream may reveal.

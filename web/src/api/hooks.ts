@@ -130,7 +130,12 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
 
     const url = wsURL(
       `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
-      { namespace: params.namespace },
+      {
+        namespace: params.namespace,
+        q: params.q,
+        labelSelector: params.labelSelector,
+        fieldSelector: params.fieldSelector,
+      },
     )
 
     const scheduleRefetch = () => {
@@ -231,9 +236,20 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
         socket.close()
       }
     }
-    // params.namespace is the only param the watch itself depends on; the rest
-    // are applied server-side to the REST page.
-  }, [ref?.cluster, ref?.group, ref?.version, ref?.resource, params.namespace, enabled, qc])
+    // The watch carries the narrowing filters so a filtered page is not woken
+    // by every change elsewhere in scope; sort and paging stay REST-only.
+  }, [
+    ref?.cluster,
+    ref?.group,
+    ref?.version,
+    ref?.resource,
+    params.namespace,
+    params.q,
+    params.labelSelector,
+    params.fieldSelector,
+    enabled,
+    qc,
+  ])
 
   return {
     data: query.data,
@@ -259,6 +275,7 @@ export function useEvents(
   cluster: string | undefined,
   filter: {
     namespace?: string
+    q?: string
     involvedName?: string
     involvedKind?: string
     involvedUID?: string

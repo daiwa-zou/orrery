@@ -372,46 +372,116 @@ func compareCell(x, y any) (string, string) {
 	return strings.ToLower(fmt.Sprint(x)), strings.ToLower(fmt.Sprint(y))
 }
 
-// filterObjects applies the free-text, label and field filters in one pass.
-func filterObjects(objs []*unstructured.Unstructured, r *http.Request) ([]*unstructured.Unstructured, error) {
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+// listFilter is the parsed narrowing criteria shared by the list endpoint and
+// the watch stream, so both agree on what "matches" means.
+type listFilter struct {
+	q        string
+	labelSel labels.Selector
+	fieldSel fields.Selector
+}
 
-	var labelSel labels.Selector
+func (f listFilter) empty() bool {
+	return f.q == "" && f.labelSel == nil && f.fieldSel == nil
+}
+
+func (f listFilter) matches(o *unstructured.Unstructured) bool {
+	if f.q != "" && !matchesQuery(o, f.q) {
+		return false
+	}
+	if f.labelSel != nil && !f.labelSel.Matches(labels.Set(o.GetLabels())) {
+		return false
+	}
+	if f.fieldSel != nil && !f.fieldSel.Matches(fieldSetFor(o)) {
+		return false
+	}
+	return true
+}
+
+// matchesQuery is the free-text filter: name, namespace, or any label as
+// "key=value", so typing "app=web" narrows by label without selector syntax.
+func matchesQuery(o *unstructured.Unstructured, q string) bool {
+	if strings.Contains(strings.ToLower(o.GetName()), q) {
+		return true
+	}
+	if ns := o.GetNamespace(); ns != "" && strings.Contains(strings.ToLower(ns), q) {
+		return true
+	}
+	for k, v := range o.GetLabels() {
+		if strings.Contains(strings.ToLower(k+"="+v), q) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseListFilter(r *http.Request) (listFilter, error) {
+	f := listFilter{q: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))}
+
 	if raw := r.URL.Query().Get("labelSelector"); raw != "" {
 		sel, err := labels.Parse(raw)
 		if err != nil {
-			return nil, badRequest("labelSelector: %v", err)
+			return f, badRequest("labelSelector: %v", err)
 		}
-		labelSel = sel
+		f.labelSel = sel
 	}
 
-	var fieldSel fields.Selector
 	if raw := r.URL.Query().Get("fieldSelector"); raw != "" {
 		sel, err := fields.ParseSelector(raw)
 		if err != nil {
-			return nil, badRequest("fieldSelector: %v", err)
+			return f, badRequest("fieldSelector: %v", err)
 		}
-		fieldSel = sel
+		// A field this server never projects would silently match nothing,
+		// which reads as "no such objects" and sends people debugging the
+		// wrong thing. Refuse it instead.
+		for _, req := range sel.Requirements() {
+			if !supportedFieldKeys[req.Field] {
+				return f, badRequest("fieldSelector: unsupported field %q (supported: %s)",
+					req.Field, strings.Join(supportedFieldKeyList(), ", "))
+			}
+		}
+		f.fieldSel = sel
 	}
+	return f, nil
+}
 
-	if q == "" && labelSel == nil && fieldSel == nil {
+// filterObjects applies the free-text, label and field filters in one pass.
+func filterObjects(objs []*unstructured.Unstructured, r *http.Request) ([]*unstructured.Unstructured, error) {
+	f, err := parseListFilter(r)
+	if err != nil {
+		return nil, err
+	}
+	if f.empty() {
 		return objs, nil
 	}
-
 	out := objs[:0:0]
 	for _, o := range objs {
-		if q != "" && !strings.Contains(strings.ToLower(o.GetName()), q) {
-			continue
+		if f.matches(o) {
+			out = append(out, o)
 		}
-		if labelSel != nil && !labelSel.Matches(labels.Set(o.GetLabels())) {
-			continue
-		}
-		if fieldSel != nil && !fieldSel.Matches(fieldSetFor(o)) {
-			continue
-		}
-		out = append(out, o)
 	}
 	return out, nil
+}
+
+// supportedFieldKeys mirrors exactly what fieldSetFor projects.
+var supportedFieldKeys = map[string]bool{
+	"metadata.name":            true,
+	"metadata.namespace":       true,
+	"status.phase":             true,
+	"spec.nodeName":            true,
+	"type":                     true,
+	"involvedObject.name":      true,
+	"involvedObject.kind":      true,
+	"involvedObject.namespace": true,
+	"involvedObject.uid":       true,
+}
+
+func supportedFieldKeyList() []string {
+	out := make([]string, 0, len(supportedFieldKeys))
+	for k := range supportedFieldKeys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // fieldSetFor exposes the field selectors the API server supports for the

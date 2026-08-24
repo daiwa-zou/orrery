@@ -5,7 +5,9 @@ import { api, type ResourceRef } from '../api/client'
 import { useAccess, useLiveList, usePodMetrics } from '../api/hooks'
 import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
+import { toggleSelectorTerm } from '../lib/labels'
 import { rowKey } from '../lib/selection'
+import { useDebouncedInput } from '../lib/useDebouncedInput'
 import { DataTable, Pagination } from '../components/DataTable'
 import { Badge, Button, ErrorState, GatedButton, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
@@ -21,32 +23,6 @@ function nameList(rows: Row[]): string {
   return names.length <= 6
     ? names.join(', ')
     : `${names.slice(0, 6).join(', ')} +${names.length - 6} more`
-}
-
-/**
- * Text input state that commits to the URL after a pause. Every committed
- * value is a server round trip, so keystrokes should not each cost one — and
- * half-typed label selectors are invalid anyway.
- */
-function useDebouncedInput(
-  urlValue: string,
-  commit: (value: string) => void,
-  delay = 300,
-): [string, (v: string) => void] {
-  const [value, setValue] = useState(urlValue)
-
-  // Adopt outside changes (back button, palette) without clobbering typing.
-  useEffect(() => {
-    setValue(urlValue)
-  }, [urlValue])
-
-  useEffect(() => {
-    if (value === urlValue) return
-    const t = window.setTimeout(() => commit(value), delay)
-    return () => window.clearTimeout(t)
-  }, [value, urlValue, commit, delay])
-
-  return [value, setValue]
 }
 
 /** Explains the live-update state in the header, honestly. */
@@ -95,6 +71,7 @@ export function ResourceList() {
   const labelSelector = params.get('labelSelector') ?? ''
   // Deep-link only (e.g. "pods on this node"); there is no input for it.
   const fieldSelector = params.get('fieldSelector') ?? ''
+  const showLabels = params.get('labels') === '1'
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingBulk, setPendingBulk] = useState<{ action: BulkAction; rows: Row[] } | null>(null)
@@ -169,6 +146,12 @@ export function ResourceList() {
   )
   const [qInput, setQInput] = useDebouncedInput(q, commitQ)
   const [selectorInput, setSelectorInput] = useDebouncedInput(labelSelector, commitSelector)
+
+  const onLabelClick = useCallback(
+    (k: string, v: string) =>
+      update({ labelSelector: toggleSelectorTerm(labelSelector, k, v), page: '1' }),
+    [labelSelector, update],
+  )
 
   const onSort = (key: string) => {
     if (key === sort) update({ order: order === 'asc' ? 'desc' : 'asc' })
@@ -251,24 +234,47 @@ export function ResourceList() {
   const metrics = usePodMetrics(isPods ? cluster : undefined, namespace)
 
   const { rows, columns } = useMemo(() => {
-    const rows = data?.items ?? []
-    const columns = data?.columns ?? []
-    const m = metrics.data
-    if (!isPods || !m?.available || !m.pods?.length) return { rows, columns }
+    let rows = data?.items ?? []
+    let columns = data?.columns ?? []
 
-    const usage = new Map(m.pods.map((p) => [`${p.namespace}/${p.name}`, p.usage]))
-    const extra: Column[] = [
-      { key: 'cpu', label: 'CPU', type: 'text', align: 'right', priority: 1 },
-      { key: 'memory', label: 'Memory', type: 'text', align: 'right', priority: 1 },
-    ]
-    return {
-      columns: [...columns, ...extra],
-      rows: rows.map((row) => {
+    const m = metrics.data
+    if (isPods && m?.available && m.pods?.length) {
+      const usage = new Map(m.pods.map((p) => [`${p.namespace}/${p.name}`, p.usage]))
+      const extra: Column[] = [
+        { key: 'cpu', label: 'CPU', type: 'text', align: 'right', priority: 1 },
+        { key: 'memory', label: 'Memory', type: 'text', align: 'right', priority: 1 },
+      ]
+      columns = [...columns, ...extra]
+      rows = rows.map((row) => {
         const u = usage.get(`${row.namespace}/${row.name}`)
-        return u ? { ...row, cpu: formatCpu(u.cpuMilli), memory: formatMemory(u.memoryMiB) } : row
-      }),
+        return u
+          ? {
+              ...row,
+              cpu: formatCpu(u.cpuMilli),
+              memory: formatMemory(u.memoryMiB),
+              _cpuMilli: u.cpuMilli,
+              _memoryMiB: u.memoryMiB,
+            }
+          : row
+      })
+      // These columns exist only client-side, so the server sorted by name;
+      // order the fetched page here or the header arrow would lie. Pods
+      // without metrics sort below any measured value.
+      if (sort === 'cpu' || sort === 'memory') {
+        const field = sort === 'cpu' ? '_cpuMilli' : '_memoryMiB'
+        rows = [...rows].sort((a, b) => {
+          const av = (a[field] as number | undefined) ?? -1
+          const bv = (b[field] as number | undefined) ?? -1
+          return order === 'desc' ? bv - av : av - bv
+        })
+      }
     }
-  }, [data, metrics.data, isPods])
+
+    if (showLabels) {
+      columns = [...columns, { key: '_labels', label: 'Labels', type: 'labels', priority: 1 }]
+    }
+    return { rows, columns }
+  }, [data, metrics.data, isPods, showLabels, sort, order])
 
   // Only rows on the current page are actionable; keys that left the page
   // (filter, pagination, the delete completing) simply stop counting.
@@ -320,8 +326,9 @@ export function ResourceList() {
         <input
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
-          placeholder="Filter by name"
-          aria-label="Filter by name"
+          placeholder="Search name, namespace, labels"
+          aria-label="Search by name, namespace or label"
+          title='Matches name, namespace, or labels — try "app=web"'
           className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
         <input
@@ -332,6 +339,19 @@ export function ResourceList() {
           title="Kubernetes label selector syntax, e.g. app=web,tier!=cache"
           className="w-52 rounded-md bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
+        <Button
+          size="sm"
+          variant={showLabels ? 'primary' : 'default'}
+          aria-pressed={showLabels}
+          title={
+            showLabels
+              ? 'Hide the labels column'
+              : 'Show a labels column; click a chip to filter by it'
+          }
+          onClick={() => update({ labels: showLabels ? null : '1' })}
+        >
+          Labels
+        </Button>
         <Button size="sm" onClick={() => refetch()}>
           Refresh
         </Button>
@@ -414,6 +434,7 @@ export function ResourceList() {
             order={order}
             onSort={onSort}
             onRowClick={openRow}
+            onLabelClick={showLabels ? onLabelClick : undefined}
             loading={isLoading}
             emptyTitle={q || labelSelector ? 'No matches' : `No ${meta?.kind ?? resource} found`}
             emptyDescription={
