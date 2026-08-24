@@ -275,6 +275,42 @@ export function useEvents(
 }
 
 /** Batch-checks permissions so the UI only offers actions that will succeed. */
+/**
+ * Batch-checks list access for a set of resources in the current scope, so
+ * the navigation can show what this identity can actually open. Answers come
+ * back keyed by "group/resource"; absent means still loading.
+ */
+export function useListAccess(
+  cluster: string | undefined,
+  namespace: string,
+  items: { group: string; version: string; resource: string }[],
+): Map<string, boolean> | undefined {
+  const key = items.map((i) => `${i.group}/${i.resource}`).join(',')
+  const query = useQuery({
+    queryKey: ['nav-access', cluster, namespace, key],
+    queryFn: async ({ signal }) => {
+      const checks = items.map((i) => ({
+        verb: 'list',
+        group: i.group,
+        version: i.version,
+        resource: i.resource,
+        namespace: namespace || undefined,
+      }))
+      const out = new Map<string, boolean>()
+      // The server answers at most 64 questions per request.
+      for (let i = 0; i < checks.length; i += 64) {
+        const slice = checks.slice(i, i + 64)
+        const decisions = await api.access(cluster!, slice, signal)
+        slice.forEach((c, j) => out.set(`${c.group}/${c.resource}`, decisions[j]?.allowed ?? false))
+      }
+      return out
+    },
+    enabled: !!cluster && items.length > 0,
+    staleTime: 30_000,
+  })
+  return query.data
+}
+
 export function useAccess(
   cluster: string | undefined,
   checks: Parameters<typeof api.access>[1],

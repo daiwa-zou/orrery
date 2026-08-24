@@ -1,10 +1,10 @@
 import clsx from 'clsx'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, proxyURL, type ResourceRef } from '../api/client'
 import { useAccess, useEvents, useResource } from '../api/hooks'
-import type { KubeObject } from '../api/types'
+import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
 import { MetadataEditor } from '../components/MetadataEditor'
@@ -276,25 +276,62 @@ function ResourceDetailInner() {
   const isCronJob = kind === 'CronJob'
   const containers = containerNames(obj)
 
-  const access = useAccess(
-    cluster,
-    obj
-      ? [
-          { verb: 'update', group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name },
-          { verb: 'delete', group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name },
-          { verb: 'update', group: ref.group, version: ref.version, resource: ref.resource, subresource: 'scale', namespace: ns, name },
-          { verb: 'create', group: '', version: 'v1', resource: 'pods', subresource: 'exec', namespace: ns, name },
-          { verb: 'patch', group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name },
-        ]
-      : [],
+  // Every action asks about the exact verb and resource the backend will
+  // check, so a button never appears that the server would refuse. Keyed, not
+  // positional: positional indexing is how a new check silently gates the
+  // wrong button.
+  const checkList = useMemo(() => {
+    if (!obj) return []
+    const self = { group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name }
+    const pods = { group: '', version: 'v1', resource: 'pods', namespace: ns, name }
+    const list: { key: string; check: AccessCheck }[] = [
+      { key: 'update', check: { ...self, verb: 'update' } },
+      { key: 'patch', check: { ...self, verb: 'patch' } },
+      { key: 'delete', check: { ...self, verb: 'delete' } },
+      { key: 'scale', check: { ...self, verb: 'patch', subresource: 'scale' } },
+    ]
+    if (isPod) {
+      list.push(
+        { key: 'exec', check: { ...pods, verb: 'create', subresource: 'exec' } },
+        { key: 'logs', check: { ...pods, verb: 'get', subresource: 'log' } },
+        { key: 'evict', check: { ...pods, verb: 'create', subresource: 'eviction' } },
+        { key: 'proxy', check: { ...pods, verb: 'get', subresource: 'proxy' } },
+      )
+    }
+    if (kind === 'Service') {
+      list.push({
+        key: 'proxy',
+        check: { verb: 'get', group: '', version: 'v1', resource: 'services', subresource: 'proxy', namespace: ns, name },
+      })
+    }
+    if (isCronJob) {
+      list.push({
+        key: 'createJob',
+        check: { verb: 'create', group: 'batch', version: 'v1', resource: 'jobs', namespace: ns },
+      })
+    }
+    if (isDeployment) {
+      list.push({
+        key: 'listReplicaSets',
+        check: { verb: 'list', group: 'apps', version: 'v1', resource: 'replicasets', namespace: ns },
+      })
+    }
+    return list
+  }, [obj, ref.group, ref.version, ref.resource, ns, name, isPod, isCronJob, isDeployment, kind])
+
+  const access = useAccess(cluster, checkList.map((c) => c.check))
+  const may = useCallback(
+    (key: string) => {
+      const i = checkList.findIndex((c) => c.key === key)
+      return i >= 0 ? (access.data?.[i]?.allowed ?? false) : false
+    },
+    [checkList, access.data],
   )
-  const [mayUpdate, mayDelete, mayScale, mayExec, mayPatch] = [
-    access.data?.[0]?.allowed ?? false,
-    access.data?.[1]?.allowed ?? false,
-    access.data?.[2]?.allowed ?? false,
-    access.data?.[3]?.allowed ?? false,
-    access.data?.[4]?.allowed ?? false,
-  ]
+  const mayUpdate = may('update')
+  const mayDelete = may('delete')
+  const mayScale = may('scale')
+  const mayExec = may('exec')
+  const mayPatch = may('patch')
 
   const owners = obj?.metadata.ownerReferences ?? []
 
@@ -457,12 +494,12 @@ function ResourceDetailInner() {
                 Scale
               </Button>
             )}
-            {RESTARTABLE.has(kind) && mayUpdate && (
+            {RESTARTABLE.has(kind) && mayPatch && (
               <Button size="sm" onClick={doRestart} title="Stamps the pod template to trigger a rollout">
                 Restart
               </Button>
             )}
-            {isDeployment && mayUpdate && ns && (
+            {isDeployment && mayPatch && may('listReplicaSets') && ns && (
               <>
                 <RollbackButton cluster={cluster!} namespace={ns} name={name!} onDone={invalidate} />
                 <PauseButton
@@ -472,19 +509,21 @@ function ResourceDetailInner() {
                 />
               </>
             )}
-            {isCronJob && mayUpdate && ns && (
+            {isCronJob && ns && (may('createJob') || mayPatch) && (
               <CronJobActions
                 cluster={cluster!}
                 namespace={ns}
                 name={name!}
                 suspended={(obj.spec as { suspend?: boolean })?.suspend === true}
+                canRun={may('createJob')}
+                canSuspend={mayPatch}
                 onDone={invalidate}
               />
             )}
-            {isPod && mayDelete && ns && (
+            {isPod && may('evict') && ns && (
               <EvictButton cluster={cluster!} namespace={ns} pod={name!} />
             )}
-            {isNode && mayUpdate && (
+            {isNode && mayPatch && (
               <>
                 <Button
                   size="sm"
@@ -521,7 +560,7 @@ function ResourceDetailInner() {
               <span className="ml-1.5 text-xs text-ink-faint">{events.data.total}</span>
             )}
           </TabButton>
-          {isPod && (
+          {isPod && may('logs') && (
             <TabButton active={tab === 'logs'} onClick={() => switchTab('logs')}>
               Logs
             </TabButton>
@@ -591,7 +630,7 @@ function ResourceDetailInner() {
               />
             )}
 
-            {(isPod || kind === 'Service') && ns && (
+            {(isPod || kind === 'Service') && may('proxy') && ns && (
               <ProxySection cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
             )}
 
@@ -642,7 +681,7 @@ function ResourceDetailInner() {
           </div>
         )}
 
-        {tab === 'logs' && isPod && (
+        {tab === 'logs' && isPod && may('logs') && (
           <LogViewer
             cluster={cluster!}
             namespace={ns!}
@@ -1126,12 +1165,18 @@ function CronJobActions({
   namespace,
   name,
   suspended,
+  canRun,
+  canSuspend,
   onDone,
 }: {
   cluster: string
   namespace: string
   name: string
   suspended: boolean
+  /** May create Jobs in this namespace — the verb behind "Run now". */
+  canRun: boolean
+  /** May patch the CronJob — the verb behind suspend/resume. */
+  canSuspend: boolean
   onDone: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -1176,12 +1221,16 @@ function CronJobActions({
 
   return (
     <>
-      <Button size="sm" onClick={runNow} disabled={busy} title="Create a one-off Job from this CronJob's template">
-        Run now
-      </Button>
-      <Button size="sm" onClick={toggleSuspend} disabled={busy}>
-        {suspended ? 'Resume' : 'Suspend'}
-      </Button>
+      {canRun && (
+        <Button size="sm" onClick={runNow} disabled={busy} title="Create a one-off Job from this CronJob's template">
+          Run now
+        </Button>
+      )}
+      {canSuspend && (
+        <Button size="sm" onClick={toggleSuspend} disabled={busy}>
+          {suspended ? 'Resume' : 'Suspend'}
+        </Button>
+      )}
     </>
   )
 }

@@ -9,7 +9,7 @@ import {
   useSearchParams,
 } from 'react-router-dom'
 import { api } from '../api/client'
-import { useClusters, useDiscovery, useMe, useNamespaces } from '../api/hooks'
+import { useClusters, useDiscovery, useListAccess, useMe, useNamespaces } from '../api/hooks'
 import type { ClusterSummary, HealthStatus } from '../api/types'
 import { navLabel } from '../lib/format'
 import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
@@ -259,6 +259,7 @@ function NavGroup({
   open,
   onToggle,
   showGroup,
+  listAccess,
 }: {
   title: string
   items: NavItem[]
@@ -268,6 +269,8 @@ function NavGroup({
   onToggle: () => void
   /** Appends the API group to each row — needed where kinds are unfamiliar. */
   showGroup?: boolean
+  /** "group/resource" → may list, from useListAccess; undefined while loading. */
+  listAccess?: Map<string, boolean>
 }) {
   if (items.length === 0) return null
 
@@ -294,17 +297,28 @@ function NavGroup({
             const groupSeg = item.group === '' ? 'core' : item.group
             const to = `/c/${cluster}/r/${groupSeg}/${item.version}/${item.resource}`
             const search = item.namespaced && namespace ? `?namespace=${namespace}` : ''
+            // Dimmed, not hidden: hiding makes "where did Pods go?" support
+            // tickets, and a namespace-scoped user may still see partial
+            // results in a narrower scope than the one just checked.
+            const denied = listAccess?.get(`${item.group}/${item.resource}`) === false
 
             return (
               <li key={`${item.group}/${item.resource}`}>
                 <NavLink
                   to={to + search}
-                  title={showGroup ? `${item.kind} · ${item.group || 'core'}` : item.kind}
+                  title={
+                    denied
+                      ? `You cannot list ${item.kind} ${namespace ? `in ${namespace}` : 'cluster-wide'}`
+                      : showGroup
+                        ? `${item.kind} · ${item.group || 'core'}`
+                        : item.kind
+                  }
                   className={({ isActive }) =>
                     clsx(
                       // A left rule marks the active row instead of a filled
                       // block, which keeps the column quiet when scanning it.
                       'flex items-baseline gap-2 border-l-2 py-[3px] pr-3 pl-4 text-[13px] transition-colors',
+                      denied && 'opacity-40',
                       isActive
                         ? 'border-accent bg-accent-soft/25 text-ink'
                         : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
@@ -431,6 +445,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: discovery, isLoading: discoveryLoading } = useDiscovery(cluster)
 
   const nav = useMemo(() => buildNav(discovery), [discovery])
+
+  // One batched question per scope: which of these can this identity list?
+  // The answers dim what would only produce a 403.
+  const allNavItems = useMemo(
+    () => [...nav.primary.flatMap((s) => s.items), ...nav.custom, ...nav.rest],
+    [nav],
+  )
+  const listAccess = useListAccess(cluster, namespace, allNavItems)
 
   // AppShell renders *outside* the nested resource routes, so useParams cannot
   // see the resource being viewed. Matching the path explicitly is what gives
@@ -616,6 +638,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     namespace={namespace}
                     open={isOpen(section.title)}
                     onToggle={() => toggleSection(section.title)}
+                    listAccess={listAccess}
                   />
                 ))}
 
@@ -627,6 +650,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   open={isOpen(CUSTOM_SECTION)}
                   onToggle={() => toggleSection(CUSTOM_SECTION)}
                   showGroup
+                  listAccess={listAccess}
                 />
 
                 <NavGroup
@@ -637,6 +661,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   open={isOpen(ALL_SECTION)}
                   onToggle={() => toggleSection(ALL_SECTION)}
                   showGroup
+                  listAccess={listAccess}
                 />
               </div>
             </nav>

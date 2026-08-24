@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,12 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 // reaches the browser as a 403 with the API server's own explanation.
 func (a *API) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if err == nil {
+		return
+	}
+	// The browser cancelling a request it no longer needs is routine, not a
+	// server failure; logging it as a 500 buries real errors in noise.
+	if errors.Is(err, context.Canceled) {
+		writeJSON(w, 499, errorBody{Error: "client_closed_request", Code: 499})
 		return
 	}
 	status := http.StatusInternalServerError
