@@ -176,9 +176,14 @@ upgrader stands in for CSRF on streaming endpoints.
 
 Login state — the OAuth state, nonce and PKCE verifier — is carried in a
 short-lived encrypted cookie rather than server memory, so any replica can
-complete a login another replica started. The only shared state that remains is
-the session store, which is why swapping it for Redis is all that horizontal
-scaling requires.
+complete a login another replica started.
+
+That leaves the session store as the only shared state in the request path.
+It is an interface with two implementations: an in-process map for single-node
+and development, and Redis for anything with more than one replica. Nothing
+else in the backend holds per-user state, so switching that one setting is the
+whole of what horizontal scaling requires — no sticky sessions, no session
+affinity at the load balancer.
 
 ## Things deliberately not done
 

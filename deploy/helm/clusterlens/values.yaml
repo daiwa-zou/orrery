@@ -44,6 +44,11 @@ session:
   keyRef: encryptionKey
   ttl: 12h
   idleTimeout: 2h
+  # "memory" keeps sessions in the pod, which only works with one replica.
+  # Set "redis" before scaling out, or a request that lands on another pod
+  # will not recognise the session.
+  store: redis
+  redisURL: 'redis://clusterlens-redis:6379/0'
 
 cache:
   idleTimeout: 10m

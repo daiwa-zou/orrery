@@ -124,11 +124,15 @@ helm install clusterlens ./deploy/helm/clusterlens \
   --set oidc.clientID=clusterlens
 ```
 
-Two things bite people here:
+Three things bite people here:
 
 - **The session key must be shared across replicas.** Without it each pod mints
   its own at boot and users are signed out whenever they land on a different
   one. The server logs a warning when it generates one.
+- **More than one replica needs `session.store: redis`.** The default in-memory
+  store keeps sessions inside the pod, so a request that lands elsewhere looks
+  unauthenticated. The chart defaults to Redis for exactly this reason; point
+  `session.redisURL` at your instance.
 - **Long-lived streams need long proxy timeouts.** Log follows, watches and
   exec sessions stay open for hours; the chart sets the nginx annotations, but
   any other proxy in front needs the same treatment.
@@ -210,6 +214,13 @@ place to look when memory use surprises you.
 cd backend && go test ./... -race     # backend
 cd web && npx tsc --noEmit            # frontend types
 cd web && npm run build               # production bundle
+```
+
+The Redis session tests skip unless you point them at an instance:
+
+```bash
+docker run -d -p 6379:6379 redis:7-alpine
+CLUSTERLENS_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race
 ```
 
 `docs/ARCHITECTURE.md` explains the caching and authorization design in more

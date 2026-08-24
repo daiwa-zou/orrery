@@ -288,3 +288,46 @@ func TestPathNamespacePlaceholder(t *testing.T) {
 		t.Errorf("a request with no namespace param gave %q", got)
 	}
 }
+
+func TestSortProjectedKeepsObjectsAndRowsAligned(t *testing.T) {
+	// view=table and view=full must page through the same ordering. Before
+	// this was fixed, sorting by a projected column left the object slice
+	// untouched and the two views disagreed about what page 1 contained.
+	objs := []*unstructured.Unstructured{
+		obj("a", "d", nil, nil),
+		obj("b", "d", nil, nil),
+		obj("c", "d", nil, nil),
+	}
+	rows := []map[string]any{
+		{"name": "a", "restarts": int64(5)},
+		{"name": "b", "restarts": int64(1)},
+		{"name": "c", "restarts": int64(3)},
+	}
+
+	sortProjected(objs, rows, "restarts", false)
+
+	wantOrder := []string{"b", "c", "a"}
+	for i, want := range wantOrder {
+		if rows[i]["name"] != want {
+			t.Fatalf("rows[%d] = %v, want %s", i, rows[i]["name"], want)
+		}
+		if objs[i].GetName() != want {
+			t.Fatalf("objs[%d] = %s, want %s; the two views would disagree",
+				i, objs[i].GetName(), want)
+		}
+	}
+}
+
+func TestSortProjectedDescending(t *testing.T) {
+	objs := []*unstructured.Unstructured{obj("a", "d", nil, nil), obj("b", "d", nil, nil)}
+	rows := []map[string]any{
+		{"name": "a", "restarts": int64(1)},
+		{"name": "b", "restarts": int64(9)},
+	}
+
+	sortProjected(objs, rows, "restarts", true)
+
+	if rows[0]["name"] != "b" || objs[0].GetName() != "b" {
+		t.Errorf("descending sort put %v / %s first", rows[0]["name"], objs[0].GetName())
+	}
+}

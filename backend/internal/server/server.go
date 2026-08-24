@@ -50,10 +50,24 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 		return nil, err
 	}
 
-	store := auth.Store(auth.NewMemoryStore(cfg.Session.IdleTimeout))
-	if cfg.Session.Store == "redis" {
-		registry.Close()
-		return nil, errors.New("session.store=redis is configured but this build has no Redis backend compiled in")
+	var store auth.Store
+	switch cfg.Session.Store {
+	case "redis":
+		redisStore, err := auth.NewRedisStore(ctx, cfg.Session.RedisURL, cfg.Session.IdleTimeout)
+		if err != nil {
+			registry.Close()
+			return nil, err
+		}
+		store = redisStore
+		log.Info("sessions stored in redis")
+	default:
+		store = auth.NewMemoryStore(cfg.Session.IdleTimeout)
+		if cfg.OIDC.Enabled {
+			// Worth saying out loud: with an in-process store a second replica
+			// will not recognise a session the first one created.
+			log.Info("sessions stored in memory; run a single replica or " +
+				"set session.store=redis before scaling out")
+		}
 	}
 
 	sessions, err := auth.NewSessionManager(cfg, store)

@@ -28,6 +28,10 @@ data:
       {{- end }}
       {{- end }}
     session:
+      store: {{ .Values.session.store | quote }}
+      {{- if eq .Values.session.store "redis" }}
+      redisURL: {{ .Values.session.redisURL | quote }}
+      {{- end }}
       encryptionKey: ${CLUSTERLENS_SESSION_KEY}
       ttl: {{ .Values.session.ttl }}
       idleTimeout: {{ .Values.session.idleTimeout }}

@@ -199,17 +199,20 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	total := len(objs)
 
 	// Well-known keys sort straight off object metadata, which avoids
-	// projecting rows that the requested page will then throw away.
+	// projecting rows that the requested page will then throw away. Sorting by
+	// any other column needs the projected value, so those rows are built up
+	// front and the object slice is reordered to match — otherwise view=full
+	// would page through a differently ordered list than view=table.
 	var rows []map[string]any
 	if isMetaSortKey(sortKey) {
 		sortByMeta(objs, sortKey, desc)
 		rows = projectPage(objs, set, page, pageSize, r)
 	} else {
-		all := make([]map[string]any, 0, len(objs))
-		for _, o := range objs {
-			all = append(all, buildRow(o, set, r))
+		all := make([]map[string]any, len(objs))
+		for i, o := range objs {
+			all[i] = buildRow(o, set, r)
 		}
-		sortRows(all, sortKey, desc)
+		sortProjected(objs, all, sortKey, desc)
 		rows = pageOf(all, page, pageSize)
 	}
 
@@ -307,19 +310,46 @@ func sortByMeta(objs []*unstructured.Unstructured, key string, desc bool) {
 }
 
 func sortRows(rows []map[string]any, key string, desc bool) {
+	sort.SliceStable(rows, rowLess(rows, key, desc))
+}
+
+// sortProjected orders rows by a projected column and keeps the parallel
+// object slice in the same order, so both response views agree on what the
+// requested page contains.
+func sortProjected(objs []*unstructured.Unstructured, rows []map[string]any, key string, desc bool) {
+	less := rowLess(rows, key, desc)
+	order := make([]int, len(rows))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return less(order[i], order[j]) })
+
+	sortedObjs := make([]*unstructured.Unstructured, len(objs))
+	sortedRows := make([]map[string]any, len(rows))
+	for dst, src := range order {
+		sortedObjs[dst] = objs[src]
+		sortedRows[dst] = rows[src]
+	}
+	copy(objs, sortedObjs)
+	copy(rows, sortedRows)
+}
+
+// rowLess builds the comparison used for both row sorting paths.
+func rowLess(rows []map[string]any, key string, desc bool) func(i, j int) bool {
 	if key == "" {
 		key = "name"
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
+	return func(i, j int) bool {
 		a, b := compareCell(rows[i][key], rows[j][key])
 		if a == b {
+			// Ties break on name so paging is deterministic.
 			return fmt.Sprint(rows[i]["name"]) < fmt.Sprint(rows[j]["name"])
 		}
 		if desc {
 			return b < a
 		}
 		return a < b
-	})
+	}
 }
 
 // compareCell reduces two cells to comparable strings, keeping numbers in
