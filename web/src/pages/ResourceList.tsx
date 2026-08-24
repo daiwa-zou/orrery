@@ -3,11 +3,25 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, type ResourceRef } from '../api/client'
 import { useAccess, useLiveList, usePodMetrics } from '../api/hooks'
-import type { Column, Row } from '../api/types'
+import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
+import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { Badge, Button, ErrorState, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
+
+type BulkAction = 'delete' | 'restart'
+
+/** The backend's restart action patches the pod template, so it only exists
+ *  for the kinds that have one. */
+const RESTARTABLE = new Set(['deployments', 'statefulsets', 'daemonsets'])
+
+function nameList(rows: Row[]): string {
+  const names = rows.map((r) => r.name)
+  return names.length <= 6
+    ? names.join(', ')
+    : `${names.slice(0, 6).join(', ')} +${names.length - 6} more`
+}
 
 /**
  * Text input state that commits to the URL after a pause. Every committed
@@ -82,7 +96,9 @@ export function ResourceList() {
   // Deep-link only (e.g. "pods on this node"); there is no input for it.
   const fieldSelector = params.get('fieldSelector') ?? ''
 
-  const [pendingDelete, setPendingDelete] = useState<Row | null>(null)
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
+  const [pendingBulk, setPendingBulk] = useState<{ action: BulkAction; rows: Row[] } | null>(null)
+  const [bulkRunning, setBulkRunning] = useState(false)
 
   const ref: ResourceRef | null =
     cluster && group && version && resource
@@ -98,24 +114,31 @@ export function ResourceList() {
 
   const meta = data?.resource
   const canDelete = meta?.verbs.includes('delete') ?? false
+  // Restart is authorized server-side as a "patch" on the workload itself.
+  const canRestart =
+    !!meta &&
+    meta.group === 'apps' &&
+    RESTARTABLE.has(meta.name) &&
+    meta.verbs.includes('patch')
 
-  // Ask once whether this user may delete in this scope, so the row action is
-  // only offered when it would actually work.
-  const access = useAccess(
-    cluster,
-    canDelete && meta
-      ? [
-          {
-            verb: 'delete',
-            group: meta.group,
-            version: meta.version,
-            resource: meta.name,
-            namespace: namespace || undefined,
-          },
-        ]
-      : [],
-  )
+  // Ask once whether this user may act in this scope, so actions are only
+  // offered when they would actually work.
+  const checks = useMemo(() => {
+    if (!meta) return []
+    const base = {
+      group: meta.group,
+      version: meta.version,
+      resource: meta.name,
+      namespace: namespace || undefined,
+    }
+    const out: AccessCheck[] = []
+    if (canDelete) out.push({ ...base, verb: 'delete' })
+    if (canRestart) out.push({ ...base, verb: 'patch' })
+    return out
+  }, [meta, namespace, canDelete, canRestart])
+  const access = useAccess(cluster, checks)
   const mayDelete = canDelete && (access.data?.[0]?.allowed ?? false)
+  const mayRestart = canRestart && (access.data?.[canDelete ? 1 : 0]?.allowed ?? false)
 
   const update = useCallback(
     (patch: Record<string, string | null>) => {
@@ -149,21 +172,66 @@ export function ResourceList() {
     }`)
   }
 
-  const confirmDelete = async () => {
-    if (!pendingDelete || !ref) return
-    try {
-      await api.remove({ ...ref, namespace: pendingDelete.namespace, name: pendingDelete.name })
+  // Selected keys refer to objects in one specific list; a different cluster,
+  // resource or namespace makes them meaningless.
+  useEffect(() => {
+    setSelected(new Set())
+  }, [cluster, group, version, resource, namespace])
+
+  const confirmBulk = async () => {
+    if (!pendingBulk || !ref || !cluster) return
+    const { action, rows: targets } = pendingBulk
+    setBulkRunning(true)
+
+    // Each object stands alone: one 403 or conflict must not abort the rest.
+    const results = await Promise.allSettled(
+      targets.map((row) =>
+        action === 'delete'
+          ? api.remove({ ...ref, namespace: row.namespace, name: row.name })
+          : api.restart(cluster, {
+              group: ref.group,
+              version: ref.version,
+              resource: ref.resource,
+              namespace: row.namespace,
+              name: row.name,
+            }),
+      ),
+    )
+
+    const succeeded = targets.filter((_, i) => results[i].status === 'fulfilled')
+    const failed = results.flatMap((r, i) =>
+      r.status === 'rejected' ? [{ row: targets[i], reason: (r.reason as Error).message }] : [],
+    )
+
+    if (succeeded.length > 0) {
       toast.push({
         tone: 'ok',
-        title: `Deleting ${pendingDelete.name}`,
-        description: 'The API server accepted the request.',
+        title:
+          action === 'delete'
+            ? `Deleting ${succeeded.length === 1 ? succeeded[0].name : `${succeeded.length} objects`}`
+            : `Restarted ${succeeded.length === 1 ? succeeded[0].name : `${succeeded.length} workloads`}`,
+        description:
+          succeeded.length === 1
+            ? action === 'delete'
+              ? 'The API server accepted the request.'
+              : 'Pods will be replaced according to the update strategy.'
+            : nameList(succeeded),
       })
-      qc.invalidateQueries({ queryKey: ['list'] })
-    } catch (e) {
-      toast.push({ tone: 'danger', title: 'Delete failed', description: (e as Error).message })
-    } finally {
-      setPendingDelete(null)
     }
+    // One toast per failed object: the reader must see exactly what was
+    // missed and why. The Toast stack caps itself, so this cannot wallpaper.
+    for (const f of failed) {
+      toast.push({
+        tone: 'danger',
+        title: `${action === 'delete' ? 'Delete' : 'Restart'} failed: ${f.row.name}`,
+        description: f.reason,
+      })
+    }
+
+    setBulkRunning(false)
+    setPendingBulk(null)
+    setSelected(new Set())
+    qc.invalidateQueries({ queryKey: ['list'] })
   }
 
   // Pods get live CPU/memory columns joined in from metrics-server. The list
@@ -191,6 +259,14 @@ export function ResourceList() {
       }),
     }
   }, [data, metrics.data, isPods])
+
+  // Only rows on the current page are actionable; keys that left the page
+  // (filter, pagination, the delete completing) simply stop counting.
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selected.has(rowKey(r))),
+    [rows, selected],
+  )
+  const bulkEnabled = mayDelete || mayRestart
 
   if (error) return <ErrorState error={error} retry={refetch} />
 
@@ -249,6 +325,35 @@ export function ResourceList() {
         </Button>
       </div>
 
+      {selectedRows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-accent-soft/25 px-4 py-2">
+          <span className="text-sm font-medium text-ink tabular-nums">
+            {selectedRows.length} selected
+          </span>
+          {mayRestart && (
+            <Button
+              size="sm"
+              onClick={() => setPendingBulk({ action: 'restart', rows: selectedRows })}
+            >
+              Restart
+            </Button>
+          )}
+          {mayDelete && (
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => setPendingBulk({ action: 'delete', rows: selectedRows })}
+            >
+              Delete
+            </Button>
+          )}
+          <div className="flex-1" />
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </Button>
+        </div>
+      )}
+
       {/* The server tells us when it could only show part of the cluster.
           Surfacing that is the difference between "empty" and "invisible". */}
       {data?.scope && !data.scope.allNamespaces && !data.scope.namespace && (
@@ -286,6 +391,8 @@ export function ResourceList() {
                   ? `Nothing in namespace ${namespace}.`
                   : undefined
             }
+            selected={bulkEnabled ? selected : undefined}
+            onSelectedChange={bulkEnabled ? setSelected : undefined}
             rowActions={
               mayDelete
                 ? (row) => (
@@ -293,7 +400,7 @@ export function ResourceList() {
                       size="sm"
                       variant="ghost"
                       title={`Delete ${row.name}`}
-                      onClick={() => setPendingDelete(row)}
+                      onClick={() => setPendingBulk({ action: 'delete', rows: [row] })}
                     >
                       Delete
                     </Button>
@@ -317,27 +424,63 @@ export function ResourceList() {
       )}
 
       <Modal
-        open={!!pendingDelete}
-        title={`Delete ${pendingDelete?.name ?? ''}?`}
-        onClose={() => setPendingDelete(null)}
+        open={!!pendingBulk}
+        title={
+          pendingBulk
+            ? `${pendingBulk.action === 'delete' ? 'Delete' : 'Restart'} ${
+                pendingBulk.rows.length === 1
+                  ? pendingBulk.rows[0].name
+                  : `${pendingBulk.rows.length} objects`
+              }?`
+            : ''
+        }
+        onClose={() => {
+          if (!bulkRunning) setPendingBulk(null)
+        }}
         footer={
           <>
-            <Button onClick={() => setPendingDelete(null)}>Cancel</Button>
-            <Button variant="danger" onClick={confirmDelete}>
-              Delete
+            <Button onClick={() => setPendingBulk(null)} disabled={bulkRunning}>
+              Cancel
+            </Button>
+            <Button
+              variant={pendingBulk?.action === 'delete' ? 'danger' : 'primary'}
+              onClick={confirmBulk}
+              disabled={bulkRunning}
+            >
+              {bulkRunning && <Spinner className="size-3.5" />}
+              {pendingBulk?.action === 'delete' ? 'Delete' : 'Restart'}
             </Button>
           </>
         }
       >
         <p className="text-sm text-ink-muted">
-          This deletes{' '}
-          <span className="font-mono text-ink">
-            {meta?.kind} {pendingDelete?.namespace ? `${pendingDelete.namespace}/` : ''}
-            {pendingDelete?.name}
-          </span>{' '}
-          with background propagation. Dependent objects will be garbage collected.
+          {pendingBulk?.action === 'delete' ? (
+            <>
+              This deletes {pendingBulk.rows.length === 1 ? 'this' : 'these'}{' '}
+              <span className="font-mono text-ink">{meta?.kind}</span>{' '}
+              {pendingBulk.rows.length === 1 ? 'object' : 'objects'} with background
+              propagation. Dependent objects will be garbage collected.
+            </>
+          ) : (
+            <>
+              This performs a rolling restart of{' '}
+              {pendingBulk?.rows.length === 1 ? 'this workload' : 'these workloads'} by
+              stamping the pod template, the same way{' '}
+              <span className="font-mono text-ink">kubectl rollout restart</span> does.
+            </>
+          )}
         </p>
-        <p className="mt-3 text-sm text-ink-faint">This cannot be undone.</p>
+        <ul className="mt-3 max-h-56 overflow-auto rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-ink ring-1 ring-border">
+          {pendingBulk?.rows.map((row) => (
+            <li key={rowKey(row)} className="truncate py-0.5">
+              {row.namespace ? `${row.namespace}/` : ''}
+              {row.name}
+            </li>
+          ))}
+        </ul>
+        {pendingBulk?.action === 'delete' && (
+          <p className="mt-3 text-sm text-ink-faint">This cannot be undone.</p>
+        )}
       </Modal>
     </div>
   )

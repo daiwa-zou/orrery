@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { Fragment, type ReactNode } from 'react'
 import type { Column, Row } from '../api/types'
 import { duration, ratioTone } from '../lib/format'
+import { rowKey, toggleAll, toggleRow } from '../lib/selection'
 import { Age, Badge, EmptyState, StatusBadge } from './primitives'
 
 export interface DataTableProps {
@@ -14,6 +15,13 @@ export interface DataTableProps {
   onRowClick?: (row: Row) => void
   /** Rendered at the end of each row, typically an actions menu. */
   rowActions?: (row: Row) => ReactNode
+  /**
+   * Multi-select is opt-in: pass both the selected row keys (see rowKey in
+   * lib/selection) and a change handler to get a checkbox column plus a
+   * select-all header.
+   */
+  selected?: ReadonlySet<string>
+  onSelectedChange?: (next: Set<string>) => void
   emptyTitle?: string
   emptyDescription?: ReactNode
   loading?: boolean
@@ -115,19 +123,41 @@ export function DataTable({
   onSort,
   onRowClick,
   rowActions,
+  selected,
+  onSelectedChange,
   emptyTitle = 'Nothing here',
   emptyDescription,
   loading,
 }: DataTableProps) {
+  const selectable = !!selected && !!onSelectedChange
+
   if (!loading && rows.length === 0) {
     return <EmptyState title={emptyTitle} description={emptyDescription} />
   }
+
+  const keys = selectable ? rows.map(rowKey) : []
+  const allSelected = keys.length > 0 && keys.every((k) => selected!.has(k))
+  const someSelected = keys.some((k) => selected!.has(k))
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[40rem] border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left">
+            {selectable && (
+              <th scope="col" className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  aria-label={allSelected ? 'Deselect all rows' : 'Select all rows'}
+                  className="block size-3.5 accent-accent"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelected && !allSelected
+                  }}
+                  onChange={() => onSelectedChange!(toggleAll(selected!, keys))}
+                />
+              </th>
+            )}
             {columns.map((column) => {
               const active = sort === column.key
               return (
@@ -172,13 +202,17 @@ export function DataTable({
         </thead>
 
         <tbody>
-          {rows.map((row) => (
-            <Fragment key={row.uid || `${row.namespace}/${row.name}`}>
+          {rows.map((row) => {
+            const key = rowKey(row)
+            const isSelected = selectable && selected!.has(key)
+            return (
+            <Fragment key={key}>
               <tr
                 className={clsx(
                   'border-b border-border/50 transition-colors',
                   onRowClick &&
                     'cursor-pointer hover:bg-surface-2/70 focus:bg-surface-2/70 focus:outline-none',
+                  isSelected && 'bg-accent-soft/25',
                   row._terminating && 'opacity-55',
                 )}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -193,6 +227,17 @@ export function DataTable({
                 }
                 tabIndex={onRowClick ? 0 : undefined}
               >
+                {selectable && (
+                  <td className="px-3 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${row.name}`}
+                      className="block size-3.5 accent-accent"
+                      checked={isSelected}
+                      onChange={() => onSelectedChange!(toggleRow(selected!, key))}
+                    />
+                  </td>
+                )}
                 {columns.map((column, index) => (
                   <td
                     key={column.key}
@@ -227,7 +272,8 @@ export function DataTable({
                 )}
               </tr>
             </Fragment>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>

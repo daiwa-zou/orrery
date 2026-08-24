@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useNamespaces } from '../api/hooks'
@@ -286,6 +286,9 @@ export function CommandPalette({
             }}
             placeholder="Search resources, namespaces and clusters"
             aria-label="Search"
+            role="combobox"
+            aria-expanded="true"
+            aria-autocomplete="list"
             aria-controls="palette-results"
             aria-activedescendant={entries[selected]?.id}
             className="w-full bg-transparent py-3 text-sm text-ink outline-none placeholder:text-ink-faint"
@@ -294,7 +297,7 @@ export function CommandPalette({
 
         <ul id="palette-results" ref={listRef} role="listbox" className="max-h-80 overflow-y-auto py-1">
           {entries.length === 0 && (
-            <li className="px-3 py-6 text-center text-sm text-ink-faint">
+            <li role="presentation" className="px-3 py-6 text-center text-sm text-ink-faint">
               Nothing matches “{query}”.
             </li>
           )}
@@ -305,13 +308,17 @@ export function CommandPalette({
             const isSelected = i === selected
 
             return (
-              <li key={entry.id}>
+              <Fragment key={entry.id}>
+                {/* Section headers sit between options, outside the listbox
+                    semantics — a listbox may only own options. */}
                 {header && (
-                  <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-ink-faint uppercase">
-                    {header}
-                  </p>
+                  <li role="presentation">
+                    <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-ink-faint uppercase">
+                      {header}
+                    </p>
+                  </li>
                 )}
-                <button
+                <li
                   id={entry.id}
                   role="option"
                   aria-selected={isSelected}
@@ -322,7 +329,7 @@ export function CommandPalette({
                   onMouseMove={() => setSelected(i)}
                   onClick={() => choose(entry)}
                   className={clsx(
-                    'flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-sm',
+                    'flex w-full cursor-pointer items-baseline gap-3 px-3 py-1.5 text-left text-sm',
                     isSelected ? 'bg-accent-soft/60 text-ink' : 'text-ink-muted',
                   )}
                 >
@@ -330,8 +337,8 @@ export function CommandPalette({
                   <span className="ml-auto shrink-0 truncate font-mono text-[11px] text-ink-faint">
                     {entry.hint}
                   </span>
-                </button>
-              </li>
+                </li>
+              </Fragment>
             )
           })}
         </ul>

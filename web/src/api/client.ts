@@ -38,7 +38,11 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match[1]) : ''
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  signal?: AbortSignal,
+): Promise<T> {
   const headers = new Headers(init.headers)
   const method = (init.method ?? 'GET').toUpperCase()
 
@@ -49,7 +53,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   }
 
-  const res = await fetch(BASE + path, { ...init, headers, credentials: 'same-origin' })
+  // An abort surfaces as a DOMException named AbortError, never an ApiError,
+  // so cancelled requests bypass the 401 redirect and error handling below.
+  const res = await fetch(BASE + path, {
+    ...init,
+    headers,
+    credentials: 'same-origin',
+    signal: signal ?? init.signal,
+  })
 
   if (res.status === 204) return undefined as T
 
@@ -123,45 +134,57 @@ export interface ResourceRef {
 }
 
 export const api = {
-  me: () => request<Me>('/me'),
+  me: (signal?: AbortSignal) => request<Me>('/me', {}, signal),
 
   authConfig: () =>
     request<{ oidcEnabled: boolean; anonymous: boolean; loginPath: string }>('/auth/config'),
 
   logout: () => request<{ loggedOut: boolean; endSessionURL?: string }>('/auth/logout', { method: 'POST' }),
 
-  clusters: () => request<{ clusters: ClusterSummary[] }>('/clusters'),
+  clusters: (signal?: AbortSignal) =>
+    request<{ clusters: ClusterSummary[] }>('/clusters', {}, signal),
 
-  discovery: (cluster: string) => request<DiscoveryResponse>(`/clusters/${cluster}/discovery`),
+  discovery: (cluster: string, signal?: AbortSignal) =>
+    request<DiscoveryResponse>(`/clusters/${cluster}/discovery`, {}, signal),
 
-  overview: (cluster: string) => request<Overview>(`/clusters/${cluster}/overview`),
+  overview: (cluster: string, signal?: AbortSignal) =>
+    request<Overview>(`/clusters/${cluster}/overview`, {}, signal),
 
-  nodeMetrics: (cluster: string) => request<MetricsResponse>(`/clusters/${cluster}/metrics/nodes`),
+  nodeMetrics: (cluster: string, signal?: AbortSignal) =>
+    request<MetricsResponse>(`/clusters/${cluster}/metrics/nodes`, {}, signal),
 
-  podMetrics: (cluster: string, namespace?: string) =>
-    request<MetricsResponse>(`/clusters/${cluster}/metrics/pods${qs({ namespace })}`),
+  podMetrics: (cluster: string, namespace?: string, signal?: AbortSignal) =>
+    request<MetricsResponse>(`/clusters/${cluster}/metrics/pods${qs({ namespace })}`, {}, signal),
 
-  cacheStats: (cluster: string) =>
+  cacheStats: (cluster: string, signal?: AbortSignal) =>
     request<{ cluster: string; informers: unknown[]; totalObjects: number }>(
       `/clusters/${cluster}/stats`,
+      {},
+      signal,
     ),
 
-  list: (ref: ResourceRef, params: ListParams = {}) =>
+  list: (ref: ResourceRef, params: ListParams = {}, signal?: AbortSignal) =>
     request<ListResponse>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/${ref.resource}` +
         qs(params as Record<string, unknown>),
+      {},
+      signal,
     ),
 
-  get: (ref: ResourceRef) =>
+  get: (ref: ResourceRef, signal?: AbortSignal) =>
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      {},
+      signal,
     ),
 
-  getYaml: (ref: ResourceRef) =>
+  getYaml: (ref: ResourceRef, signal?: AbortSignal) =>
     request<string>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}?format=yaml`,
+      {},
+      signal,
     ),
 
   replace: (ref: ResourceRef, body: string) =>
@@ -196,7 +219,8 @@ export const api = {
       warningsOnly?: boolean
       limit?: number
     },
-  ) => request<ListResponse>(`/clusters/${cluster}/events${qs(params)}`),
+    signal?: AbortSignal,
+  ) => request<ListResponse>(`/clusters/${cluster}/events${qs(params)}`, {}, signal),
 
   podLogs: (
     cluster: string,
@@ -205,11 +229,12 @@ export const api = {
     params: { container?: string; tailLines?: number; previous?: boolean; timestamps?: boolean },
   ) => request<string>(`/clusters/${cluster}/pods/${namespace}/${name}/logs${qs(params)}`),
 
-  access: async (cluster: string, checks: AccessCheck[]): Promise<Decision[]> => {
+  access: async (cluster: string, checks: AccessCheck[], signal?: AbortSignal): Promise<Decision[]> => {
     if (checks.length === 0) return []
     const res = await request<{ results: Record<string, Decision> }>(
       `/clusters/${cluster}/access`,
       { method: 'POST', body: JSON.stringify({ checks }) },
+      signal,
     )
     return checks.map((_, i) => res.results[String(i)] ?? { allowed: false })
   },

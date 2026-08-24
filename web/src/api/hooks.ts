@@ -6,7 +6,7 @@ import type { ListResponse, Row, WatchMessage } from './types'
 export function useMe() {
   return useQuery({
     queryKey: ['me'],
-    queryFn: api.me,
+    queryFn: ({ signal }) => api.me(signal),
     retry: false,
     staleTime: 60_000,
   })
@@ -15,7 +15,7 @@ export function useMe() {
 export function useClusters() {
   return useQuery({
     queryKey: ['clusters'],
-    queryFn: api.clusters,
+    queryFn: ({ signal }) => api.clusters(signal),
     // Health is probed server-side every 30s; matching that keeps the switcher
     // current without polling harder than the data changes.
     refetchInterval: 30_000,
@@ -25,7 +25,7 @@ export function useClusters() {
 export function useDiscovery(cluster?: string) {
   return useQuery({
     queryKey: ['discovery', cluster],
-    queryFn: () => api.discovery(cluster!),
+    queryFn: ({ signal }) => api.discovery(cluster!, signal),
     enabled: !!cluster,
     staleTime: 5 * 60_000,
   })
@@ -34,7 +34,7 @@ export function useDiscovery(cluster?: string) {
 export function useOverview(cluster?: string) {
   return useQuery({
     queryKey: ['overview', cluster],
-    queryFn: () => api.overview(cluster!),
+    queryFn: ({ signal }) => api.overview(cluster!, signal),
     enabled: !!cluster,
     refetchInterval: 15_000,
   })
@@ -43,10 +43,11 @@ export function useOverview(cluster?: string) {
 export function useNamespaces(cluster?: string) {
   const query = useQuery({
     queryKey: ['namespaces', cluster],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.list(
         { cluster: cluster!, group: '', version: 'v1', resource: 'namespaces' },
         { pageSize: 1000, sort: 'name' },
+        signal,
       ),
     enabled: !!cluster,
     staleTime: 60_000,
@@ -58,7 +59,7 @@ export function useNamespaces(cluster?: string) {
 export function usePodMetrics(cluster?: string, namespace?: string) {
   return useQuery({
     queryKey: ['metrics', 'pods', cluster, namespace ?? ''],
-    queryFn: () => api.podMetrics(cluster!, namespace || undefined),
+    queryFn: ({ signal }) => api.podMetrics(cluster!, namespace || undefined, signal),
     enabled: !!cluster,
     refetchInterval: 30_000,
   })
@@ -67,7 +68,7 @@ export function usePodMetrics(cluster?: string, namespace?: string) {
 export function useNodeMetrics(cluster?: string) {
   return useQuery({
     queryKey: ['metrics', 'nodes', cluster],
-    queryFn: () => api.nodeMetrics(cluster!),
+    queryFn: ({ signal }) => api.nodeMetrics(cluster!, signal),
     enabled: !!cluster,
     refetchInterval: 30_000,
   })
@@ -102,7 +103,7 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
 
   const query = useQuery({
     queryKey: key,
-    queryFn: () => api.list(ref!, params),
+    queryFn: ({ signal }) => api.list(ref!, params, signal),
     enabled: !!ref && enabled,
     placeholderData: keepPreviousData,
     // The watch is the freshness mechanism; this is a safety net for a socket
@@ -248,7 +249,7 @@ export function useResource(ref: ResourceRef | null) {
     queryKey: ref
       ? ['object', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name]
       : ['object', 'none'],
-    queryFn: () => api.get(ref!),
+    queryFn: ({ signal }) => api.get(ref!, signal),
     enabled: !!ref?.name,
     refetchInterval: 10_000,
   })
@@ -267,7 +268,7 @@ export function useEvents(
 ) {
   return useQuery({
     queryKey: ['events', cluster, filter],
-    queryFn: () => api.events(cluster!, { limit: 100, ...filter }),
+    queryFn: ({ signal }) => api.events(cluster!, { limit: 100, ...filter }, signal),
     enabled: !!cluster,
     refetchInterval: 15_000,
   })
@@ -280,7 +281,7 @@ export function useAccess(
 ) {
   return useQuery({
     queryKey: ['access', cluster, checks],
-    queryFn: () => api.access(cluster!, checks),
+    queryFn: ({ signal }) => api.access(cluster!, checks, signal),
     enabled: !!cluster && checks.length > 0,
     staleTime: 30_000,
   })

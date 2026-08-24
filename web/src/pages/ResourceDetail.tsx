@@ -258,7 +258,7 @@ function ResourceDetailInner() {
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name],
-    queryFn: () => api.getYaml(ref),
+    queryFn: ({ signal }) => api.getYaml(ref, signal),
     enabled: tab === 'yaml',
   })
 

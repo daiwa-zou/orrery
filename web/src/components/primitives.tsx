@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { age as formatAge, toneFor, type Tone } from '../lib/format'
 
 /* Small, shared building blocks. Keeping them in one file makes the visual
@@ -224,6 +224,9 @@ export function LabelChips({ labels }: { labels?: Record<string, string> }) {
   )
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /** A modal used for destructive confirmations. */
 export function Modal({
   open,
@@ -240,10 +243,49 @@ export function Modal({
   footer?: ReactNode
   wide?: boolean
 }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+
+  // Focus lands on the panel itself rather than its first focusable control:
+  // these are destructive confirmations, and initial focus on the confirm
+  // button turns a stray Enter into a delete.
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement as HTMLElement | null
+    panelRef.current?.focus()
+    return () => opener?.focus()
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      // The backdrop makes the page behind inert to the pointer; Tab has to be
+      // trapped so it is inert to the keyboard too.
+      const panel = panelRef.current
+      if (!panel) return
+      const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (focusables.length === 0) {
+        e.preventDefault()
+        panel.focus()
+        return
+      }
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const current = document.activeElement
+      if (e.shiftKey) {
+        if (current === first || !panel.contains(current)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (current === last || !panel.contains(current)) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -254,20 +296,24 @@ export function Modal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className={clsx(
-          'animate-in w-full rounded-lg bg-surface ring-1 ring-border shadow-2xl',
+          'animate-in w-full rounded-lg bg-surface ring-1 ring-border shadow-2xl outline-none',
           wide ? 'max-w-4xl' : 'max-w-lg',
         )}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">{title}</h2>
+          <h2 id={titleId} className="text-sm font-semibold text-ink">
+            {title}
+          </h2>
         </header>
         <div className="max-h-[70vh] overflow-auto px-4 py-4">{children}</div>
         {footer && (

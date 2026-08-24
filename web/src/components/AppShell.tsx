@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Link,
   NavLink,
@@ -48,10 +48,27 @@ function HealthDot({ status }: { status: HealthStatus }) {
 function ClusterSwitcher({ current }: { current?: string }) {
   const { data, isLoading } = useClusters()
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
   const navigate = useNavigate()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const listboxId = useId()
 
   const clusters = data?.clusters ?? []
   const active = clusters.find((c) => c.name === current)
+
+  // Focus lives on the listbox itself; options are pointed at with
+  // aria-activedescendant so a screen reader tracks the arrow keys.
+  useEffect(() => {
+    if (open) listRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current
+      ?.querySelector('[data-active="true"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
 
   if (isLoading) {
     return (
@@ -61,18 +78,65 @@ function ClusterSwitcher({ current }: { current?: string }) {
     )
   }
 
-  const select = (cluster: ClusterSummary) => {
+  const openList = () => {
+    const idx = clusters.findIndex((c) => c.name === current)
+    setActiveIndex(idx >= 0 ? idx : 0)
+    setOpen(true)
+  }
+
+  const close = () => {
     setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const select = (cluster: ClusterSummary) => {
+    close()
     navigate(`/c/${cluster.name}`)
+  }
+
+  const onListKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActiveIndex((i) => Math.min(i + 1, clusters.length - 1))
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setActiveIndex((i) => Math.max(i - 1, 0))
+        break
+      case 'Home':
+        e.preventDefault()
+        setActiveIndex(0)
+        break
+      case 'End':
+        e.preventDefault()
+        setActiveIndex(clusters.length - 1)
+        break
+      case 'Enter':
+      case ' ':
+        e.preventDefault()
+        if (clusters[activeIndex]) select(clusters[activeIndex])
+        break
+      case 'Escape':
+        e.preventDefault()
+        close()
+        break
+      case 'Tab':
+        // Let focus move on naturally, but not with a stale popup behind it.
+        setOpen(false)
+        break
+    }
   }
 
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={triggerRef}
+        onClick={() => (open ? setOpen(false) : openList())}
         className="flex w-full items-center gap-2 rounded-md bg-surface-2 px-3 py-2 text-left ring-1 ring-border transition-colors hover:bg-border/50"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
       >
         <HealthDot status={active?.health.status ?? 'unknown'} />
         <span className="min-w-0 flex-1">
@@ -92,42 +156,53 @@ function ClusterSwitcher({ current }: { current?: string }) {
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <ul
+            ref={listRef}
+            id={listboxId}
             role="listbox"
-            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto rounded-md bg-surface py-1 shadow-2xl ring-1 ring-border"
+            aria-label="Clusters"
+            tabIndex={-1}
+            aria-activedescendant={
+              clusters[activeIndex] ? `${listboxId}-${activeIndex}` : undefined
+            }
+            onKeyDown={onListKeyDown}
+            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto rounded-md bg-surface py-1 shadow-2xl ring-1 ring-border outline-none"
           >
-            {clusters.map((c) => (
-              <li key={c.name}>
-                <button
-                  role="option"
-                  aria-selected={c.name === current}
-                  onClick={() => select(c)}
-                  className={clsx(
-                    'flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-surface-2',
-                    c.name === current && 'bg-accent-soft/40',
-                  )}
-                >
-                  <HealthDot status={c.health.status} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-ink">{c.displayName}</span>
-                    <span className="block truncate text-[11px] text-ink-faint">
-                      {c.available
-                        ? `${c.health.version ?? 'unknown version'} · ${c.health.latencyMs}ms`
-                        : (c.error ?? 'unreachable')}
-                    </span>
-                    {c.labels && Object.keys(c.labels).length > 0 && (
-                      <span className="mt-1 flex flex-wrap gap-1">
-                        {Object.entries(c.labels).map(([k, v]) => (
-                          <span
-                            key={k}
-                            className="rounded bg-surface-2 px-1 text-[10px] text-ink-faint ring-1 ring-border"
-                          >
-                            {k}={v}
-                          </span>
-                        ))}
-                      </span>
-                    )}
+            {clusters.map((c, i) => (
+              <li
+                key={c.name}
+                id={`${listboxId}-${i}`}
+                role="option"
+                aria-selected={c.name === current}
+                data-active={i === activeIndex}
+                onMouseMove={() => setActiveIndex(i)}
+                onClick={() => select(c)}
+                className={clsx(
+                  'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
+                  i === activeIndex && 'bg-surface-2',
+                  c.name === current && 'bg-accent-soft/40',
+                )}
+              >
+                <HealthDot status={c.health.status} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">{c.displayName}</span>
+                  <span className="block truncate text-[11px] text-ink-faint">
+                    {c.available
+                      ? `${c.health.version ?? 'unknown version'} · ${c.health.latencyMs}ms`
+                      : (c.error ?? 'unreachable')}
                   </span>
-                </button>
+                  {c.labels && Object.keys(c.labels).length > 0 && (
+                    <span className="mt-1 flex flex-wrap gap-1">
+                      {Object.entries(c.labels).map(([k, v]) => (
+                        <span
+                          key={k}
+                          className="rounded bg-surface-2 px-1 text-[10px] text-ink-faint ring-1 ring-border"
+                        >
+                          {k}={v}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
@@ -255,6 +330,22 @@ function NavGroup({
 function UserMenu() {
   const { data } = useMe()
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    popoverRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
   if (!data) return null
 
   const label = data.user.name || data.user.email || data.user.username
@@ -267,7 +358,11 @@ function UserMenu() {
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`Account: ${label}`}
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-muted hover:bg-surface-2 hover:text-ink"
       >
         <span className="grid size-6 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-ink">
@@ -279,7 +374,13 @@ function UserMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="animate-in absolute right-0 z-40 mt-1 w-72 rounded-md bg-surface p-3 shadow-2xl ring-1 ring-border">
+          <div
+            ref={popoverRef}
+            role="dialog"
+            aria-label="Account"
+            tabIndex={-1}
+            className="animate-in absolute right-0 z-40 mt-1 w-72 rounded-md bg-surface p-3 shadow-2xl ring-1 ring-border outline-none"
+          >
             <p className="truncate text-sm font-medium text-ink">{label}</p>
             <p className="truncate font-mono text-[11px] text-ink-faint">{data.user.username}</p>
 
