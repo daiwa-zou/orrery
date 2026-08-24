@@ -2,8 +2,9 @@ import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, type ResourceRef } from '../api/client'
-import { useAccess, useLiveList } from '../api/hooks'
-import type { Row } from '../api/types'
+import { useAccess, useLiveList, usePodMetrics } from '../api/hooks'
+import type { Column, Row } from '../api/types'
+import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
 import { DataTable, Pagination } from '../components/DataTable'
 import { Badge, Button, ErrorState, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
@@ -129,10 +130,33 @@ export function ResourceList() {
     }
   }
 
-  if (error) return <ErrorState error={error} retry={refetch} />
+  // Pods get live CPU/memory columns joined in from metrics-server. The list
+  // itself stays cache-served; when metrics are unavailable the columns simply
+  // do not appear.
+  const isPods = ref?.group === '' && ref?.resource === 'pods'
+  const metrics = usePodMetrics(isPods ? cluster : undefined, namespace)
 
-  const rows = data?.items ?? []
-  const columns = data?.columns ?? []
+  const { rows, columns } = useMemo(() => {
+    const rows = data?.items ?? []
+    const columns = data?.columns ?? []
+    const m = metrics.data
+    if (!isPods || !m?.available || !m.pods?.length) return { rows, columns }
+
+    const usage = new Map(m.pods.map((p) => [`${p.namespace}/${p.name}`, p.usage]))
+    const extra: Column[] = [
+      { key: 'cpu', label: 'CPU', type: 'text', align: 'right', priority: 1 },
+      { key: 'memory', label: 'Memory', type: 'text', align: 'right', priority: 1 },
+    ]
+    return {
+      columns: [...columns, ...extra],
+      rows: rows.map((row) => {
+        const u = usage.get(`${row.namespace}/${row.name}`)
+        return u ? { ...row, cpu: formatCpu(u.cpuMilli), memory: formatMemory(u.memoryMiB) } : row
+      }),
+    }
+  }, [data, metrics.data, isPods])
+
+  if (error) return <ErrorState error={error} retry={refetch} />
 
   return (
     <div className="flex h-full flex-col">

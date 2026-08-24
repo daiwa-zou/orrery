@@ -55,6 +55,15 @@ export function useNamespaces(cluster?: string) {
   return { ...query, names }
 }
 
+export function usePodMetrics(cluster?: string, namespace?: string) {
+  return useQuery({
+    queryKey: ['metrics', 'pods', cluster, namespace ?? ''],
+    queryFn: () => api.podMetrics(cluster!, namespace || undefined),
+    enabled: !!cluster,
+    refetchInterval: 30_000,
+  })
+}
+
 export function useNodeMetrics(cluster?: string) {
   return useQuery({
     queryKey: ['metrics', 'nodes', cluster],
