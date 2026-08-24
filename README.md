@@ -212,9 +212,13 @@ place to look when memory use surprises you.
 
 ```bash
 cd backend && go test ./... -race     # backend
-cd web && npx tsc --noEmit            # frontend types
+cd web && npx tsc -b                  # frontend types
+cd web && npm test                    # frontend unit tests
 cd web && npm run build               # production bundle
 ```
+
+`tsc -b`, not `tsc --noEmit`: `tsconfig.json` uses project references with an
+empty `files` list, so the latter typechecks nothing and passes on anything.
 
 The Redis session tests skip unless you point them at an instance:
 
