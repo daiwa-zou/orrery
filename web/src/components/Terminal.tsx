@@ -60,7 +60,12 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       wsURL(`/clusters/${cluster}/ws/exec`, { namespace, pod, container }),
     )
 
+    // Guards against the old socket's async close event overwriting the new
+    // session's status after a container switch.
+    let stale = false
+
     socket.onopen = () => {
+      if (stale) return
       setStatus('open')
       sendResize(socket)
       term.focus()
@@ -89,8 +94,12 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       }
     }
 
-    socket.onerror = () => setStatus('error')
-    socket.onclose = () => setStatus((s) => (s === 'error' ? s : 'closed'))
+    socket.onerror = () => {
+      if (!stale) setStatus('error')
+    }
+    socket.onclose = () => {
+      if (!stale) setStatus((s) => (s === 'error' ? s : 'closed'))
+    }
 
     const dataSub = term.onData((data) => {
       if (socket.readyState === WebSocket.OPEN) {
@@ -98,12 +107,23 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       }
     })
 
-    const observer = new ResizeObserver(() => sendResize(socket))
+    // Window drags fire dozens of notifications a second; the shell only needs
+    // the final geometry.
+    let resizeTimer: number | undefined
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(() => sendResize(socket), 100)
+    })
     observer.observe(host)
 
     return () => {
+      stale = true
       observer.disconnect()
+      window.clearTimeout(resizeTimer)
       dataSub.dispose()
+      // Detach before disposing the terminal: a message dispatched between
+      // close() and dispose() would write to a disposed instance.
+      socket.onmessage = null
       socket.close()
       term.dispose()
     }

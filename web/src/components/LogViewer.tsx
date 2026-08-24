@@ -43,6 +43,11 @@ export function LogViewer({ cluster, namespace, pod, containers }: LogViewerProp
     setError(undefined)
     setStatus('connecting')
 
+    // The old socket's close event arrives *after* the effect re-runs, so
+    // without this guard a container switch briefly shows "ended" while the
+    // new stream is still connecting.
+    let stale = false
+
     const socket = new WebSocket(
       wsURL(`/clusters/${cluster}/ws/logs`, {
         namespace,
@@ -54,9 +59,12 @@ export function LogViewer({ cluster, namespace, pod, containers }: LogViewerProp
       }),
     )
 
-    socket.onopen = () => setStatus('streaming')
+    socket.onopen = () => {
+      if (!stale) setStatus('streaming')
+    }
 
     socket.onmessage = (event) => {
+      if (stale) return
       let msg: LogMessage
       try {
         msg = JSON.parse(event.data)
@@ -77,10 +85,17 @@ export function LogViewer({ cluster, namespace, pod, containers }: LogViewerProp
       }
     }
 
-    socket.onerror = () => setStatus('error')
-    socket.onclose = () => setStatus((s) => (s === 'error' ? s : 'ended'))
+    socket.onerror = () => {
+      if (!stale) setStatus('error')
+    }
+    socket.onclose = () => {
+      if (!stale) setStatus((s) => (s === 'error' ? s : 'ended'))
+    }
 
-    return () => socket.close()
+    return () => {
+      stale = true
+      socket.close()
+    }
   }, [cluster, namespace, pod, container, previous, timestamps])
 
   // Autoscroll only while the reader is at the bottom; yanking the viewport
@@ -104,14 +119,18 @@ export function LogViewer({ cluster, namespace, pod, containers }: LogViewerProp
     return lines.filter((l) => l.toLowerCase().includes(needle))
   }, [lines, filter])
 
+  // Downloads what is on screen: the filtered lines when a filter is active.
   const download = () => {
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+    const blob = new Blob([visible.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = `${pod}-${container}.log`
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    // Revoking synchronously can abort the download before it starts.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
   }
 
   return (

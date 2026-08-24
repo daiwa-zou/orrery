@@ -48,7 +48,9 @@ const CURATED: { title: string; resources: string[] }[] = [
   { title: 'Networking', resources: ['services', 'ingresses'] },
   { title: 'Storage', resources: ['persistentvolumeclaims'] },
   { title: 'Configuration', resources: ['configmaps', 'secrets'] },
-  { title: 'Cluster', resources: ['nodes', 'namespaces', 'events'] },
+  // Events are deliberately absent: the dedicated Events page above the
+  // sections replaces the raw core/v1 list.
+  { title: 'Cluster', resources: ['nodes', 'namespaces'] },
 ]
 
 /**

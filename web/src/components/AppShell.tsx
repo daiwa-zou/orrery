@@ -409,6 +409,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        // Inside an exec session the keystroke belongs to the shell — Ctrl+K
+        // is readline's kill-to-end-of-line, not our palette.
+        if (e.target instanceof Element && e.target.closest('.xterm')) return
         e.preventDefault()
         setPaletteOpen((v) => !v)
       }

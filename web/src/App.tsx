@@ -11,6 +11,7 @@ import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-qu
 import { ApiError } from './api/client'
 import { useClusters, useMe } from './api/hooks'
 import { AppShell } from './components/AppShell'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { EmptyState, ErrorState, Spinner } from './components/primitives'
 import { ToastProvider } from './components/Toast'
 import { Events } from './pages/Events'
@@ -114,22 +115,18 @@ function ClusterRoutes() {
     )
   }
 
-  if (entry && !entry.available) {
-    return (
-      <AppShell>
-        <EmptyState
-          title={`${entry.displayName} is unreachable`}
-          description={
-            entry.error ??
-            'The server cannot currently connect to this cluster. It will retry automatically.'
-          }
-        />
-      </AppShell>
-    )
-  }
-
   return (
     <AppShell>
+      {/* A banner, not a page swap: replacing the subtree on a single failed
+          health probe would tear down open terminals, log streams and unsaved
+          YAML edits exactly when the cluster is flaky. */}
+      {entry && !entry.available && (
+        <div className="border-b border-border bg-danger/10 px-4 py-2 text-sm text-danger">
+          {entry.displayName} is unreachable —{' '}
+          {entry.error ?? 'the server will keep retrying automatically'}. Live data resumes when
+          it recovers.
+        </div>
+      )}
       <Routes>
         <Route index element={<Overview />} />
         <Route path="events" element={<Events />} />
@@ -148,7 +145,8 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <Router>
+        <ErrorBoundary>
+          <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -169,7 +167,8 @@ export default function App() {
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </Router>
+          </Router>
+        </ErrorBoundary>
       </ToastProvider>
     </QueryClientProvider>
   )

@@ -21,7 +21,7 @@ import {
   StatusBadge,
 } from '../components/primitives'
 import { useToast } from '../components/Toast'
-import { kindToResource } from '../lib/format'
+import { kindToResource, splitApiVersion } from '../lib/format'
 
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
@@ -59,6 +59,18 @@ function TabButton({
 }
 
 export function ResourceDetail() {
+  const params = useParams()
+  // Remount per object: tab choice, modal state and editor drafts belong to
+  // one object, and carrying them across navigation leaves a Pod's "logs" tab
+  // selected on a ReplicaSet that has no such tab — a blank page.
+  return (
+    <ResourceDetailInner
+      key={`${params.cluster}/${params.group}/${params.version}/${params.resource}/${params.namespace}/${params.name}`}
+    />
+  )
+}
+
+function ResourceDetailInner() {
   const { cluster, group, version, resource, namespace, name } = useParams<{
     cluster: string
     group: string
@@ -85,6 +97,19 @@ export function ResourceDetail() {
   const [scaleOpen, setScaleOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [replicas, setReplicas] = useState(0)
+  const [yamlDirty, setYamlDirty] = useState(false)
+
+  const switchTab = (next: Tab) => {
+    if (
+      next !== tab &&
+      tab === 'yaml' &&
+      yamlDirty &&
+      !window.confirm('Discard your unsaved YAML changes?')
+    ) {
+      return
+    }
+    setTab(next)
+  }
 
   const { data: obj, isLoading, error, refetch } = useResource(ref)
 
@@ -253,25 +278,25 @@ export function ResourceDetail() {
         </div>
 
         <nav className="-mb-3 mt-2 flex gap-1 border-b border-transparent">
-          <TabButton active={tab === 'overview'} onClick={() => setTab('overview')}>
+          <TabButton active={tab === 'overview'} onClick={() => switchTab('overview')}>
             Overview
           </TabButton>
-          <TabButton active={tab === 'yaml'} onClick={() => setTab('yaml')}>
+          <TabButton active={tab === 'yaml'} onClick={() => switchTab('yaml')}>
             YAML
           </TabButton>
-          <TabButton active={tab === 'events'} onClick={() => setTab('events')}>
+          <TabButton active={tab === 'events'} onClick={() => switchTab('events')}>
             Events
             {events.data && events.data.total > 0 && (
               <span className="ml-1.5 text-xs text-ink-faint">{events.data.total}</span>
             )}
           </TabButton>
           {isPod && (
-            <TabButton active={tab === 'logs'} onClick={() => setTab('logs')}>
+            <TabButton active={tab === 'logs'} onClick={() => switchTab('logs')}>
               Logs
             </TabButton>
           )}
           {isPod && mayExec && (
-            <TabButton active={tab === 'terminal'} onClick={() => setTab('terminal')}>
+            <TabButton active={tab === 'terminal'} onClick={() => switchTab('terminal')}>
               Terminal
             </TabButton>
           )}
@@ -305,11 +330,7 @@ export function ResourceDetail() {
                   <Field label="Controlled by">
                     <div className="flex flex-wrap gap-2">
                       {owners.map((o) => (
-                        <Link
-                          key={o.uid}
-                          to={`/c/${cluster}/r/${ownerGroupSegment(o.kind)}/v1/${kindToResource(o.kind)}/${ns ?? '_'}/${o.name}`}
-                          className="text-accent hover:underline"
-                        >
+                        <Link key={o.uid} to={ownerHref(cluster!, o, ns)} className="text-accent hover:underline">
                           {o.kind}/{o.name}
                         </Link>
                       ))}
@@ -336,6 +357,7 @@ export function ResourceDetail() {
                 value={yamlQuery.data ?? ''}
                 readOnly={!mayUpdate}
                 onSave={mayUpdate ? saveYaml : undefined}
+                onDirtyChange={setYamlDirty}
                 notice={
                   mayUpdate
                     ? 'Applying replaces the object. Server-managed fields are stripped from this view.'
@@ -437,17 +459,19 @@ export function ResourceDetail() {
   )
 }
 
-/** Owner references carry only a kind, so map the well-known ones to a group. */
-function ownerGroupSegment(kind: string): string {
-  const groups: Record<string, string> = {
-    Deployment: 'apps',
-    ReplicaSet: 'apps',
-    StatefulSet: 'apps',
-    DaemonSet: 'apps',
-    Job: 'batch',
-    CronJob: 'batch',
-  }
-  return groups[kind] ?? 'core'
+/**
+ * Owner references carry their apiVersion, so the link can be exact — a CRD
+ * owner on v1beta1 works just as well as a core Deployment. The kind→resource
+ * pluralisation is the only guess left.
+ */
+function ownerHref(
+  cluster: string,
+  owner: { apiVersion?: string; kind: string; name: string },
+  ns?: string,
+): string {
+  const { group, version } = splitApiVersion(owner.apiVersion)
+  const seg = group === '' ? 'core' : group
+  return `/c/${cluster}/r/${seg}/${version || 'v1'}/${kindToResource(owner.kind)}/${ns ?? '_'}/${owner.name}`
 }
 
 /** Renders status conditions plus the remaining status fields as JSON. */
@@ -553,7 +577,14 @@ function DrainButton({
         }}
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                setOpen(false)
+                setResult(undefined)
+              }}
+            >
+              Cancel
+            </Button>
             <Button onClick={() => run(true)} disabled={busy}>
               Dry run
             </Button>

@@ -216,7 +216,9 @@ export function CommandPalette({
     }
 
     return out
-  }, [query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate])
+    // `open` is a real input: the Recents list is read from localStorage, so it
+    // must be recomputed on every open, not only when the query changes.
+  }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate])
 
   // Clamp the cursor when the result set shrinks under it.
   useEffect(() => {
@@ -314,7 +316,10 @@ export function CommandPalette({
                   role="option"
                   aria-selected={isSelected}
                   data-selected={isSelected}
-                  onMouseEnter={() => setSelected(i)}
+                  // mousemove, not mouseenter: arrow-key navigation scrolls the
+                  // list under a stationary cursor, and the resulting synthetic
+                  // mouseenter would yank the selection right back.
+                  onMouseMove={() => setSelected(i)}
                   onClick={() => choose(entry)}
                   className={clsx(
                     'flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-sm',

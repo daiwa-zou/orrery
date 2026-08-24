@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useDiscovery, useEvents } from '../api/hooks'
 import type { APIResource, Row } from '../api/types'
+import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
 import { Button, ErrorState, Spinner } from '../components/primitives'
 
@@ -34,8 +35,16 @@ export function Events() {
       for (const res of group.resources) {
         const key = res.kind.toLowerCase()
         const existing = map.get(key)
-        // Prefer preferred versions, and core/builtin groups over lookalikes.
-        if (!existing || (res.preferred && !existing.preferred)) map.set(key, res)
+        // Built-in groups win over CRDs that shadow a well-known kind (an
+        // operator's "Service" must not capture core/v1 Service events), then
+        // preferred versions win within a group.
+        const better =
+          !existing ||
+          (isCustomGroup(existing.group) && !isCustomGroup(res.group)) ||
+          (isCustomGroup(existing.group) === isCustomGroup(res.group) &&
+            res.preferred &&
+            !existing.preferred)
+        if (better) map.set(key, res)
       }
     }
     return map

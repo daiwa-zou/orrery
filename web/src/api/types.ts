@@ -66,7 +66,7 @@ export interface KubeObject {
     creationTimestamp?: string
     labels?: Record<string, string>
     annotations?: Record<string, string>
-    ownerReferences?: { kind: string; name: string; uid: string }[]
+    ownerReferences?: { apiVersion?: string; kind: string; name: string; uid: string }[]
     deletionTimestamp?: string
     resourceVersion?: string
   }

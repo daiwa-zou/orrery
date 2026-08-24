@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, type ResourceRef } from '../api/client'
@@ -8,6 +8,32 @@ import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
 import { DataTable, Pagination } from '../components/DataTable'
 import { Badge, Button, ErrorState, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
+
+/**
+ * Text input state that commits to the URL after a pause. Every committed
+ * value is a server round trip, so keystrokes should not each cost one — and
+ * half-typed label selectors are invalid anyway.
+ */
+function useDebouncedInput(
+  urlValue: string,
+  commit: (value: string) => void,
+  delay = 300,
+): [string, (v: string) => void] {
+  const [value, setValue] = useState(urlValue)
+
+  // Adopt outside changes (back button, palette) without clobbering typing.
+  useEffect(() => {
+    setValue(urlValue)
+  }, [urlValue])
+
+  useEffect(() => {
+    if (value === urlValue) return
+    const t = window.setTimeout(() => commit(value), delay)
+    return () => window.clearTimeout(t)
+  }, [value, urlValue, commit, delay])
+
+  return [value, setValue]
+}
 
 /** Explains the live-update state in the header, honestly. */
 function LiveIndicator({ state }: { state: 'connecting' | 'live' | 'polling' | 'off' }) {
@@ -101,6 +127,14 @@ export function ResourceList() {
     [params, setParams],
   )
 
+  const commitQ = useCallback((v: string) => update({ q: v, page: '1' }), [update])
+  const commitSelector = useCallback(
+    (v: string) => update({ labelSelector: v, page: '1' }),
+    [update],
+  )
+  const [qInput, setQInput] = useDebouncedInput(q, commitQ)
+  const [selectorInput, setSelectorInput] = useDebouncedInput(labelSelector, commitSelector)
+
   const onSort = (key: string) => {
     if (key === sort) update({ order: order === 'asc' ? 'desc' : 'asc' })
     else update({ sort: key, order: 'asc' })
@@ -181,15 +215,15 @@ export function ResourceList() {
         <div className="flex-1" />
 
         <input
-          value={q}
-          onChange={(e) => update({ q: e.target.value, page: '1' })}
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
           placeholder="Filter by name"
           aria-label="Filter by name"
           className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
         <input
-          value={labelSelector}
-          onChange={(e) => update({ labelSelector: e.target.value, page: '1' })}
+          value={selectorInput}
+          onChange={(e) => setSelectorInput(e.target.value)}
           placeholder="Label selector"
           aria-label="Label selector"
           title="Kubernetes label selector syntax, e.g. app=web,tier!=cache"
@@ -255,7 +289,9 @@ export function ResourceList() {
         )}
       </div>
 
-      {data && data.total > pageSize && (
+      {/* Keep the controls while page > 1 even when total shrank, or a user
+          stranded past the last page has no way back. */}
+      {data && (data.total > pageSize || page > 1) && (
         <Pagination
           page={page}
           pageSize={pageSize}

@@ -68,6 +68,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         // Keep the status-line fallback.
       }
     }
+    // A 401 on a write means the session died between poll ticks; a toast
+    // saying "401" helps nobody, so route to sign-in like the query path does.
+    if (res.status === 401 && method !== 'GET' && window.location.pathname !== '/login') {
+      const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
+      window.location.href = `/login?returnTo=${returnTo}`
+    }
     throw new ApiError(res.status, kind, reason)
   }
 

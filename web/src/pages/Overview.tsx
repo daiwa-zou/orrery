@@ -179,7 +179,7 @@ export function Overview() {
             title="Recent warnings"
             action={
               <Link
-                to={`/c/${cluster}/r/core/v1/events`}
+                to={`/c/${cluster}/events`}
                 className="text-xs text-accent hover:underline"
               >
                 All events

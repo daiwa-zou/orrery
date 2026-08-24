@@ -155,9 +155,11 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
       if (closed) return
       socket = new WebSocket(url)
 
+      const openedAt = { t: 0 }
+
       socket.onopen = () => {
         if (closed) return
-        attempts = 0
+        openedAt.t = performance.now()
         setLive('live')
         if (dropped) {
           // Anything could have changed while the socket was down.
@@ -204,7 +206,16 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
         }
       }
 
-      socket.onclose = scheduleReconnect
+      socket.onerror = () => {}
+
+      socket.onclose = () => {
+        // Only a connection that stayed up counts as recovery. Resetting the
+        // backoff on open alone turns a server that accepts the upgrade and
+        // immediately closes (e.g. watch forbidden) into a once-a-second
+        // reconnect-and-refetch storm.
+        if (openedAt.t > 0 && performance.now() - openedAt.t > 10_000) attempts = 0
+        scheduleReconnect()
+      }
     }
 
     connect()

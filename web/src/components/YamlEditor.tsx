@@ -1,7 +1,7 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Spinner } from './primitives'
 
 interface YamlEditorProps {
@@ -10,6 +10,8 @@ interface YamlEditorProps {
   onSave?: (next: string) => Promise<void>
   /** Shown above the editor when the object cannot be edited. */
   notice?: string
+  /** Lets the parent guard against discarding unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 /**
@@ -20,16 +22,35 @@ interface YamlEditorProps {
  * never quietly discard something the reader typed, and an unedited pane
  * always shows the truth.
  */
-export function YamlEditor({ value, readOnly, onSave, notice }: YamlEditorProps) {
+export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: YamlEditorProps) {
   const [draft, setDraft] = useState(value)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [dirty, setDirty] = useState(false)
+  // The value that was on screen when a save succeeded. Until the refetch
+  // lands, the prop still holds this pre-save text; adopting it would make the
+  // editor visibly revert the change that was just applied.
+  const staleAfterSave = useRef<string>(undefined)
 
   useEffect(() => {
     // Only adopt a new server value when the reader has not started editing.
-    if (!dirty) setDraft(value)
+    if (!dirty && value !== staleAfterSave.current) {
+      staleAfterSave.current = undefined
+      setDraft(value)
+    }
   }, [value, dirty])
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+
+  // Losing a half-written manifest to a stray ⌘W is not acceptable.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   const save = async () => {
     if (!onSave) return
@@ -37,6 +58,7 @@ export function YamlEditor({ value, readOnly, onSave, notice }: YamlEditorProps)
     setError(undefined)
     try {
       await onSave(draft)
+      staleAfterSave.current = value
       setDirty(false)
     } catch (e) {
       setError((e as Error).message)
