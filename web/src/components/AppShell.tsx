@@ -586,6 +586,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 Events
               </NavLink>
+              <NavLink
+                to={`/c/${cluster}/can-i`}
+                className={({ isActive }) =>
+                  clsx(
+                    'mx-3 block rounded px-3 py-1.5 text-[13px] transition-colors',
+                    isActive
+                      ? 'bg-accent-soft/50 text-ink'
+                      : 'text-ink-muted hover:bg-surface-2 hover:text-ink',
+                  )
+                }
+              >
+                Can I?
+              </NavLink>
 
               {discoveryLoading && (
                 <p className="flex items-center gap-2 px-3 py-2 text-sm text-ink-faint">
