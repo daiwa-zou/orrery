@@ -13,9 +13,9 @@ oauth2:
   skipApprovalScreen: true
 
 staticClients:
-  - id: clusterlens
-    name: Clusterlens
-    secret: clusterlens-dev-secret
+  - id: orrery
+    name: Orrery
+    secret: orrery-dev-secret
     redirectURIs:
       - 'http://localhost:5173/api/v1/auth/callback'
 

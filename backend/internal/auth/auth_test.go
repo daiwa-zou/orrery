@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 func testKey(t *testing.T) []byte {
@@ -169,7 +169,7 @@ func TestSessionCookiesAreScopedCorrectly(t *testing.T) {
 		byName[c.Name] = c
 	}
 
-	session := byName["clusterlens_session"]
+	session := byName["orrery_session"]
 	if session == nil {
 		t.Fatal("no session cookie was set")
 	}
@@ -200,7 +200,7 @@ func TestFromRequestRejectsUnknownAndMissingCookies(t *testing.T) {
 		t.Errorf("a request with no cookie gave %v", err)
 	}
 
-	req.AddCookie(&http.Cookie{Name: "clusterlens_session", Value: "bogus"})
+	req.AddCookie(&http.Cookie{Name: "orrery_session", Value: "bogus"})
 	if _, err := m.FromRequest(req); err != ErrNoSession {
 		t.Errorf("a request with a bogus cookie gave %v", err)
 	}
@@ -317,7 +317,7 @@ func TestSafeReturnToBlocksOpenRedirects(t *testing.T) {
 }
 
 func TestOriginAllowed(t *testing.T) {
-	public := "https://clusterlens.example.com"
+	public := "https://orrery.example.com"
 
 	if !OriginAllowed("", public, nil) {
 		t.Error("a handshake with no Origin (non-browser client) should be allowed")

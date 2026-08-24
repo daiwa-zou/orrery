@@ -1,28 +1,28 @@
-{{- define "clusterlens.name" -}}
+{{- define "orrery.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "clusterlens.fullname" -}}
+{{- define "orrery.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-%s" .Release.Name (include "clusterlens.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name (include "orrery.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "clusterlens.labels" -}}
-app.kubernetes.io/name: {{ include "clusterlens.name" . }}
+{{- define "orrery.labels" -}}
+app.kubernetes.io/name: {{ include "orrery.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
-{{- define "clusterlens.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "clusterlens.name" . }}
+{{- define "orrery.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "orrery.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "clusterlens.serviceAccountName" -}}
-{{ include "clusterlens.fullname" . }}
+{{- define "orrery.serviceAccountName" -}}
+{{ include "orrery.fullname" . }}
 {{- end -}}

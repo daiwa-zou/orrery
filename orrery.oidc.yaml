@@ -12,8 +12,8 @@ server:
 oidc:
   enabled: true
   issuer: 'http://localhost:5556/dex'
-  clientID: 'clusterlens'
-  clientSecret: 'clusterlens-dev-secret'
+  clientID: 'orrery'
+  clientSecret: 'orrery-dev-secret'
   redirectURL: 'http://localhost:5173/api/v1/auth/callback'
   scopes: [openid, profile, email, groups]
   # Mirrors what the kube-apiserver would derive from the same token: the

@@ -99,7 +99,7 @@ func redactSecretData(u *unstructured.Unstructured) {
 			}
 		}
 		unstructured.RemoveNestedField(u.Object, field)
-		_ = unstructured.SetNestedMap(u.Object, sizes, "clusterlens.io/redacted", field)
+		_ = unstructured.SetNestedMap(u.Object, sizes, "orrery.io/redacted", field)
 	}
 }
 

@@ -51,7 +51,7 @@ const CLUSTER = discovery([
   // Dynamic Resource Allocation: a built-in group that a hardcoded list missed.
   resource({ kind: 'ResourceClaim', name: 'resourceclaims', group: 'resource.k8s.io' }),
   resource({ kind: 'PodMetrics', name: 'pods', group: 'metrics.k8s.io' }),
-  resource({ kind: 'Widget', name: 'widgets', group: 'demo.clusterlens.io', shortNames: ['wg'] }),
+  resource({ kind: 'Widget', name: 'widgets', group: 'demo.orrery.io', shortNames: ['wg'] }),
 ])
 
 describe('isCustomGroup', () => {
@@ -69,7 +69,7 @@ describe('isCustomGroup', () => {
   })
 
   it('treats third-party domains as custom', () => {
-    for (const group of ['demo.clusterlens.io', 'cert-manager.io', 'monitoring.coreos.com']) {
+    for (const group of ['demo.orrery.io', 'cert-manager.io', 'monitoring.coreos.com']) {
       expect(isCustomGroup(group), group).toBe(true)
     }
   })

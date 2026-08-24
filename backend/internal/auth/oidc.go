@@ -14,13 +14,13 @@ import (
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 // stateCookieName holds the in-flight login. Keeping the state, nonce and PKCE
 // verifier in an encrypted cookie rather than server memory means any replica
 // can complete a login that another replica started.
-const stateCookieName = "clusterlens_oidc_state"
+const stateCookieName = "orrery_oidc_state"
 
 const stateTTL = 10 * time.Minute
 

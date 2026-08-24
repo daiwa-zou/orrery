@@ -190,13 +190,15 @@ export function Overview() {
               </Link>
             }
           >
-            {data.warnings.length === 0 ? (
+            {/* Defensive ?? []: an older backend serialises "no warnings" as
+                null, and this card must not take the whole page down over it. */}
+            {(data.warnings ?? []).length === 0 ? (
               <p className="py-4 text-center text-sm text-ink-faint">
                 No warning events. That is a good sign.
               </p>
             ) : (
               <ul className="divide-y divide-border/60">
-                {data.warnings.map((w, i) => (
+                {(data.warnings ?? []).map((w, i) => (
                   <li key={`${w.object}-${w.reason}-${i}`} className="flex gap-3 py-2 text-sm">
                     <Badge tone="warn">{w.reason}</Badge>
                     <div className="min-w-0 flex-1">

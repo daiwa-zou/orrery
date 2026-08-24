@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/daiwazou/clusterlens/backend/internal/authz"
+	"github.com/daiwazou/orrery/backend/internal/authz"
 )
 
 // countSummary is a count the caller may not have been allowed to compute.
@@ -232,9 +232,11 @@ func workloadHealth(o *unstructured.Unstructured) string {
 // recentWarnings surfaces the newest Warning events, the single most useful
 // thing to put on a cluster landing page.
 func (a *API) recentWarnings(ctx context.Context, res *resolved, limit int) []map[string]any {
+	// Never nil: a nil slice marshals to JSON null, and "no warnings we can
+	// show" must reach the browser as an empty list, not a missing field.
 	events, err := a.visibleObjects(ctx, res, "", "v1", "events")
 	if err != nil {
-		return nil
+		return []map[string]any{}
 	}
 	warnings := make([]*unstructured.Unstructured, 0, 32)
 	for _, e := range events {

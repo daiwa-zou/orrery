@@ -31,11 +31,11 @@ export function writeJSON(key: string, value: unknown): void {
 
 /** Open nav sections are remembered per cluster, since their resources differ. */
 export function navStateKey(cluster: string): string {
-  return `clusterlens.nav.${cluster}`
+  return `orrery.nav.${cluster}`
 }
 
 /** Recently opened resources, used to fill the palette before anything is typed. */
-const RECENTS_KEY = 'clusterlens.recents'
+const RECENTS_KEY = 'orrery.recents'
 const MAX_RECENTS = 8
 
 export interface RecentResource {

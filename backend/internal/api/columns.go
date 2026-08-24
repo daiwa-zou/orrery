@@ -298,7 +298,7 @@ func init() {
 		r := baseRow(u)
 		r["type"] = str(u, "type")
 		// The cache holds redacted secrets: key names survive, values do not.
-		if red, ok, _ := unstructured.NestedMap(u.Object, "clusterlens.io/redacted", "data"); ok {
+		if red, ok, _ := unstructured.NestedMap(u.Object, "orrery.io/redacted", "data"); ok {
 			r["keys"] = int64(len(red))
 		} else {
 			data, _, _ := unstructured.NestedMap(u.Object, "data")

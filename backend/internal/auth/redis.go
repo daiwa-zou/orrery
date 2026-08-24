@@ -12,7 +12,7 @@ import (
 
 // redisKeyPrefix namespaces session keys so the dashboard can share a Redis
 // instance with other workloads without colliding.
-const redisKeyPrefix = "clusterlens:session:"
+const redisKeyPrefix = "orrery:session:"
 
 // RedisStore keeps sessions outside the process, which is what allows more
 // than one replica: any pod can serve any request, and a restart or a rollout

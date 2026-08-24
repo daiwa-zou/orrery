@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 data:
   config.yaml: |
     server:
@@ -17,7 +17,7 @@ data:
       issuer: {{ .Values.oidc.issuer | quote }}
       clientID: {{ .Values.oidc.clientID | quote }}
       # Read from the environment so the secret never lands in a ConfigMap.
-      clientSecret: ${CLUSTERLENS_OIDC_CLIENT_SECRET}
+      clientSecret: ${ORRERY_OIDC_CLIENT_SECRET}
       scopes: {{ toJson .Values.oidc.scopes }}
       usernameClaim: {{ .Values.oidc.usernameClaim | quote }}
       groupsClaim: {{ .Values.oidc.groupsClaim | quote }}
@@ -32,7 +32,7 @@ data:
       {{- if eq .Values.session.store "redis" }}
       redisURL: {{ .Values.session.redisURL | quote }}
       {{- end }}
-      encryptionKey: ${CLUSTERLENS_SESSION_KEY}
+      encryptionKey: ${ORRERY_SESSION_KEY}
       ttl: {{ .Values.session.ttl }}
       idleTimeout: {{ .Values.session.idleTimeout }}
       secure: true

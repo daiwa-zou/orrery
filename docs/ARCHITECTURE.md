@@ -16,7 +16,7 @@ over for two reasons:
    expensive in aggregate; a hundred tabs is a hundred watch connections
    carrying the same data.
 
-Clusterlens instead keeps one shared cache per resource per cluster, and puts
+Orrery instead keeps one shared cache per resource per cluster, and puts
 an authorization check in front of it.
 
 ## Read path
@@ -49,7 +49,7 @@ therefore load-bearing, not decorative. Three properties keep it honest:
   until the user closes the tab.
 
 RBAC has no per-object read filtering: a user who can `list` pods in a
-namespace can see every pod in it. Clusterlens reproduces that exactly rather
+namespace can see every pod in it. Orrery reproduces that exactly rather
 than inventing a finer-grained model that would diverge from `kubectl`.
 
 ### Users without cluster-wide read
@@ -105,7 +105,7 @@ mode — so:
 
 That last property is the main argument for impersonation over a shared service
 account. A dashboard whose writes are all attributed to `system:serviceaccount:
-clusterlens:clusterlens` makes an incident review much harder than it needs to
+orrery:orrery` makes an incident review much harder than it needs to
 be.
 
 Actions use the right mechanism rather than the easy one: scaling goes through

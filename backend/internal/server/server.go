@@ -13,10 +13,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/daiwazou/clusterlens/backend/internal/api"
-	"github.com/daiwazou/clusterlens/backend/internal/auth"
-	"github.com/daiwazou/clusterlens/backend/internal/cluster"
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/api"
+	"github.com/daiwazou/orrery/backend/internal/auth"
+	"github.com/daiwazou/orrery/backend/internal/cluster"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 // Server owns the listeners and the resources behind them.
@@ -33,7 +33,7 @@ type Server struct {
 // namespaced under a prefix that cannot collide with a real OIDC username, so
 // binding it in RBAC is an explicit, visible decision.
 var anonymousUser = &auth.User{
-	Username: "clusterlens:anonymous",
+	Username: "orrery:anonymous",
 	Name:     "Local user",
 	Groups:   []string{"system:authenticated"},
 }

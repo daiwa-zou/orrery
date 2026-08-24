@@ -34,7 +34,7 @@ export class ApiError extends Error {
 }
 
 function csrfToken(): string {
-  const match = document.cookie.match(/(?:^|;\s*)clusterlens_csrf=([^;]+)/)
+  const match = document.cookie.match(/(?:^|;\s*)orrery_csrf=([^;]+)/)
   return match ? decodeURIComponent(match[1]) : ''
 }
 

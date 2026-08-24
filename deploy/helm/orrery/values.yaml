@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: ghcr.io/example/clusterlens
+  repository: ghcr.io/example/orrery
   tag: ''            # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
@@ -13,22 +13,22 @@ ingress:
   enabled: false
   className: ''
   annotations: {}
-  host: clusterlens.example.com
+  host: orrery.example.com
   tls:
     enabled: true
-    secretName: clusterlens-tls
+    secretName: orrery-tls
 
 # The externally reachable URL. It anchors the OIDC redirect and the WebSocket
 # origin check, so it must match what the browser actually uses.
-publicURL: https://clusterlens.example.com
+publicURL: https://orrery.example.com
 
 oidc:
   enabled: true
   issuer: https://accounts.example.com
-  clientID: clusterlens
+  clientID: orrery
   # Supply the secret out of band and reference it here rather than putting it
   # in values.yaml, which tends to end up in git.
-  existingSecret: clusterlens-oidc
+  existingSecret: orrery-oidc
   clientSecretKey: clientSecret
   scopes: [openid, profile, email, groups]
   usernameClaim: email
@@ -40,7 +40,7 @@ oidc:
 session:
   # A 32-byte base64 key shared by every replica. Without it each pod mints its
   # own and users are signed out whenever they hit a different one.
-  existingSecret: clusterlens-session
+  existingSecret: orrery-session
   keyRef: encryptionKey
   ttl: 12h
   idleTimeout: 2h
@@ -48,7 +48,7 @@ session:
   # Set "redis" before scaling out, or a request that lands on another pod
   # will not recognise the session.
   store: redis
-  redisURL: 'redis://clusterlens-redis:6379/0'
+  redisURL: 'redis://orrery-redis:6379/0'
 
 cache:
   idleTimeout: 10m
@@ -63,7 +63,7 @@ authz:
 #
 # The in-cluster entry needs no credential. Remote clusters read a kubeconfig
 # from a mounted secret; create it with:
-#   kubectl create secret generic clusterlens-kubeconfigs --from-file=prod.yaml=...
+#   kubectl create secret generic orrery-kubeconfigs --from-file=prod.yaml=...
 clusters:
   - name: in-cluster
     displayName: Local cluster
@@ -72,7 +72,7 @@ clusters:
     labels:
       env: production
 
-kubeconfigSecret: ''   # name of a secret mounted at /etc/clusterlens/kubeconfigs
+kubeconfigSecret: ''   # name of a secret mounted at /etc/orrery/kubeconfigs
 
 resources:
   requests:

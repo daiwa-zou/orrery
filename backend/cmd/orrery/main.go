@@ -1,4 +1,4 @@
-// Command clusterlens serves a multi-cluster Kubernetes dashboard.
+// Command orrery serves a multi-cluster Kubernetes dashboard.
 package main
 
 import (
@@ -10,13 +10,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/daiwazou/clusterlens/backend/internal/config"
-	"github.com/daiwazou/clusterlens/backend/internal/server"
+	"github.com/daiwazou/orrery/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/server"
 )
 
 func main() {
 	var (
-		configPath = flag.String("config", os.Getenv("CLUSTERLENS_CONFIG"), "path to the YAML configuration file")
+		configPath = flag.String("config", os.Getenv("ORRERY_CONFIG"), "path to the YAML configuration file")
 		printCfg   = flag.Bool("print-config", false, "print the resolved configuration and exit")
 	)
 	flag.Parse()

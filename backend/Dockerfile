@@ -13,12 +13,12 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
 # CGO off keeps the binary static so it runs on a distroless base.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/clusterlens ./cmd/clusterlens
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/orrery ./cmd/orrery
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/clusterlens /usr/local/bin/clusterlens
+COPY --from=build /out/orrery /usr/local/bin/orrery
 COPY --from=web /src/dist /srv/web
-ENV CLUSTERLENS_WEB_ROOT=/srv/web
+ENV ORRERY_WEB_ROOT=/srv/web
 USER nonroot:nonroot
 EXPOSE 8080 9090
-ENTRYPOINT ["/usr/local/bin/clusterlens"]
+ENTRYPOINT ["/usr/local/bin/orrery"]

@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/daiwazou/clusterlens/backend/internal/cluster"
+	"github.com/daiwazou/orrery/backend/internal/cluster"
 )
 
 // targetRef identifies the object an action applies to.

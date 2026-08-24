@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/daiwazou/clusterlens/backend/internal/cluster"
+	"github.com/daiwazou/orrery/backend/internal/cluster"
 )
 
 // podLogOptions builds the log request from query parameters, clamping the

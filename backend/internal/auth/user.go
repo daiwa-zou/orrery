@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// User is the identity Clusterlens carries through a request. Username and
+// User is the identity Orrery carries through a request. Username and
 // Groups are the mapped, prefixed values handed to the API server as
 // impersonation headers, so they must match what the cluster's own OIDC
 // configuration would have produced for the same token.

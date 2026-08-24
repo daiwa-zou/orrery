@@ -15,18 +15,18 @@ import (
 
 var (
 	httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "clusterlens_http_requests_total",
+		Name: "orrery_http_requests_total",
 		Help: "HTTP requests by route, method and status.",
 	}, []string{"route", "method", "status"})
 
 	httpDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "clusterlens_http_request_duration_seconds",
+		Name:    "orrery_http_request_duration_seconds",
 		Help:    "HTTP request latency by route.",
 		Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 	}, []string{"route", "method"})
 
 	httpInFlight = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "clusterlens_http_requests_in_flight",
+		Name: "orrery_http_requests_in_flight",
 		Help: "HTTP requests currently being served, streams included.",
 	})
 )
@@ -71,7 +71,7 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := s.ResponseWriter.(http.Hijacker)
 	if !ok {
-		return nil, nil, fmt.Errorf("clusterlens: %T does not support hijacking", s.ResponseWriter)
+		return nil, nil, fmt.Errorf("orrery: %T does not support hijacking", s.ResponseWriter)
 	}
 	return h.Hijack()
 }
@@ -113,11 +113,11 @@ type cacheCollector struct {
 func NewCacheCollector(a *API) prometheus.Collector {
 	return &cacheCollector{
 		api: a,
-		objects: prometheus.NewDesc("clusterlens_cache_objects",
+		objects: prometheus.NewDesc("orrery_cache_objects",
 			"Objects held in a resource cache.", []string{"cluster", "gvr"}, nil),
-		watchers: prometheus.NewDesc("clusterlens_cache_subscribers",
+		watchers: prometheus.NewDesc("orrery_cache_subscribers",
 			"WebSocket subscribers attached to a resource cache.", []string{"cluster", "gvr"}, nil),
-		count: prometheus.NewDesc("clusterlens_cache_informers",
+		count: prometheus.NewDesc("orrery_cache_informers",
 			"Running informers per cluster.", []string{"cluster"}, nil),
 	}
 }

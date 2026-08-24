@@ -3,11 +3,11 @@
 # supporting containers. Safe to run more than once.
 set -u
 
-echo "stopping clusterlens..."
-pkill -f 'clusterlens -config' 2>/dev/null
+echo "stopping orrery..."
+pkill -f 'orrery -config' 2>/dev/null
 
 echo "removing containers..."
-docker rm -f clusterlens-dex clusterlens-redis 2>/dev/null
+docker rm -f orrery-dex orrery-redis 2>/dev/null
 
 echo "deleting kind clusters..."
 kind delete cluster --name lens-a 2>/dev/null

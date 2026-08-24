@@ -1,7 +1,7 @@
 // Package authz answers "may this user do this?" by asking the Kubernetes API
 // server, and caches the answer briefly.
 //
-// Clusterlens deliberately does not reimplement RBAC. Every verdict comes from
+// Orrery deliberately does not reimplement RBAC. Every verdict comes from
 // a SubjectAccessReview, so a cluster's Roles, ClusterRoles, webhook
 // authorizers and admission plugins remain the single source of truth.
 package authz

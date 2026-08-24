@@ -19,8 +19,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 
-	"github.com/daiwazou/clusterlens/backend/internal/authz"
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/authz"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 // Identity is the end user as the cluster layer needs to see them, decoupled
@@ -97,7 +97,7 @@ func New(cfg config.ClusterConfig, appCfg *config.Config, log *slog.Logger) (*Cl
 	}
 	restCfg.QPS = cfg.QPS
 	restCfg.Burst = cfg.Burst
-	restCfg.UserAgent = "clusterlens/1.0"
+	restCfg.UserAgent = "orrery/1.0"
 
 	base, err := clientsFor(restCfg, false)
 	if err != nil {

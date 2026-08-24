@@ -538,7 +538,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               />
               <circle cx="16" cy="16" r="4" className="fill-accent" />
             </svg>
-            <span className="text-sm font-semibold tracking-tight text-ink">Clusterlens</span>
+            <span className="text-sm font-semibold tracking-tight text-ink">Orrery</span>
           </Link>
           <ClusterSwitcher current={cluster} />
         </div>
@@ -668,7 +668,7 @@ function Breadcrumbs({
   resource?: string
   name?: string
 }) {
-  if (!cluster) return <span className="text-sm text-ink-faint">Clusterlens</span>
+  if (!cluster) return <span className="text-sm text-ink-faint">Orrery</span>
 
   return (
     <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">

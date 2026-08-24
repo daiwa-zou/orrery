@@ -15,9 +15,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/daiwazou/clusterlens/backend/internal/auth"
-	"github.com/daiwazou/clusterlens/backend/internal/cluster"
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/auth"
+	"github.com/daiwazou/orrery/backend/internal/cluster"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 // API holds the dependencies every handler needs.

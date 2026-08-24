@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// redisStore connects to the instance named by CLUSTERLENS_TEST_REDIS_URL and
+// redisStore connects to the instance named by ORRERY_TEST_REDIS_URL and
 // skips the test when there is none, so `go test ./...` stays runnable with no
 // infrastructure while CI can exercise the real thing.
 func redisStore(t *testing.T, idle time.Duration) *RedisStore {
 	t.Helper()
-	url := os.Getenv("CLUSTERLENS_TEST_REDIS_URL")
+	url := os.Getenv("ORRERY_TEST_REDIS_URL")
 	if url == "" {
-		t.Skip("set CLUSTERLENS_TEST_REDIS_URL to run the Redis session tests")
+		t.Skip("set ORRERY_TEST_REDIS_URL to run the Redis session tests")
 	}
 	store, err := NewRedisStore(context.Background(), url, idle)
 	if err != nil {

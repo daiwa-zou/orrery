@@ -1,4 +1,4 @@
-// Package config defines Clusterlens' runtime configuration and its loading
+// Package config defines Orrery' runtime configuration and its loading
 // rules: a YAML file, overlaid with environment variables, then validated.
 package config
 
@@ -190,7 +190,7 @@ func Default() *Config {
 		},
 		Session: SessionConfig{
 			Store:       "memory",
-			CookieName:  "clusterlens_session",
+			CookieName:  "orrery_session",
 			TTL:         12 * time.Hour,
 			IdleTimeout: 2 * time.Hour,
 			Secure:      true,
@@ -242,31 +242,31 @@ func (c *Config) applyEnv() {
 			*dst = v
 		}
 	}
-	str("CLUSTERLENS_ADDR", &c.Server.Addr)
-	str("CLUSTERLENS_PUBLIC_URL", &c.Server.PublicURL)
-	str("CLUSTERLENS_WEB_ROOT", &c.Server.WebRoot)
-	str("CLUSTERLENS_METRICS_ADDR", &c.Server.MetricsAddr)
-	str("CLUSTERLENS_OIDC_ISSUER", &c.OIDC.Issuer)
-	str("CLUSTERLENS_OIDC_CLIENT_ID", &c.OIDC.ClientID)
-	str("CLUSTERLENS_OIDC_CLIENT_SECRET", &c.OIDC.ClientSecret)
-	str("CLUSTERLENS_OIDC_REDIRECT_URL", &c.OIDC.RedirectURL)
-	str("CLUSTERLENS_SESSION_KEY", &c.Session.EncryptionKey)
-	str("CLUSTERLENS_REDIS_URL", &c.Session.RedisURL)
-	str("CLUSTERLENS_LOG_LEVEL", &c.Log.Level)
-	str("CLUSTERLENS_LOG_FORMAT", &c.Log.Format)
+	str("ORRERY_ADDR", &c.Server.Addr)
+	str("ORRERY_PUBLIC_URL", &c.Server.PublicURL)
+	str("ORRERY_WEB_ROOT", &c.Server.WebRoot)
+	str("ORRERY_METRICS_ADDR", &c.Server.MetricsAddr)
+	str("ORRERY_OIDC_ISSUER", &c.OIDC.Issuer)
+	str("ORRERY_OIDC_CLIENT_ID", &c.OIDC.ClientID)
+	str("ORRERY_OIDC_CLIENT_SECRET", &c.OIDC.ClientSecret)
+	str("ORRERY_OIDC_REDIRECT_URL", &c.OIDC.RedirectURL)
+	str("ORRERY_SESSION_KEY", &c.Session.EncryptionKey)
+	str("ORRERY_REDIS_URL", &c.Session.RedisURL)
+	str("ORRERY_LOG_LEVEL", &c.Log.Level)
+	str("ORRERY_LOG_FORMAT", &c.Log.Format)
 
-	if v := os.Getenv("CLUSTERLENS_OIDC_ENABLED"); v != "" {
+	if v := os.Getenv("ORRERY_OIDC_ENABLED"); v != "" {
 		c.OIDC.Enabled = v == "true" || v == "1"
 	}
-	if v := os.Getenv("CLUSTERLENS_SESSION_INSECURE"); v == "true" || v == "1" {
+	if v := os.Getenv("ORRERY_SESSION_INSECURE"); v == "true" || v == "1" {
 		c.Session.Secure = false
 	}
 	// A single cluster from a kubeconfig path is the common dev case.
-	if v := os.Getenv("CLUSTERLENS_KUBECONFIG"); v != "" && len(c.Clusters) == 0 {
+	if v := os.Getenv("ORRERY_KUBECONFIG"); v != "" && len(c.Clusters) == 0 {
 		c.Clusters = append(c.Clusters, ClusterConfig{
-			Name:       firstNonEmpty(os.Getenv("CLUSTERLENS_CLUSTER_NAME"), "default"),
+			Name:       firstNonEmpty(os.Getenv("ORRERY_CLUSTER_NAME"), "default"),
 			Kubeconfig: v,
-			Context:    os.Getenv("CLUSTERLENS_CONTEXT"),
+			Context:    os.Getenv("ORRERY_CONTEXT"),
 		})
 	}
 }

@@ -44,7 +44,7 @@ export function Login() {
             <circle cx="16" cy="16" r="4" className="fill-accent" />
           </svg>
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-ink">Clusterlens</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-ink">Orrery</h1>
             <p className="text-xs text-ink-faint">Multi-cluster Kubernetes console</p>
           </div>
         </div>

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/daiwazou/clusterlens/backend/internal/config"
+	"github.com/daiwazou/orrery/backend/internal/config"
 )
 
 // ErrNoSession is returned when a request carries no usable session.
@@ -159,7 +159,7 @@ type SessionManager struct {
 
 // CSRFCookieName is readable by the SPA, which echoes it back in a header.
 // Pairing that with SameSite=Lax defends mutating calls against cross-site use.
-const CSRFCookieName = "clusterlens_csrf"
+const CSRFCookieName = "orrery_csrf"
 
 // NewSessionManager wires a manager from configuration.
 func NewSessionManager(cfg *config.Config, store Store) (*SessionManager, error) {

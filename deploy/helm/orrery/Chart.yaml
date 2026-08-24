@@ -1,5 +1,5 @@
 apiVersion: v2
-name: clusterlens
+name: orrery
 description: A multi-cluster Kubernetes dashboard with OIDC sign-in
 type: application
 version: 1.0.0

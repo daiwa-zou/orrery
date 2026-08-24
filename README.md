@@ -1,4 +1,4 @@
-# Clusterlens
+# Orrery
 
 A multi-cluster Kubernetes dashboard with OIDC sign-in.
 
@@ -8,7 +8,7 @@ not by the dashboard.
 
 ```
 ┌──────────────┐    OIDC     ┌───────────────┐   impersonation   ┌────────────┐
-│   Browser    │◄───────────►│  Clusterlens  │──────────────────►│ cluster A  │
+│   Browser    │◄───────────►│    Orrery     │──────────────────►│ cluster A  │
 │  (SPA, WS)   │  session    │  Go backend   │──────────────────►│ cluster B  │
 └──────────────┘  cookie     └───────────────┘   shared caches   │ cluster …  │
                                                                  └────────────┘
@@ -47,7 +47,7 @@ unreachable and retried in the background.
 
 This is the part worth understanding before you deploy it.
 
-Clusterlens never decides what you may see. Every read and every write is
+Orrery never decides what you may see. Every read and every write is
 preceded by a `SubjectAccessReview` against the cluster in question, so your
 Roles, ClusterRoles, webhook authorizers and admission plugins remain the only
 authority. Verdicts are cached for 30 seconds so a fifty-row table is not fifty
@@ -68,9 +68,11 @@ trade is real and worth stating plainly: **the dashboard's service account can
 impersonate anyone**, so the pod must be treated as a sensitive workload.
 
 Claim mapping mirrors the kube-apiserver's own flags (`usernameClaim`,
-`groupsClaim`, and their prefixes), including the special case that an `email`
-username claim is not prefixed. Configure both the same way and an impersonated
-identity matches your existing bindings exactly.
+`groupsClaim`, and their prefixes): a configured prefix always applies, `-`
+disables prefixing, and when no prefix is set the default is the bare address
+for an `email` claim and `issuer#value` for any other claim. Configure both
+the same way and an impersonated identity matches your existing bindings
+exactly.
 
 ## Running it locally
 
@@ -83,7 +85,7 @@ kind create cluster --name lens-a
 Point the backend at it and start both halves:
 
 ```bash
-cd backend && go run ./cmd/clusterlens -config ../clusterlens.dev.yaml
+cd backend && go run ./cmd/orrery -config ../orrery.dev.yaml
 ```
 
 ```bash
@@ -100,10 +102,10 @@ each context becomes a registered cluster.
 
 ### Trying the OIDC flow
 
-`clusterlens.oidc.yaml` is wired to a local [Dex](https://dexidp.io):
+`orrery.oidc.yaml` is wired to a local [Dex](https://dexidp.io):
 
 ```bash
-docker run -d --name clusterlens-dex -p 5556:5556 \
+docker run -d --name orrery-dex -p 5556:5556 \
   -v $PWD/deploy/dev/dex.yaml:/etc/dex/config.yaml:ro \
   ghcr.io/dexidp/dex:v2.44.0 dex serve /etc/dex/config.yaml
 ```
@@ -120,15 +122,15 @@ kubectl create clusterrolebinding demo-view \
 ## Deploying it
 
 ```bash
-kubectl create secret generic clusterlens-session \
+kubectl create secret generic orrery-session \
   --from-literal=encryptionKey="$(openssl rand -base64 32)"
-kubectl create secret generic clusterlens-oidc \
+kubectl create secret generic orrery-oidc \
   --from-literal=clientSecret='...'
 
-helm install clusterlens ./deploy/helm/clusterlens \
-  --set publicURL=https://clusterlens.example.com \
+helm install orrery ./deploy/helm/orrery \
+  --set publicURL=https://orrery.example.com \
   --set oidc.issuer=https://accounts.example.com \
-  --set oidc.clientID=clusterlens
+  --set oidc.clientID=orrery
 ```
 
 Three things bite people here:
@@ -147,13 +149,13 @@ Three things bite people here:
 Remote clusters are added by mounting a kubeconfig secret and listing them:
 
 ```yaml
-kubeconfigSecret: clusterlens-kubeconfigs
+kubeconfigSecret: orrery-kubeconfigs
 clusters:
   - name: in-cluster
     inCluster: true
     authMode: impersonation
   - name: prod-eu
-    kubeconfig: /etc/clusterlens/kubeconfigs/prod-eu.yaml
+    kubeconfig: /etc/orrery/kubeconfigs/prod-eu.yaml
     authMode: impersonation
     labels: { env: production, region: eu-west-1 }
 ```
@@ -162,7 +164,7 @@ clusters:
 
 Every field has a default; `-print-config` shows what the server actually
 resolved, with secrets masked. Environment variables
-(`CLUSTERLENS_OIDC_CLIENT_SECRET`, `CLUSTERLENS_SESSION_KEY`, …) override the
+(`ORRERY_OIDC_CLIENT_SECRET`, `ORRERY_SESSION_KEY`, …) override the
 file, and `${VAR}` inside the file is expanded — so secrets never have to be
 written down next to the rest of the config.
 
@@ -231,7 +233,7 @@ The Redis session tests skip unless you point them at an instance:
 
 ```bash
 docker run -d -p 6379:6379 redis:7-alpine
-CLUSTERLENS_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race
+ORRERY_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race
 ```
 
 `docs/ARCHITECTURE.md` explains the caching and authorization design in more

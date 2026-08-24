@@ -1,4 +1,4 @@
-module github.com/daiwazou/clusterlens/backend
+module github.com/daiwazou/orrery/backend
 
 go 1.26.0
 

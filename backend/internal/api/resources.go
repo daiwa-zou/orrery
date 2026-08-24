@@ -16,8 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
-	"github.com/daiwazou/clusterlens/backend/internal/authz"
-	"github.com/daiwazou/clusterlens/backend/internal/cluster"
+	"github.com/daiwazou/orrery/backend/internal/authz"
+	"github.com/daiwazou/orrery/backend/internal/cluster"
 )
 
 // maxBodyBytes bounds manifest uploads. Kubernetes itself refuses objects
@@ -632,7 +632,7 @@ func (a *API) patchResource(w http.ResponseWriter, r *http.Request) {
 
 	opts := metav1.PatchOptions{}
 	if pt == types.ApplyPatchType {
-		opts.FieldManager = "clusterlens"
+		opts.FieldManager = "orrery"
 		// Force is opt-in: silently stealing fields from another manager is
 		// exactly the conflict server-side apply exists to surface.
 		if queryBool(r, "force", false) {

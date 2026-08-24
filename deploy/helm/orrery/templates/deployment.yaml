@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+      {{- include "orrery.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -18,31 +18,31 @@ spec:
         # upgrade that only touches config appears to do nothing.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "clusterlens.selectorLabels" . | nindent 8 }}
+        {{- include "orrery.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "clusterlens.serviceAccountName" . }}
+      serviceAccountName: {{ include "orrery.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: clusterlens
+        - name: orrery
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ['-config', '/etc/clusterlens/config.yaml']
+          args: ['-config', '/etc/orrery/config.yaml']
           ports:
             - name: http
               containerPort: 8080
             - name: metrics
               containerPort: 9090
           env:
-            - name: CLUSTERLENS_SESSION_KEY
+            - name: ORRERY_SESSION_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.session.existingSecret }}
                   key: {{ .Values.session.keyRef }}
             {{- if .Values.oidc.enabled }}
-            - name: CLUSTERLENS_OIDC_CLIENT_SECRET
+            - name: ORRERY_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.oidc.existingSecret }}
@@ -50,11 +50,11 @@ spec:
             {{- end }}
           volumeMounts:
             - name: config
-              mountPath: /etc/clusterlens
+              mountPath: /etc/orrery
               readOnly: true
             {{- if .Values.kubeconfigSecret }}
             - name: kubeconfigs
-              mountPath: /etc/clusterlens/kubeconfigs
+              mountPath: /etc/orrery/kubeconfigs
               readOnly: true
             {{- end }}
           # Readiness is the HTTP surface being up. It deliberately does not
@@ -82,7 +82,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "clusterlens.fullname" . }}
+            name: {{ include "orrery.fullname" . }}
         {{- if .Values.kubeconfigSecret }}
         - name: kubeconfigs
           secret:
@@ -101,9 +101,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -114,34 +114,34 @@ spec:
       port: 9090
       targetPort: metrics
   selector:
-    {{- include "clusterlens.selectorLabels" . | nindent 4 }}
+    {{- include "orrery.selectorLabels" . | nindent 4 }}
 {{- if .Values.podDisruptionBudget.enabled }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 spec:
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+      {{- include "orrery.selectorLabels" . | nindent 6 }}
 {{- end }}
 {{- if .Values.autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "clusterlens.fullname" . }}
+    name: {{ include "orrery.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
@@ -157,9 +157,9 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
   annotations:
     # Log follows, watches and exec sessions are long-lived. Proxies that
     # default to a 60 second read timeout will sever them mid-stream.
@@ -185,7 +185,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "clusterlens.fullname" . }}
+                name: {{ include "orrery.fullname" . }}
                 port:
                   name: http
 {{- end }}
@@ -194,13 +194,13 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "clusterlens.fullname" . }}
+  name: {{ include "orrery.fullname" . }}
   labels:
-    {{- include "clusterlens.labels" . | nindent 4 }}
+    {{- include "orrery.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      {{- include "clusterlens.selectorLabels" . | nindent 6 }}
+      {{- include "orrery.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       interval: {{ .Values.serviceMonitor.interval }}

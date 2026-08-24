@@ -68,7 +68,7 @@ func TestTrimForCacheRedactsSecretValues(t *testing.T) {
 	if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "data"); found {
 		t.Fatal("secret data must never reach the shared cache")
 	}
-	sizes, found, _ := unstructured.NestedMap(obj.Object, "clusterlens.io/redacted", "data")
+	sizes, found, _ := unstructured.NestedMap(obj.Object, "orrery.io/redacted", "data")
 	if !found {
 		t.Fatal("expected redacted key metadata to be recorded")
 	}

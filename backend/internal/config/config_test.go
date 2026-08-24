@@ -168,10 +168,10 @@ clusters:
 }
 
 func TestEnvironmentOverrides(t *testing.T) {
-	t.Setenv("CLUSTERLENS_ADDR", ":9999")
-	t.Setenv("CLUSTERLENS_OIDC_ENABLED", "true")
-	t.Setenv("CLUSTERLENS_OIDC_ISSUER", "https://id.example.com")
-	t.Setenv("CLUSTERLENS_OIDC_CLIENT_ID", "from-env")
+	t.Setenv("ORRERY_ADDR", ":9999")
+	t.Setenv("ORRERY_OIDC_ENABLED", "true")
+	t.Setenv("ORRERY_OIDC_ISSUER", "https://id.example.com")
+	t.Setenv("ORRERY_OIDC_CLIENT_ID", "from-env")
 
 	cfg, err := Load(writeConfig(t, `
 clusters:
@@ -190,8 +190,8 @@ clusters:
 
 func TestKubeconfigFromEnvironmentCreatesACluster(t *testing.T) {
 	// The zero-config path: point the binary at a kubeconfig and it runs.
-	t.Setenv("CLUSTERLENS_KUBECONFIG", "/tmp/kubeconfig")
-	t.Setenv("CLUSTERLENS_CONTEXT", "kind-dev")
+	t.Setenv("ORRERY_KUBECONFIG", "/tmp/kubeconfig")
+	t.Setenv("ORRERY_CONTEXT", "kind-dev")
 
 	cfg, err := Load("")
 	if err != nil {
