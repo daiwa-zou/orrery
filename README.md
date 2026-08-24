@@ -28,13 +28,20 @@ custom resources get their own `additionalPrinterColumns`, the same columns
 
 **The things you open a dashboard for.** Log streaming with follow and filter,
 an interactive terminal into any container, YAML view and edit, scale, rolling
-restart, cordon, drain with dry run, evict, delete, events scoped to an object,
-and node/pod metrics from metrics-server.
+restart, cordon, drain with dry run, evict, delete, a cluster-wide event feed
+plus events scoped to an object, and node/pod metrics from metrics-server —
+including live CPU/memory columns on the pod list.
+
+**Made for the "why is it broken?" walk.** A pod's page tables its containers
+with state, restarts and last exit code, each row one click from that
+container's logs. Workloads link to the pods their selector owns; nodes link
+to the pods scheduled on them; owner references link upward. The trail from a
+warning event to the crashing container's previous logs never leaves the UI.
 
 **Multi-cluster that is actually multi-cluster.** Clusters are registered
-independently, probed for health, and shown side by side. One unreachable
-cluster does not stop the others from working — it is marked unreachable and
-retried in the background.
+independently, probed for health, and shown side by side on the fleet page.
+One unreachable cluster does not stop the others from working — it is marked
+unreachable and retried in the background.
 
 ## How permission works
 

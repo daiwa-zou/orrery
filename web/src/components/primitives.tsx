@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { age as formatAge, toneFor, type Tone } from '../lib/format'
 
 /* Small, shared building blocks. Keeping them in one file makes the visual
@@ -56,17 +56,34 @@ export function StatusBadge({ value, title }: { value: string; title?: string })
   )
 }
 
+// One shared 10s ticker for every Age cell. A 250-row table with two time
+// columns would otherwise run 500 unsynchronised intervals, each triggering
+// its own isolated re-render.
+const tickListeners = new Set<() => void>()
+let tickTimer: number | undefined
+let tickValue = 0
+
+function subscribeTick(cb: () => void) {
+  tickListeners.add(cb)
+  if (tickListeners.size === 1) {
+    tickTimer = window.setInterval(() => {
+      tickValue += 1
+      tickListeners.forEach((l) => l())
+    }, 10_000)
+  }
+  return () => {
+    tickListeners.delete(cb)
+    if (tickListeners.size === 0) window.clearInterval(tickTimer)
+  }
+}
+
 /**
  * Age re-renders on a timer rather than being formatted server-side, so the
  * value stays correct without refetching and without trusting clock skew
  * between the browser and the cluster.
  */
 export function Age({ timestamp }: { timestamp?: string | null }) {
-  const [, tick] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => tick((n) => n + 1), 10_000)
-    return () => window.clearInterval(id)
-  }, [])
+  useSyncExternalStore(subscribeTick, () => tickValue)
   return (
     <span title={timestamp ?? undefined} className="tabular-nums">
       {formatAge(timestamp)}

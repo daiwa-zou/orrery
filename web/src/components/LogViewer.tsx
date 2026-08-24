@@ -17,6 +17,9 @@ interface LogViewerProps {
   initialContainer?: string
 }
 
+/** How long incoming lines are coalesced before one state update. */
+const FLUSH_MS = 80
+
 export function LogViewer({
   cluster,
   namespace,
@@ -29,13 +32,15 @@ export function LogViewer({
       ? initialContainer
       : (containers[0] ?? ''),
   )
+  // start is how many lines have been trimmed off the front; start + index is
+  // a stable key, so a trim does not re-key (and re-render) every line below.
+  const [buf, setBuf] = useState<{ start: number; items: string[] }>({ start: 0, items: [] })
 
   useEffect(() => {
     if (initialContainer && containers.includes(initialContainer)) {
       setContainer(initialContainer)
     }
   }, [initialContainer, containers])
-  const [lines, setLines] = useState<string[]>([])
   const [status, setStatus] = useState<'connecting' | 'streaming' | 'ended' | 'error'>('connecting')
   const [error, setError] = useState<string>()
   const [follow, setFollow] = useState(true)
@@ -57,9 +62,26 @@ export function LogViewer({
   useEffect(() => {
     if (!container) return
 
-    setLines([])
+    setBuf({ start: 0, items: [] })
     setError(undefined)
     setStatus('connecting')
+
+    // Coalesce incoming lines: a pod logging thousands of lines a second must
+    // not become thousands of React renders a second.
+    let pending: string[] = []
+    let flushTimer: number | undefined
+    const flush = () => {
+      flushTimer = undefined
+      const add = pending
+      pending = []
+      setBuf((prev) => {
+        const items = prev.items.concat(add)
+        const drop = items.length - MAX_LINES
+        // Trim from the front so memory stays bounded during a log storm.
+        if (drop > 0) return { start: prev.start + drop, items: items.slice(drop) }
+        return { start: prev.start, items }
+      })
+    }
 
     // The old socket's close event arrives *after* the effect re-runs, so
     // without this guard a container switch briefly shows "ended" while the
@@ -90,11 +112,8 @@ export function LogViewer({
         return
       }
       if (msg.type === 'LOG') {
-        setLines((prev) => {
-          const next = prev.concat(msg.lines)
-          // Trim from the front so memory stays bounded during a log storm.
-          return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
-        })
+        pending.push(...msg.lines)
+        if (flushTimer === undefined) flushTimer = window.setTimeout(flush, FLUSH_MS)
       } else if (msg.type === 'EOF') {
         setStatus('ended')
       } else if (msg.type === 'ERROR') {
@@ -112,6 +131,7 @@ export function LogViewer({
 
     return () => {
       stale = true
+      window.clearTimeout(flushTimer)
       socket.close()
     }
   }, [cluster, namespace, pod, container, previous, timestamps])
@@ -122,7 +142,7 @@ export function LogViewer({
     if (!followRef.current) return
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [lines])
+  }, [buf])
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current
@@ -132,14 +152,15 @@ export function LogViewer({
   }, [])
 
   const visible = useMemo(() => {
-    if (!filter.trim()) return lines
+    const all = buf.items.map((line, i) => ({ line, key: buf.start + i }))
+    if (!filter.trim()) return all
     const needle = filter.toLowerCase()
-    return lines.filter((l) => l.toLowerCase().includes(needle))
-  }, [lines, filter])
+    return all.filter(({ line }) => line.toLowerCase().includes(needle))
+  }, [buf, filter])
 
   // Downloads what is on screen: the filtered lines when a filter is active.
   const download = () => {
-    const blob = new Blob([visible.join('\n')], { type: 'text/plain' })
+    const blob = new Blob([visible.map((v) => v.line).join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -209,7 +230,7 @@ export function LogViewer({
 
         <span className="text-xs tabular-nums text-ink-faint">
           {visible.length.toLocaleString()}
-          {filter && ` / ${lines.length.toLocaleString()}`} lines
+          {filter && ` / ${buf.items.length.toLocaleString()}`} lines
         </span>
 
         {!follow && (
@@ -224,7 +245,7 @@ export function LogViewer({
             Follow
           </Button>
         )}
-        <Button size="sm" onClick={download} disabled={lines.length === 0}>
+        <Button size="sm" onClick={download} disabled={buf.items.length === 0}>
           Download
         </Button>
       </div>
@@ -240,7 +261,7 @@ export function LogViewer({
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-auto bg-canvas px-3 py-2 font-mono text-xs leading-[1.5]"
       >
-        {status === 'connecting' && lines.length === 0 && (
+        {status === 'connecting' && buf.items.length === 0 && (
           <p className="flex items-center gap-2 text-ink-faint">
             <Spinner className="size-3" /> Attaching to {pod}
           </p>
@@ -250,9 +271,9 @@ export function LogViewer({
             {filter ? 'No lines match the filter.' : 'No output yet.'}
           </p>
         )}
-        {visible.map((line, i) => (
+        {visible.map(({ line, key }) => (
           <div
-            key={i}
+            key={key}
             className={clsx('text-ink-muted', wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre')}
           >
             {line}

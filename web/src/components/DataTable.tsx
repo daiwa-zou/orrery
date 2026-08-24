@@ -141,7 +141,26 @@ export function DataTable({
                     onSort && 'cursor-pointer select-none hover:text-ink-muted',
                   )}
                   onClick={onSort ? () => onSort(column.key) : undefined}
-                  aria-sort={active ? (order === 'desc' ? 'descending' : 'ascending') : 'none'}
+                  onKeyDown={
+                    onSort
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            onSort(column.key)
+                          }
+                        }
+                      : undefined
+                  }
+                  tabIndex={onSort ? 0 : undefined}
+                  aria-sort={
+                    onSort
+                      ? active
+                        ? order === 'desc'
+                          ? 'descending'
+                          : 'ascending'
+                        : 'none'
+                      : undefined
+                  }
                 >
                   {column.label}
                   {onSort && <SortIndicator active={active} order={order} />}
@@ -158,10 +177,21 @@ export function DataTable({
               <tr
                 className={clsx(
                   'border-b border-border/50 transition-colors',
-                  onRowClick && 'cursor-pointer hover:bg-surface-2/70',
+                  onRowClick &&
+                    'cursor-pointer hover:bg-surface-2/70 focus:bg-surface-2/70 focus:outline-none',
                   row._terminating && 'opacity-55',
                 )}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (e) => {
+                        if (e.key === 'Enter' && e.target === e.currentTarget) {
+                          onRowClick(row)
+                        }
+                      }
+                    : undefined
+                }
+                tabIndex={onRowClick ? 0 : undefined}
               >
                 {columns.map((column, index) => (
                   <td

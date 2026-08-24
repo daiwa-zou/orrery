@@ -10,7 +10,12 @@ export function readJSON<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(key)
     if (raw === null) return fallback
-    return JSON.parse(raw) as T
+    const parsed = JSON.parse(raw) as T
+    // The shape check matters: every current caller stores an array, and a
+    // stray non-array (schema change, another tool on the same origin) would
+    // throw at .filter()/.includes() in the middle of a render.
+    if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback
+    return parsed
   } catch {
     return fallback
   }
@@ -43,7 +48,9 @@ export interface RecentResource {
 }
 
 export function readRecents(cluster: string): RecentResource[] {
-  return readJSON<RecentResource[]>(RECENTS_KEY, []).filter((r) => r.cluster === cluster)
+  return readJSON<RecentResource[]>(RECENTS_KEY, []).filter(
+    (r) => r && typeof r === 'object' && r.cluster === cluster,
+  )
 }
 
 /**

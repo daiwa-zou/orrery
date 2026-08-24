@@ -42,12 +42,16 @@ const TITLE_CLASS: Record<Tone, string> = {
   idle: 'text-ink',
 }
 
+/** Stacked toasts beyond this collapse from the oldest: a bulk operation that
+ *  fails N times must not wallpaper the screen. */
+const MAX_TOASTS = 5
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const push = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = Date.now() + Math.random()
-    setToasts((prev) => [...prev, { ...toast, id }])
+    setToasts((prev) => [...prev, { ...toast, id }].slice(-MAX_TOASTS))
     // Errors stay longer: they are usually something the reader must act on.
     const ttl = toast.tone === 'danger' ? 9000 : 5000
     window.setTimeout(() => {
@@ -68,6 +72,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
+            // A failed delete must interrupt a screen reader; a success no.
+            role={t.tone === 'danger' ? 'alert' : undefined}
             className={clsx(
               'animate-in pointer-events-auto rounded-lg px-3 py-2.5 shadow-xl ring-1 backdrop-blur',
               TONE_CLASS[t.tone],
