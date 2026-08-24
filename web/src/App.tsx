@@ -13,6 +13,7 @@ import { useClusters, useMe } from './api/hooks'
 import { AppShell } from './components/AppShell'
 import { EmptyState, ErrorState, Spinner } from './components/primitives'
 import { ToastProvider } from './components/Toast'
+import { Events } from './pages/Events'
 import { Login } from './pages/Login'
 import { Overview } from './pages/Overview'
 import { ResourceDetail } from './pages/ResourceDetail'
@@ -131,6 +132,7 @@ function ClusterRoutes() {
     <AppShell>
       <Routes>
         <Route index element={<Overview />} />
+        <Route path="events" element={<Events />} />
         <Route path="r/:group/:version/:resource" element={<ResourceList />} />
         <Route
           path="r/:group/:version/:resource/:namespace/:name"

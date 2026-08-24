@@ -112,13 +112,16 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
     }
 
     let closed = false
+    let socket: WebSocket | undefined
+    let retryTimer: number | undefined
+    let attempts = 0
+    let dropped = false
     setLive('connecting')
 
     const url = wsURL(
       `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
       { namespace: params.namespace },
     )
-    const socket = new WebSocket(url)
 
     const scheduleRefetch = () => {
       window.clearTimeout(refetchTimer.current)
@@ -127,60 +130,85 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
       }, 700)
     }
 
-    socket.onopen = () => {
-      if (!closed) setLive('live')
+    // A dropped socket (proxy idle timeout, rolling restart of the backend)
+    // should heal itself. Polling covers the gap, so the backoff can be lazy.
+    const scheduleReconnect = () => {
+      if (closed) return
+      dropped = true
+      setLive('polling')
+      const delay = Math.min(30_000, 1_000 * 2 ** attempts)
+      attempts += 1
+      window.clearTimeout(retryTimer)
+      retryTimer = window.setTimeout(connect, delay)
     }
 
-    socket.onmessage = (event) => {
-      let msg: WatchMessage
-      try {
-        msg = JSON.parse(event.data)
-      } catch {
-        return
-      }
+    const connect = () => {
+      if (closed) return
+      socket = new WebSocket(url)
 
-      switch (msg.type) {
-        case 'MODIFIED': {
-          const incoming = msg.item
-          qc.setQueryData<ListResponse>(keyRef.current, (prev) => {
-            if (!prev?.items) return prev
-            let touched = false
-            const items = prev.items.map((row: Row) => {
-              if (row.uid !== incoming.uid) return row
-              touched = true
-              return { ...row, ...incoming }
-            })
-            return touched ? { ...prev, items } : prev
-          })
-          break
-        }
-        case 'ADDED':
-        case 'DELETED':
-          scheduleRefetch()
-          break
-        case 'OVERFLOW':
-          // We fell behind the cluster; the only honest recovery is a reload.
-          setLive('polling')
+      socket.onopen = () => {
+        if (closed) return
+        attempts = 0
+        setLive('live')
+        if (dropped) {
+          // Anything could have changed while the socket was down.
+          dropped = false
           qc.invalidateQueries({ queryKey: keyRef.current })
-          break
-        case 'ERROR':
-          setLive('polling')
-          break
+        }
       }
+
+      socket.onmessage = (event) => {
+        let msg: WatchMessage
+        try {
+          msg = JSON.parse(event.data)
+        } catch {
+          return
+        }
+
+        switch (msg.type) {
+          case 'MODIFIED': {
+            const incoming = msg.item
+            qc.setQueryData<ListResponse>(keyRef.current, (prev) => {
+              if (!prev?.items) return prev
+              let touched = false
+              const items = prev.items.map((row: Row) => {
+                if (row.uid !== incoming.uid) return row
+                touched = true
+                return { ...row, ...incoming }
+              })
+              return touched ? { ...prev, items } : prev
+            })
+            break
+          }
+          case 'ADDED':
+          case 'DELETED':
+            scheduleRefetch()
+            break
+          case 'OVERFLOW':
+            // We fell behind the cluster; the only honest recovery is a reload.
+            setLive('polling')
+            qc.invalidateQueries({ queryKey: keyRef.current })
+            break
+          case 'ERROR':
+            setLive('polling')
+            break
+        }
+      }
+
+      socket.onclose = scheduleReconnect
     }
 
-    socket.onerror = () => {
-      if (!closed) setLive('polling')
-    }
-
-    socket.onclose = () => {
-      if (!closed) setLive('polling')
-    }
+    connect()
 
     return () => {
       closed = true
       window.clearTimeout(refetchTimer.current)
-      socket.close()
+      window.clearTimeout(retryTimer)
+      if (socket) {
+        // Detach before closing so the close event does not schedule a retry.
+        socket.onclose = null
+        socket.close()
+      }
     }
     // params.namespace is the only param the watch itself depends on; the rest
     // are applied server-side to the REST page.
@@ -208,11 +236,18 @@ export function useResource(ref: ResourceRef | null) {
 
 export function useEvents(
   cluster: string | undefined,
-  filter: { namespace?: string; involvedName?: string; involvedKind?: string; involvedUID?: string },
+  filter: {
+    namespace?: string
+    involvedName?: string
+    involvedKind?: string
+    involvedUID?: string
+    warningsOnly?: boolean
+    limit?: number
+  },
 ) {
   return useQuery({
     queryKey: ['events', cluster, filter],
-    queryFn: () => api.events(cluster!, { ...filter, limit: 100 }),
+    queryFn: () => api.events(cluster!, { limit: 100, ...filter }),
     enabled: !!cluster,
     refetchInterval: 15_000,
   })

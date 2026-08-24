@@ -149,6 +149,23 @@ export function CommandPalette({
       })
     }
 
+    const pages = [
+      { id: 'page:overview', label: 'Overview', href: `/c/${cluster}` },
+      {
+        id: 'page:events',
+        label: 'Events',
+        href: `/c/${cluster}/events${namespace ? `?namespace=${namespace}` : ''}`,
+      },
+    ]
+    const pushPage = (p: (typeof pages)[number]) =>
+      out.push({
+        id: p.id,
+        section: 'Pages',
+        label: p.label,
+        hint: 'open page',
+        run: () => navigate(p.href),
+      })
+
     if (!q) {
       // Nothing typed: offer where you have been, then the everyday set.
       for (const r of readRecents(cluster).slice(0, 5)) {
@@ -158,6 +175,10 @@ export function CommandPalette({
         pushResource('Common', { ...item, name: item.resource })
       }
       return out
+    }
+
+    for (const p of pages) {
+      if (p.label.toLowerCase().includes(q.toLowerCase())) pushPage(p)
     }
 
     for (const r of rankResources(resources, q).slice(0, MAX_PER_SECTION)) {
