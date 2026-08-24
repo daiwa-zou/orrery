@@ -79,6 +79,8 @@ export function ResourceList() {
   const page = Number(params.get('page') ?? '1')
   const pageSize = Number(params.get('pageSize') ?? '50')
   const labelSelector = params.get('labelSelector') ?? ''
+  // Deep-link only (e.g. "pods on this node"); there is no input for it.
+  const fieldSelector = params.get('fieldSelector') ?? ''
 
   const [pendingDelete, setPendingDelete] = useState<Row | null>(null)
 
@@ -88,8 +90,8 @@ export function ResourceList() {
       : null
 
   const listParams = useMemo(
-    () => ({ namespace, q, sort, order, page, pageSize, labelSelector }),
-    [namespace, q, sort, order, page, pageSize, labelSelector],
+    () => ({ namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector }),
+    [namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector],
   )
 
   const { data, isLoading, error, live, refetch } = useLiveList(ref, listParams)
@@ -205,6 +207,19 @@ export function ResourceList() {
         </h1>
 
         <LiveIndicator state={live} />
+
+        {fieldSelector && (
+          <Badge tone="info" title="Field selector applied by the page you came from">
+            <span className="font-mono">{fieldSelector}</span>
+            <button
+              aria-label="Clear field selector"
+              className="ml-1 hover:text-ink"
+              onClick={() => update({ fieldSelector: null, page: '1' })}
+            >
+              ×
+            </button>
+          </Badge>
+        )}
 
         {data && (
           <span className="text-xs text-ink-faint tabular-nums">

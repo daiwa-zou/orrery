@@ -13,10 +13,28 @@ interface LogViewerProps {
   namespace: string
   pod: string
   containers: string[]
+  /** Pre-selects a container, e.g. the row clicked in the containers table. */
+  initialContainer?: string
 }
 
-export function LogViewer({ cluster, namespace, pod, containers }: LogViewerProps) {
-  const [container, setContainer] = useState(containers[0] ?? '')
+export function LogViewer({
+  cluster,
+  namespace,
+  pod,
+  containers,
+  initialContainer,
+}: LogViewerProps) {
+  const [container, setContainer] = useState(
+    initialContainer && containers.includes(initialContainer)
+      ? initialContainer
+      : (containers[0] ?? ''),
+  )
+
+  useEffect(() => {
+    if (initialContainer && containers.includes(initialContainer)) {
+      setContainer(initialContainer)
+    }
+  }, [initialContainer, containers])
   const [lines, setLines] = useState<string[]>([])
   const [status, setStatus] = useState<'connecting' | 'streaming' | 'ended' | 'error'>('connecting')
   const [error, setError] = useState<string>()

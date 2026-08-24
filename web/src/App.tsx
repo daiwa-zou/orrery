@@ -15,6 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { EmptyState, ErrorState, Spinner } from './components/primitives'
 import { ToastProvider } from './components/Toast'
 import { Events } from './pages/Events'
+import { Fleet } from './pages/Fleet'
 import { Login } from './pages/Login'
 import { Overview } from './pages/Overview'
 import { ResourceDetail } from './pages/ResourceDetail'
@@ -46,17 +47,21 @@ const queryClient = new QueryClient({
   },
 })
 
-/** Redirects to the first available cluster, so "/" is never a dead end. */
-function ClusterRedirect() {
+/**
+ * "/" for a single-cluster deployment jumps straight in; with several
+ * clusters it shows the fleet, because side-by-side health is the point of
+ * running one console over many clusters.
+ */
+function Home() {
   const { data, isLoading, error, refetch } = useClusters()
   const navigate = useNavigate()
 
   const clusters = data?.clusters ?? []
-  const target = clusters.find((c) => c.available) ?? clusters[0]
+  const only = clusters.length === 1 ? clusters[0] : undefined
 
   useEffect(() => {
-    if (target) navigate(`/c/${target.name}`, { replace: true })
-  }, [target, navigate])
+    if (only) navigate(`/c/${only.name}`, { replace: true })
+  }, [only, navigate])
 
   if (isLoading) {
     return (
@@ -74,7 +79,8 @@ function ClusterRedirect() {
       />
     )
   }
-  return null
+  if (only) return null
+  return <Fleet clusters={clusters} />
 }
 
 /** Ensures a session exists before rendering anything that needs one. */
@@ -153,7 +159,7 @@ export default function App() {
               path="/"
               element={
                 <RequireAuth>
-                  <ClusterRedirect />
+                  <Home />
                 </RequireAuth>
               }
             />

@@ -27,6 +27,148 @@ type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
 const SCALABLE = new Set(['Deployment', 'StatefulSet', 'ReplicaSet', 'ReplicationController'])
 const RESTARTABLE = new Set(['Deployment', 'StatefulSet', 'DaemonSet'])
+/** Kinds whose spec.selector selects pods, enabling a "view pods" jump. */
+const POD_OWNERS = new Set([
+  'Deployment',
+  'StatefulSet',
+  'DaemonSet',
+  'ReplicaSet',
+  'ReplicationController',
+  'Job',
+])
+
+interface ContainerRow {
+  name: string
+  image: string
+  ready: boolean
+  restarts: number
+  state: string
+  stateDetail?: string
+  lastExit?: string
+  init: boolean
+}
+
+/**
+ * Flattens containerStatuses into the table that answers "why is this pod
+ * restarting?" — the state, the restart count and the last exit code are the
+ * three facts otherwise buried in the status JSON.
+ */
+function containerRows(obj?: KubeObject): ContainerRow[] {
+  if (!obj) return []
+  const status = obj.status as {
+    containerStatuses?: Record<string, unknown>[]
+    initContainerStatuses?: Record<string, unknown>[]
+  }
+
+  const toRow = (s: Record<string, unknown>, init: boolean): ContainerRow => {
+    const state = (s.state ?? {}) as Record<string, Record<string, unknown> | undefined>
+    let name = 'Unknown'
+    let detail: string | undefined
+    if (state.running) {
+      name = 'Running'
+    } else if (state.waiting) {
+      name = String(state.waiting.reason ?? 'Waiting')
+      detail = state.waiting.message as string | undefined
+    } else if (state.terminated) {
+      name = String(state.terminated.reason ?? 'Terminated')
+      detail = state.terminated.message as string | undefined
+    }
+
+    const last = (s.lastState as Record<string, Record<string, unknown>> | undefined)?.terminated
+    let lastExit: string | undefined
+    if (last) {
+      lastExit = `exit ${last.exitCode}`
+      if (last.reason) lastExit += ` (${last.reason})`
+    }
+
+    return {
+      name: String(s.name ?? ''),
+      image: String(s.image ?? ''),
+      ready: s.ready === true,
+      restarts: Number(s.restartCount ?? 0),
+      state: name,
+      stateDetail: detail,
+      lastExit,
+      init,
+    }
+  }
+
+  return [
+    ...(status?.initContainerStatuses ?? []).map((s) => toRow(s, true)),
+    ...(status?.containerStatuses ?? []).map((s) => toRow(s, false)),
+  ]
+}
+
+function ContainerSection({
+  rows,
+  onLogs,
+}: {
+  rows: ContainerRow[]
+  onLogs: (container: string) => void
+}) {
+  if (rows.length === 0) return null
+
+  return (
+    <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
+      <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">
+        Containers
+      </h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-ink-faint uppercase">
+              <th className="py-1.5 pr-3 font-medium">Name</th>
+              <th className="py-1.5 pr-3 font-medium">State</th>
+              <th className="py-1.5 pr-3 text-right font-medium">Ready</th>
+              <th className="py-1.5 pr-3 text-right font-medium">Restarts</th>
+              <th className="py-1.5 pr-3 font-medium">Last exit</th>
+              <th className="py-1.5 pr-3 font-medium">Image</th>
+              <th className="py-1.5 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={`${c.init}-${c.name}`} className="border-b border-border/50">
+                <td className="py-1.5 pr-3 font-medium text-ink">
+                  {c.name}
+                  {c.init && (
+                    <span className="ml-1.5 text-[10px] text-ink-faint uppercase">init</span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3" title={c.stateDetail}>
+                  <StatusBadge value={c.state} />
+                </td>
+                <td className="py-1.5 pr-3 text-right">
+                  {c.ready ? (
+                    <Badge tone="ok">yes</Badge>
+                  ) : (
+                    <span className="text-ink-faint">no</span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">
+                  <span className={c.restarts > 0 ? 'font-medium text-warn' : undefined}>
+                    {c.restarts}
+                  </span>
+                </td>
+                <td className="py-1.5 pr-3 font-mono text-xs text-ink-muted">
+                  {c.lastExit ?? '—'}
+                </td>
+                <td className="max-w-[18rem] truncate py-1.5 pr-3 font-mono text-xs text-ink-muted" title={c.image}>
+                  {c.image}
+                </td>
+                <td className="py-1.5 text-right">
+                  <Button size="sm" variant="ghost" onClick={() => onLogs(c.name)}>
+                    Logs
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
 
 function containerNames(obj?: KubeObject): string[] {
   if (!obj) return []
@@ -98,6 +240,7 @@ function ResourceDetailInner() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [replicas, setReplicas] = useState(0)
   const [yamlDirty, setYamlDirty] = useState(false)
+  const [logContainer, setLogContainer] = useState<string>()
 
   const switchTab = (next: Tab) => {
     if (
@@ -212,6 +355,19 @@ function ResourceDetailInner() {
     return spec?.replicas ?? 0
   }, [obj])
 
+  // The label selector this workload uses to own its pods, as query syntax.
+  // ReplicationControllers predate LabelSelector and use a bare map.
+  const podSelector = useMemo(() => {
+    if (!POD_OWNERS.has(kind)) return ''
+    const sel = (obj?.spec as { selector?: Record<string, unknown> } | undefined)?.selector
+    if (!sel || typeof sel !== 'object') return ''
+    const labels = (sel.matchLabels as Record<string, unknown> | undefined) ?? sel
+    return Object.entries(labels)
+      .filter(([, v]) => typeof v === 'string')
+      .map(([k, v]) => `${k}=${v}`)
+      .join(',')
+  }, [obj, kind])
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
@@ -242,6 +398,34 @@ function ResourceDetailInner() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {podSelector && ns && (
+              <Button
+                size="sm"
+                title={`Pods matching ${podSelector}`}
+                onClick={() =>
+                  navigate(
+                    `/c/${cluster}/r/core/v1/pods?namespace=${ns}&labelSelector=${encodeURIComponent(podSelector)}`,
+                  )
+                }
+              >
+                View pods
+              </Button>
+            )}
+            {isNode && (
+              <Button
+                size="sm"
+                title="Pods scheduled on this node"
+                onClick={() =>
+                  navigate(
+                    `/c/${cluster}/r/core/v1/pods?fieldSelector=${encodeURIComponent(
+                      `spec.nodeName=${name}`,
+                    )}`,
+                  )
+                }
+              >
+                View pods
+              </Button>
+            )}
             {SCALABLE.has(kind) && mayScale && (
               <Button
                 size="sm"
@@ -340,6 +524,16 @@ function ResourceDetailInner() {
               </dl>
             </section>
 
+            {isPod && (
+              <ContainerSection
+                rows={containerRows(obj)}
+                onLogs={(container) => {
+                  setLogContainer(container)
+                  setTab('logs')
+                }}
+              />
+            )}
+
             <StatusSection status={status} />
           </div>
         )}
@@ -388,7 +582,13 @@ function ResourceDetailInner() {
         )}
 
         {tab === 'logs' && isPod && (
-          <LogViewer cluster={cluster!} namespace={ns!} pod={name!} containers={containers} />
+          <LogViewer
+            cluster={cluster!}
+            namespace={ns!}
+            pod={name!}
+            containers={containers}
+            initialContainer={logContainer}
+          />
         )}
 
         {tab === 'terminal' && isPod && (
