@@ -16,6 +16,8 @@ import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
 import { SearchIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
+import { LogoMark, Wordmark } from './Logo'
+import { ShortcutsOverlay } from './ShortcutsOverlay'
 import { buildNav, type NavItem } from './nav'
 
 const HEALTH_TONE: Record<HealthStatus, 'ok' | 'warn' | 'danger' | 'idle'> = {
@@ -134,7 +136,7 @@ function ClusterSwitcher({ current }: { current?: string }) {
       <button
         ref={triggerRef}
         onClick={() => (open ? setOpen(false) : openList())}
-        className="flex w-full items-center gap-2 rounded-md bg-surface-2 px-3 py-2 text-left ring-1 ring-border transition-colors hover:bg-border/50"
+        className="flex w-full items-center gap-2 bg-surface-2 px-2.5 py-2 text-left ring-1 ring-border transition-colors hover:ring-border-strong"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -144,7 +146,7 @@ function ClusterSwitcher({ current }: { current?: string }) {
           <span className="block truncate text-sm font-medium text-ink">
             {active?.displayName ?? 'Select a cluster'}
           </span>
-          <span className="block truncate text-[11px] text-ink-faint">
+          <span className="block truncate font-mono text-[10.5px] text-ink-faint">
             {active?.health.version ?? `${clusters.length} available`}
           </span>
         </span>
@@ -166,7 +168,7 @@ function ClusterSwitcher({ current }: { current?: string }) {
               clusters[activeIndex] ? `${listboxId}-${activeIndex}` : undefined
             }
             onKeyDown={onListKeyDown}
-            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto rounded-md bg-surface py-1 shadow-2xl ring-1 ring-border outline-none"
+            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto bg-raised py-1 shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong outline-none"
           >
             {clusters.map((c, i) => (
               <li
@@ -180,13 +182,13 @@ function ClusterSwitcher({ current }: { current?: string }) {
                 className={clsx(
                   'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
                   i === activeIndex && 'bg-surface-2',
-                  c.name === current && 'bg-accent-soft/40',
+                  c.name === current && 'bg-accent-soft',
                 )}
               >
                 <HealthDot status={c.health.status} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-ink">{c.displayName}</span>
-                  <span className="block truncate text-[11px] text-ink-faint">
+                  <span className="block truncate text-[13px] text-ink">{c.displayName}</span>
+                  <span className="block truncate font-mono text-[10.5px] text-ink-faint">
                     {c.available
                       ? `${c.health.version ?? 'unknown version'} · ${c.health.latencyMs}ms`
                       : (c.error ?? 'unreachable')}
@@ -196,7 +198,7 @@ function ClusterSwitcher({ current }: { current?: string }) {
                       {Object.entries(c.labels).map(([k, v]) => (
                         <span
                           key={k}
-                          className="rounded bg-surface-2 px-1 text-[10px] text-ink-faint ring-1 ring-border"
+                          className="bg-canvas px-1 font-mono text-[10px] text-ink-faint ring-1 ring-border"
                         >
                           {k}={v}
                         </span>
@@ -220,7 +222,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
 
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] tracking-wide text-ink-faint uppercase">
+      <span className="mb-1 block text-[10px] font-semibold tracking-[.1em] text-ink-faint uppercase">
         Namespace
       </span>
       <select
@@ -235,7 +237,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
           next.delete('page')
           setParams(next, { replace: true })
         }}
-        className="w-full rounded-md bg-surface-2 px-2 py-1.5 text-sm text-ink ring-1 ring-border"
+        className="w-full bg-surface-2 px-2 py-1.5 text-[13px] text-ink ring-1 ring-border"
       >
         <option value="">All namespaces</option>
         {names.map((n) => (
@@ -323,7 +325,7 @@ function NavGroup({
                       'flex items-baseline gap-2 border-l-2 py-[3px] pr-3 pl-4 text-[13px] transition-colors',
                       denied && 'opacity-40',
                       isActive
-                        ? 'border-accent bg-accent-soft/25 text-ink'
+                        ? 'border-accent bg-accent-soft text-ink'
                         : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
                     )
                   }
@@ -344,7 +346,7 @@ function NavGroup({
   )
 }
 
-function UserMenu() {
+export function UserMenu() {
   const { data } = useMe()
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -380,9 +382,9 @@ function UserMenu() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`Account: ${label}`}
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-muted hover:bg-surface-2 hover:text-ink"
+        className="flex items-center gap-2 px-2 py-1.5 text-[13px] text-ink-muted transition-colors hover:text-ink"
       >
-        <span className="grid size-6 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-ink">
+        <span className="grid size-6 place-items-center border border-accent-text/40 bg-accent/30 text-[11px] font-semibold text-ink">
           {label.slice(0, 1).toUpperCase()}
         </span>
         <span className="hidden max-w-40 truncate sm:block">{label}</span>
@@ -396,19 +398,19 @@ function UserMenu() {
             role="dialog"
             aria-label="Account"
             tabIndex={-1}
-            className="animate-in absolute right-0 z-40 mt-1 w-72 rounded-md bg-surface p-3 shadow-2xl ring-1 ring-border outline-none"
+            className="animate-in absolute right-0 z-40 mt-1.5 w-[270px] bg-raised p-3 shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong outline-none"
           >
-            <p className="truncate text-sm font-medium text-ink">{label}</p>
+            <p className="truncate text-[13px] font-medium text-ink">{label}</p>
             <p className="truncate font-mono text-[11px] text-ink-faint">{data.user.username}</p>
 
             {data.user.groups && data.user.groups.length > 0 && (
-              <div className="mt-2">
+              <div className="mt-2.5">
                 <p className="text-[11px] text-ink-faint">Groups</p>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {data.user.groups.map((g) => (
                     <span
                       key={g}
-                      className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-muted ring-1 ring-border"
+                      className="bg-canvas px-1.5 py-0.5 font-mono text-[10px] text-ink-muted ring-1 ring-border"
                     >
                       {g}
                     </span>
@@ -418,7 +420,7 @@ function UserMenu() {
             )}
 
             {data.anonymous ? (
-              <p className="mt-3 rounded bg-warn/10 px-2 py-1.5 text-[11px] text-warn ring-1 ring-warn/25">
+              <p className="mt-3 bg-warn/10 px-2 py-1.5 text-[11px] text-warn ring-1 ring-warn/25">
                 Authentication is disabled on this server.
               </p>
             ) : (
@@ -531,6 +533,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [cluster, currentResource, matchesRoute, nav])
 
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -540,6 +543,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         if (e.target instanceof Element && e.target.closest('.xterm')) return
         e.preventDefault()
         setPaletteOpen((v) => !v)
+        return
+      }
+      if (e.key === '?' && e.target instanceof Element) {
+        // "?" is a character people type; only steal it outside of inputs.
+        if (e.target.closest('input, textarea, select, .xterm, [contenteditable]')) return
+        e.preventDefault()
+        setShortcutsOpen((v) => !v)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -548,22 +558,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
+      <aside className="flex w-[250px] shrink-0 flex-col border-r border-border bg-surface">
         <div className="border-b border-border p-3">
-          <Link to="/" className="mb-3 flex items-center gap-2">
-            <svg viewBox="0 0 32 32" className="size-6" aria-hidden>
-              <circle
-                cx="16"
-                cy="16"
-                r="13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                className="text-accent"
-              />
-              <circle cx="16" cy="16" r="4" className="fill-accent" />
-            </svg>
-            <span className="text-sm font-semibold tracking-tight text-ink">Orrery</span>
+          <Link to="/" className="mb-3 flex items-center gap-2.5">
+            <LogoMark className="size-5" />
+            <Wordmark />
           </Link>
           <ClusterSwitcher current={cluster} />
         </div>
@@ -574,11 +573,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <NamespacePicker cluster={cluster} />
               <button
                 onClick={() => setPaletteOpen(true)}
-                className="flex w-full items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5 text-left text-sm text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
+                className="flex w-full items-center gap-2 bg-surface-2 px-2 py-1.5 text-left text-[13px] text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
               >
                 <SearchIcon className="size-3.5" />
                 <span>Search</span>
-                <kbd className="ml-auto rounded border border-border px-1 font-sans text-[10px]">
+                <kbd className="ml-auto border border-ink/18 px-1 font-sans text-[10px] text-ink-faint">
                   ⌘K
                 </kbd>
               </button>
@@ -590,10 +589,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 end
                 className={({ isActive }) =>
                   clsx(
-                    'mx-3 block rounded px-3 py-1.5 text-[13px] transition-colors',
+                    'block border-l-2 py-1.5 pr-3 pl-4 text-[13px] transition-colors',
                     isActive
-                      ? 'bg-accent-soft/50 text-ink'
-                      : 'text-ink-muted hover:bg-surface-2 hover:text-ink',
+                      ? 'border-accent bg-accent-soft text-ink'
+                      : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
                   )
                 }
               >
@@ -603,10 +602,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 to={`/c/${cluster}/events${namespace ? `?namespace=${namespace}` : ''}`}
                 className={({ isActive }) =>
                   clsx(
-                    'mx-3 block rounded px-3 py-1.5 text-[13px] transition-colors',
+                    'block border-l-2 py-1.5 pr-3 pl-4 text-[13px] transition-colors',
                     isActive
-                      ? 'bg-accent-soft/50 text-ink'
-                      : 'text-ink-muted hover:bg-surface-2 hover:text-ink',
+                      ? 'border-accent bg-accent-soft text-ink'
+                      : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
                   )
                 }
               >
@@ -661,14 +660,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4">
+        <header className="flex h-[46px] shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4">
           <Breadcrumbs
             cluster={cluster}
             resource={currentResource}
             name={detailMatch?.params.name}
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             {namespace && <Badge tone="info">ns: {namespace}</Badge>}
+            <button
+              onClick={() => setShortcutsOpen(true)}
+              title="Keyboard shortcuts"
+              aria-label="Keyboard shortcuts"
+              className="grid size-6 place-items-center border border-border text-xs text-ink-faint transition-colors hover:text-ink"
+            >
+              ?
+            </button>
             <UserMenu />
           </div>
         </header>
@@ -684,6 +691,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           primary={nav.primary.flatMap((s) => s.items)}
         />
       )}
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   )
 }
@@ -700,7 +708,7 @@ function Breadcrumbs({
   if (!cluster) return <span className="text-sm text-ink-faint">Orrery</span>
 
   return (
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]">
       <Link to={`/c/${cluster}`} className="truncate text-ink-muted hover:text-ink">
         {cluster}
       </Link>

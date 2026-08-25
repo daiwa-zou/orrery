@@ -34,10 +34,10 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       cursorBlink: true,
       convertEol: true,
       theme: {
-        background: '#141821',
-        foreground: '#e6e9ef',
-        cursor: '#4f8ef7',
-        selectionBackground: '#2b3550',
+        background: '#0c1015',
+        foreground: '#c8d0da',
+        cursor: '#94bce3',
+        selectionBackground: 'rgba(89,128,166,.4)',
       },
     })
     const fit = new FitAddon()
@@ -131,17 +131,19 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-[7px]">
         <Badge tone={status === 'open' ? 'ok' : status === 'error' ? 'danger' : 'idle'}>
-          {status}
+          {status === 'open' ? 'connected' : status}
         </Badge>
-        <span className="font-mono text-xs text-ink-faint">
+        <span className="font-mono text-[11.5px] text-ink-faint">
           {namespace}/{pod}
           {container && ` · ${container}`}
         </span>
         {message && <span className="text-xs text-danger">{message}</span>}
+        <div className="flex-1" />
+        <span className="text-[11.5px] text-ink-faint">Ctrl+D to end the session</span>
       </div>
-      <div ref={hostRef} className="min-h-0 flex-1 bg-[#141821] p-2" />
+      <div ref={hostRef} className="min-h-0 flex-1 bg-term p-2" />
     </div>
   )
 }

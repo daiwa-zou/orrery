@@ -65,6 +65,16 @@ export function usePodMetrics(cluster?: string, namespace?: string) {
   })
 }
 
+/** Authz/informer cache statistics — feeds the Control plane card. */
+export function useCacheStats(cluster?: string) {
+  return useQuery({
+    queryKey: ['stats', cluster],
+    queryFn: ({ signal }) => api.cacheStats(cluster!, signal),
+    enabled: !!cluster,
+    refetchInterval: 30_000,
+  })
+}
+
 export function useNodeMetrics(cluster?: string) {
   return useQuery({
     queryKey: ['metrics', 'nodes', cluster],

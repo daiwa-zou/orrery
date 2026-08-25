@@ -252,23 +252,30 @@ export function ResourceList() {
 
     const m = metrics.data
     if (isPods && m?.available && m.pods?.length) {
-      const usage = new Map(m.pods.map((p) => [`${p.namespace}/${p.name}`, p.usage]))
+      const usage = new Map(m.pods.map((p) => [`${p.namespace}/${p.name}`, p]))
       const extra: Column[] = [
-        { key: 'cpu', label: 'CPU', type: 'text', align: 'right', priority: 1 },
-        { key: 'memory', label: 'Memory', type: 'text', align: 'right', priority: 1 },
+        { key: 'cpu', label: 'CPU', type: 'bar', align: 'right', priority: 1 },
+        { key: 'memory', label: 'Memory', type: 'bar', align: 'right', priority: 1 },
       ]
       columns = [...columns, ...extra]
       rows = rows.map((row) => {
-        const u = usage.get(`${row.namespace}/${row.name}`)
-        return u
-          ? {
-              ...row,
-              cpu: formatCpu(u.cpuMilli),
-              memory: formatMemory(u.memoryMiB),
-              _cpuMilli: u.cpuMilli,
-              _memoryMiB: u.memoryMiB,
-            }
-          : row
+        const p = usage.get(`${row.namespace}/${row.name}`)
+        if (!p) return row
+        // The bar fills against the container limits — the ceiling the kubelet
+        // enforces. Without a declared limit there is no honest denominator,
+        // so the bar stays empty and only the reading shows.
+        const pct = (used: number, limit?: number) =>
+          limit && limit > 0 ? Math.min(100, (used / limit) * 100) : 0
+        return {
+          ...row,
+          cpu: { text: formatCpu(p.usage.cpuMilli), percent: pct(p.usage.cpuMilli, p.limits?.cpuMilli) },
+          memory: {
+            text: formatMemory(p.usage.memoryMiB),
+            percent: pct(p.usage.memoryMiB, p.limits?.memoryMiB),
+          },
+          _cpuMilli: p.usage.cpuMilli,
+          _memoryMiB: p.usage.memoryMiB,
+        }
       })
       // These columns exist only client-side, so the server sorted by name;
       // order the fetched page here or the header arrow would lie. Pods
@@ -303,11 +310,11 @@ export function ResourceList() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
-        <h1 className="mr-2 text-sm font-semibold text-ink">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2">
+        <h1 className="mr-2 font-condensed text-[17px] font-semibold tracking-[.02em] text-ink">
           {meta?.kind ?? resource}
           {meta && meta.group !== '' && (
-            <span className="ml-1.5 font-mono text-xs font-normal text-ink-faint">
+            <span className="ml-1.5 font-mono text-[11px] font-normal tracking-normal text-ink-faint">
               {meta.group}/{meta.version}
             </span>
           )}
@@ -530,7 +537,7 @@ export function ResourceList() {
             </>
           )}
         </p>
-        <ul className="mt-3 max-h-56 overflow-auto rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-ink ring-1 ring-border">
+        <ul className="mt-3 max-h-56 overflow-auto bg-canvas px-3 py-2 font-mono text-xs text-ink ring-1 ring-border">
           {pendingBulk?.rows.map((row) => (
             <li key={rowKey(row)} className="truncate py-0.5">
               {row.namespace ? `${row.namespace}/` : ''}

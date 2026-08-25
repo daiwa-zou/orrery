@@ -3,11 +3,12 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml } from '@codemirror/lang-yaml'
-import { oneDark } from '@codemirror/theme-one-dark'
+
 import { api } from '../api/client'
 import { useDiscovery } from '../api/hooks'
 import { ExplainPanel } from '../components/ExplainPanel'
-import { Button, Spinner } from '../components/primitives'
+import { codeTheme } from '../components/YamlEditor'
+import { Button, Corners, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
 /**
@@ -83,8 +84,8 @@ export function CreateResource() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
-        <h1 className="text-sm font-semibold text-ink">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2">
+        <h1 className="font-condensed text-[17px] font-semibold tracking-[.02em] text-ink">
           New {meta?.kind ?? resource}
         </h1>
         <span className="text-xs text-ink-faint">
@@ -110,15 +111,19 @@ export function CreateResource() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-          <CodeMirror
-            value={value}
-            height="100%"
-            theme={oneDark}
-            extensions={[yaml()]}
-            onChange={setDraft}
-            basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: false }}
-          />
+        <div className="min-h-0 min-w-0 flex-1 p-3">
+          <div className="blueprint h-full overflow-auto bg-code">
+            <Corners />
+            <CodeMirror
+              value={value}
+              height="100%"
+              className="h-full"
+              theme="none"
+              extensions={[yaml(), codeTheme]}
+              onChange={setDraft}
+              basicSetup={{ lineNumbers: true, foldGutter: true, autocompletion: false }}
+            />
+          </div>
         </div>
         {explainOpen && meta && cluster && (
           <ExplainPanel

@@ -96,8 +96,10 @@ export function Events() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
-        <h1 className="mr-2 text-sm font-semibold text-ink">Events</h1>
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2">
+        <h1 className="mr-2 font-condensed text-[17px] font-semibold tracking-[.02em] text-ink">
+          Events
+        </h1>
 
         {data && (
           <span className="text-xs text-ink-faint tabular-nums">
@@ -109,7 +111,7 @@ export function Events() {
 
         <div className="flex-1" />
 
-        <label className="flex items-center gap-1.5 text-sm text-ink-muted">
+        <label className="flex items-center gap-1.5 text-[12.5px] text-ink-muted">
           <input
             type="checkbox"
             checked={warningsOnly}
@@ -125,7 +127,7 @@ export function Events() {
           placeholder="Filter events"
           aria-label="Filter events"
           title="Matches object, reason, message or namespace"
-          className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-56 bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
         <Button
           size="sm"

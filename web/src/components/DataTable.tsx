@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { Fragment, type ReactNode } from 'react'
-import type { Column, Row } from '../api/types'
+import type { BarCell, Column, Row } from '../api/types'
 import { duration, ratioTone } from '../lib/format'
 import { rowKey, toggleAll, toggleRow } from '../lib/selection'
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
@@ -63,6 +63,25 @@ function Cell({
   }
 
   switch (column.type) {
+    case 'bar': {
+      const { text, percent } = value as BarCell
+      const fill =
+        percent >= 90 ? 'bg-danger' : percent >= 75 ? 'bg-warn' : 'bg-accent'
+      return (
+        <span className="flex items-center justify-end gap-[7px]">
+          <span className="inline-block h-1 w-[52px] border border-border bg-canvas">
+            <span
+              className={clsx('block h-full', fill)}
+              style={{ width: `${Math.min(100, percent)}%` }}
+            />
+          </span>
+          <span className="min-w-[50px] text-right font-mono text-xs whitespace-nowrap text-ink-muted">
+            {text}
+          </span>
+        </span>
+      )
+    }
+
     case 'labels': {
       const labels = Object.entries(value as Record<string, string>).sort(([a], [b]) =>
         a.localeCompare(b),
@@ -77,7 +96,7 @@ function Cell({
               disabled={!onLabelClick}
               title={onLabelClick ? `Toggle label filter ${k}=${v}` : undefined}
               className={clsx(
-                'max-w-[16rem] truncate rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border',
+                'max-w-[16rem] truncate bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border',
                 onLabelClick && 'cursor-pointer hover:text-ink hover:ring-accent',
               )}
               onClick={
@@ -122,7 +141,7 @@ function Cell({
           {items.slice(0, 2).map((item, i) => (
             <span
               key={`${item}-${i}`}
-              className="max-w-[22rem] truncate rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
+              className="max-w-[22rem] truncate bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
             >
               {item}
             </span>
@@ -186,7 +205,7 @@ export function DataTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[40rem] border-collapse text-sm">
+      <table className="w-full min-w-[40rem] border-collapse text-[13px]">
         <thead>
           <tr className="border-b border-border text-left">
             {selectable && (
@@ -213,7 +232,7 @@ export function DataTable({
                   key={column.key}
                   scope="col"
                   className={clsx(
-                    'group px-3 py-2 text-xs font-medium tracking-wide text-ink-faint uppercase',
+                    'group px-3 py-2 text-[11px] font-semibold tracking-[.08em] text-ink-faint uppercase',
                     column.align === 'right' && 'text-right',
                     priorityClass(column.priority),
                     sortable && 'cursor-pointer select-none hover:text-ink-muted',
@@ -257,10 +276,10 @@ export function DataTable({
             <Fragment key={key}>
               <tr
                 className={clsx(
-                  'border-b border-border/50 transition-colors',
+                  'border-b border-ink/8 transition-colors',
                   onRowClick &&
-                    'cursor-pointer hover:bg-surface-2/70 focus:bg-surface-2/70 focus:outline-none',
-                  isSelected && 'bg-accent-soft/25',
+                    'cursor-pointer hover:bg-ink/4 focus:bg-ink/4 focus:outline-none',
+                  isSelected && 'bg-accent-soft',
                   row._terminating && 'opacity-55',
                 )}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -358,7 +377,7 @@ export function Pagination({
           <select
             value={pageSize}
             onChange={(e) => onPageSize(Number(e.target.value))}
-            className="rounded border border-border bg-surface-2 px-1.5 py-1 text-ink"
+            className="border border-border bg-surface-2 px-1.5 py-1 text-ink"
           >
             {[25, 50, 100, 250].map((n) => (
               <option key={n} value={n}>
@@ -372,7 +391,7 @@ export function Pagination({
           <button
             aria-label="Previous page"
             title="Previous page"
-            className="rounded p-1 hover:bg-surface-2 disabled:opacity-40"
+            className="p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page - 1)}
             disabled={page <= 1}
           >
@@ -384,7 +403,7 @@ export function Pagination({
           <button
             aria-label="Next page"
             title="Next page"
-            className="rounded p-1 hover:bg-surface-2 disabled:opacity-40"
+            className="p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page + 1)}
             disabled={page >= pages}
           >

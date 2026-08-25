@@ -16,6 +16,22 @@ interface LogViewerProps {
   containers: string[]
   /** Pre-selects a container, e.g. the row clicked in the containers table. */
   initialContainer?: string
+  /** Last exit per container ("exit 137 (OOMKilled)"), for the Previous banner. */
+  lastExits?: Record<string, string>
+}
+
+/**
+ * Colours a line by its apparent severity. Kubernetes does not tag lines with
+ * their stream, so this is a heuristic over the conventional level markers —
+ * cheap, and wrong only about logs that lie about themselves.
+ */
+function lineTone(line: string): string {
+  // Level markers, plus klog's single-letter severity prefix (E0824 12:00:00).
+  if (/\b(ERROR|FATAL|panic|OOMKilled)\b/.test(line) || /^[EF]\d{4} /.test(line)) {
+    return 'text-danger'
+  }
+  if (/\bWARN(ING)?\b/.test(line) || /^W\d{4} /.test(line)) return 'text-warn'
+  return 'text-ink-muted'
 }
 
 /** How long incoming lines are coalesced before one state update. */
@@ -27,6 +43,7 @@ export function LogViewer({
   pod,
   containers,
   initialContainer,
+  lastExits,
 }: LogViewerProps) {
   const [container, setContainer] = useState(
     initialContainer && containers.includes(initialContainer)
@@ -175,13 +192,13 @@ export function LogViewer({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-[7px]">
         {containers.length > 1 && (
           <select
             value={container}
             onChange={(e) => setContainer(e.target.value)}
             aria-label="Container"
-            className="rounded bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
+            className="bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
           >
             {containers.map((c) => (
               <option key={c} value={c}>
@@ -200,27 +217,34 @@ export function LogViewer({
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter lines"
           aria-label="Filter log lines"
-          className="w-48 rounded bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-44 bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
 
-        <label className="flex items-center gap-1 text-xs text-ink-muted">
-          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
-          Wrap
-        </label>
-        <label className="flex items-center gap-1 text-xs text-ink-muted">
+        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
           <input
             type="checkbox"
+            className="accent-accent"
+            checked={wrap}
+            onChange={(e) => setWrap(e.target.checked)}
+          />
+          Wrap
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+          <input
+            type="checkbox"
+            className="accent-accent"
             checked={timestamps}
             onChange={(e) => setTimestamps(e.target.checked)}
           />
           Timestamps
         </label>
         <label
-          className="flex items-center gap-1 text-xs text-ink-muted"
+          className="flex items-center gap-1.5 text-xs text-ink-muted"
           title="Show logs from the previous container instance — the only way to read why a crashed container died"
         >
           <input
             type="checkbox"
+            className="accent-accent"
             checked={previous}
             onChange={(e) => setPrevious(e.target.checked)}
           />
@@ -267,10 +291,19 @@ export function LogViewer({
         </p>
       )}
 
+      {previous && !error && (
+        <p className="shrink-0 border-b border-border bg-info/7 px-3 py-[5px] text-xs text-info">
+          Showing the previous container instance
+          {lastExits?.[container]
+            ? ` — this is the run that ended with ${lastExits[container]}.`
+            : ' — the run before the current one.'}
+        </p>
+      )}
+
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-auto bg-canvas px-3 py-2 font-mono text-xs leading-[1.5]"
+        className="min-h-0 flex-1 overflow-auto bg-code px-3 py-2 font-mono text-xs leading-[1.55]"
       >
         {status === 'connecting' && buf.items.length === 0 && (
           <p className="flex items-center gap-2 text-ink-faint">
@@ -285,7 +318,7 @@ export function LogViewer({
         {visible.map(({ line, key }) => (
           <div
             key={key}
-            className={clsx('text-ink-muted', wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre')}
+            className={clsx(lineTone(line), wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre')}
           >
             {line}
           </div>

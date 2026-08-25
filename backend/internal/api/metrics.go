@@ -52,6 +52,10 @@ type podMetric struct {
 	Namespace  string           `json:"namespace"`
 	Usage      usage            `json:"usage"`
 	Containers map[string]usage `json:"containers,omitempty"`
+	// Limits sums the pod's container limits, so the frontend can draw usage
+	// as a fraction of what the kubelet will actually enforce. Omitted when no
+	// container declares a limit for either resource.
+	Limits *usage `json:"limits,omitempty"`
 }
 
 // metricsUnavailable turns the many ways metrics-server can be missing into
@@ -228,6 +232,18 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limits come from the pod cache, mirroring how nodeMetrics reads capacity:
+	// one metrics call, zero extra API-server traffic. Only pods already in the
+	// (authorization-filtered) metrics list are looked up.
+	limitsByPod := map[string]usage{}
+	if pods, listErr := res.cluster.Informers.List(ctx, podRes, namespace); listErr == nil {
+		for _, p := range pods {
+			if l, ok := podLimits(p); ok {
+				limitsByPod[p.GetNamespace()+"/"+p.GetName()] = l
+			}
+		}
+	}
+
 	out := metricsResponse{Available: true}
 	totals := usage{}
 	for _, m := range metrics.Items {
@@ -243,12 +259,45 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 			pm.Usage.CPUMilli += cu.CPUMilli
 			pm.Usage.MemoryMiB += cu.MemoryMiB
 		}
+		if l, ok := limitsByPod[m.Namespace+"/"+m.Name]; ok {
+			pm.Limits = &l
+		}
 		totals.CPUMilli += pm.Usage.CPUMilli
 		totals.MemoryMiB += pm.Usage.MemoryMiB
 		out.Pods = append(out.Pods, pm)
 	}
 	out.Totals = &totals
 	writeJSON(w, http.StatusOK, out)
+}
+
+// podLimits sums container limits from a cached pod's spec. The bool is false
+// when no container declares a limit for either resource.
+func podLimits(p interface {
+	UnstructuredContent() map[string]any
+}) (usage, bool) {
+	content := p.UnstructuredContent()
+	spec, _ := content["spec"].(map[string]any)
+	containers, _ := spec["containers"].([]any)
+	u := usage{}
+	found := false
+	for _, c := range containers {
+		cm, _ := c.(map[string]any)
+		resources, _ := cm["resources"].(map[string]any)
+		limits, _ := resources["limits"].(map[string]any)
+		if cpu, ok := limits["cpu"].(string); ok {
+			if q, err := resource.ParseQuantity(cpu); err == nil {
+				u.CPUMilli += q.MilliValue()
+				found = true
+			}
+		}
+		if mem, ok := limits["memory"].(string); ok {
+			if q, err := resource.ParseQuantity(mem); err == nil {
+				u.MemoryMiB += q.Value() / (1024 * 1024)
+				found = true
+			}
+		}
+	}
+	return u, found
 }
 
 func round1(f float64) float64 {

@@ -164,12 +164,12 @@ export function SearchBar({
         aria-autocomplete="list"
         role="combobox"
         title={'Free text matches name, namespace and labels.\nFilter terms: app=web, tier!=cache, !canary, app in (web,api), status.phase=Running'}
-        className="w-full rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
+        className="w-full bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-ink ring-1 ring-border placeholder:text-ink-faint"
       />
       {open && suggestions.length > 0 && (
         <ul
           role="listbox"
-          className="absolute top-full left-0 z-20 mt-1 max-h-72 w-full min-w-64 overflow-auto rounded-md bg-surface py-1 text-sm shadow-lg ring-1 ring-border"
+          className="absolute top-full left-0 z-20 mt-1 max-h-72 w-full min-w-64 overflow-auto bg-raised py-1 text-sm shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong"
         >
           {suggestions.map((s, i) => (
             <li key={s.token} role="option" aria-selected={i === highlight}>

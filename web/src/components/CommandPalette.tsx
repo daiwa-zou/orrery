@@ -269,7 +269,7 @@ export function CommandPalette({
         role="dialog"
         aria-modal="true"
         aria-label="Jump to"
-        className="animate-in h-fit w-full max-w-xl overflow-hidden rounded-lg bg-surface shadow-2xl ring-1 ring-border"
+        className="animate-in h-fit w-full max-w-[560px] overflow-hidden bg-raised shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
@@ -291,7 +291,7 @@ export function CommandPalette({
             aria-autocomplete="list"
             aria-controls="palette-results"
             aria-activedescendant={entries[selected]?.id}
-            className="w-full bg-transparent py-3 text-sm text-ink outline-none placeholder:text-ink-faint"
+            className="w-full bg-transparent py-3 text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
           />
         </div>
 
@@ -329,8 +329,8 @@ export function CommandPalette({
                   onMouseMove={() => setSelected(i)}
                   onClick={() => choose(entry)}
                   className={clsx(
-                    'flex w-full cursor-pointer items-baseline gap-3 px-3 py-1.5 text-left text-sm',
-                    isSelected ? 'bg-accent-soft/60 text-ink' : 'text-ink-muted',
+                    'flex w-full cursor-pointer items-baseline gap-3 px-3 py-1.5 text-left text-[13px]',
+                    isSelected ? 'bg-accent/20 text-ink' : 'text-ink-muted',
                   )}
                 >
                   <span className="truncate">{entry.label}</span>
@@ -343,7 +343,7 @@ export function CommandPalette({
           })}
         </ul>
 
-        <div className="flex gap-3 border-t border-border px-3 py-1.5 text-[11px] text-ink-faint">
+        <div className="flex gap-3.5 border-t border-border px-3 py-1.5 text-[10.5px] text-ink-faint">
           <span>↑↓ navigate</span>
           <span>⏎ open</span>
           <span>esc close</span>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import { Button, Spinner } from '../components/primitives'
+import { LogoMark } from '../components/Logo'
+import { Button, Corners, Spinner } from '../components/primitives'
 
 /**
  * The login page is the only route that renders without a session, so it
@@ -29,62 +30,58 @@ export function Login() {
 
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-2.5">
-          <svg viewBox="0 0 32 32" className="size-8" aria-hidden>
-            <circle
-              cx="16"
-              cy="16"
-              r="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3"
-              className="text-accent"
-            />
-            <circle cx="16" cy="16" r="4" className="fill-accent" />
-          </svg>
+      <div className="w-full max-w-[380px]">
+        <div className="mb-[26px] flex items-center gap-3">
+          <LogoMark large className="size-10" />
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-ink">Orrery</h1>
-            <p className="text-xs text-ink-faint">Multi-cluster Kubernetes console</p>
+            <h1 className="font-condensed text-2xl font-semibold tracking-[.06em] text-ink">
+              ORRERY
+            </h1>
+            <p className="text-[11.5px] text-ink-faint">Multi-cluster Kubernetes console</p>
           </div>
         </div>
 
         {error && (
-          <p className="mb-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">
+          <p className="mb-4 bg-danger/10 px-3 py-2 text-[13px] text-danger ring-1 ring-danger/25">
             {error}
           </p>
         )}
 
         {loadError && (
-          <p className="mb-4 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger ring-1 ring-danger/25">
+          <p className="mb-4 bg-danger/10 px-3 py-2 text-[13px] text-danger ring-1 ring-danger/25">
             Could not reach the server: {loadError}
           </p>
         )}
 
         {!config && !loadError && (
-          <p className="flex items-center gap-2 text-sm text-ink-faint">
+          <p className="flex items-center gap-2 text-[13px] text-ink-faint">
             <Spinner className="size-3.5" /> Checking sign-in options
           </p>
         )}
 
         {config?.oidcEnabled && (
-          <div className="rounded-lg bg-surface p-4 ring-1 ring-border">
-            <p className="mb-3 text-sm text-ink-muted">
+          <div className="blueprint bg-surface p-[18px]">
+            <Corners />
+            <p className="mb-3.5 text-[13.5px] leading-relaxed text-ink-muted">
               Sign in with your identity provider. Your cluster permissions come from your own
               account, not from this dashboard.
             </p>
-            <Button variant="primary" onClick={signIn}>
+            <Button variant="primary" onClick={signIn} className="w-full py-2.5">
               Continue with SSO
             </Button>
           </div>
         )}
 
         {config && !config.oidcEnabled && (
-          <div className="rounded-lg bg-warn/10 p-4 ring-1 ring-warn/25">
-            <p className="text-sm text-warn">
+          <div className="blueprint bg-warn/10 p-[18px] ring-warn/25">
+            <Corners />
+            <p className="text-[13px] text-warn">
               Authentication is disabled on this server. Every visitor acts as the same identity.
             </p>
-            <a href="/" className="mt-3 inline-block text-sm text-accent hover:underline">
+            <a
+              href="/"
+              className="mt-3 inline-block text-[13px] text-accent-text hover:text-accent-text-hover hover:underline"
+            >
               Continue anyway
             </a>
           </div>

@@ -107,7 +107,7 @@ export function MetadataEditor({
           {entries.map(([k, v]) => (
             <span
               key={k}
-              className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
+              className="inline-flex items-center gap-1 bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
               title={`${k}=${v}`}
             >
               {k}
@@ -120,7 +120,7 @@ export function MetadataEditor({
                 onClick={() =>
                   setDraft(Object.fromEntries(entries.filter(([key]) => key !== k)))
                 }
-                className="ml-0.5 rounded px-0.5 text-ink-faint transition-colors hover:bg-danger/15 hover:text-danger"
+                className="ml-0.5 px-0.5 text-ink-faint transition-colors hover:bg-danger/15 hover:text-danger"
               >
                 ×
               </button>

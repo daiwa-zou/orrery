@@ -6,12 +6,24 @@ import { age as formatAge, toneFor, type Tone } from '../lib/format'
    language easy to keep consistent — every badge, button and empty state in
    the app is defined here. */
 
+/** The four "+" registration marks of a `.blueprint` frame. */
+export function Corners() {
+  return (
+    <>
+      <i aria-hidden className="corner tl" />
+      <i aria-hidden className="corner tr" />
+      <i aria-hidden className="corner bl" />
+      <i aria-hidden className="corner br" />
+    </>
+  )
+}
+
 const TONE_CLASS: Record<Tone, string> = {
-  ok: 'bg-ok/12 text-ok ring-ok/25',
-  warn: 'bg-warn/12 text-warn ring-warn/25',
-  danger: 'bg-danger/12 text-danger ring-danger/25',
-  info: 'bg-info/12 text-info ring-info/25',
-  idle: 'bg-idle/12 text-ink-faint ring-border',
+  ok: 'bg-ok/12 text-ok ring-ok/30',
+  warn: 'bg-warn/12 text-warn ring-warn/30',
+  danger: 'bg-danger/13 text-danger ring-danger/32',
+  info: 'bg-info/12 text-info ring-info/28',
+  idle: 'bg-idle/12 text-idle ring-idle/28',
 }
 
 export function Badge({
@@ -27,7 +39,7 @@ export function Badge({
     <span
       title={title}
       className={clsx(
-        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset whitespace-nowrap',
+        'inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] ring-1 ring-inset whitespace-nowrap',
         TONE_CLASS[tone],
       )}
     >
@@ -100,6 +112,7 @@ export function Button({
   title,
   type = 'button',
   icon,
+  className,
   'aria-label': ariaLabel,
   'aria-pressed': ariaPressed,
 }: {
@@ -112,6 +125,7 @@ export function Button({
   type?: 'button' | 'submit'
   /** Icon-only: square padding; pass aria-label and title, the icon is mute. */
   icon?: boolean
+  className?: string
   'aria-label'?: string
   'aria-pressed'?: boolean
 }) {
@@ -124,7 +138,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       className={clsx(
-        'inline-flex items-center gap-1.5 rounded-md font-medium transition-colors',
+        'inline-flex items-center justify-center gap-1.5 font-condensed font-semibold whitespace-nowrap transition-colors',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         'disabled:cursor-not-allowed disabled:opacity-45',
         icon
@@ -132,14 +146,15 @@ export function Button({
             ? 'p-1.5'
             : 'p-2'
           : size === 'sm'
-            ? 'px-2 py-1 text-xs'
-            : 'px-3 py-1.5 text-sm',
+            ? 'px-2.5 py-1 text-xs'
+            : 'px-3.5 py-1.5 text-sm',
         {
-          'bg-surface-2 text-ink ring-1 ring-border hover:bg-border/60': variant === 'default',
-          'bg-accent text-canvas hover:brightness-110': variant === 'primary',
-          'bg-danger/12 text-danger ring-1 ring-danger/30 hover:bg-danger/20': variant === 'danger',
-          'text-ink-muted hover:bg-surface-2 hover:text-ink': variant === 'ghost',
+          'bg-transparent text-ink ring-1 ring-border hover:bg-ink/7': variant === 'default',
+          'bg-accent text-canvas ring-1 ring-accent hover:brightness-110': variant === 'primary',
+          'bg-danger/12 text-danger ring-1 ring-danger/32 hover:bg-danger/20': variant === 'danger',
+          'text-accent-text hover:bg-accent/10 hover:text-accent-text-hover': variant === 'ghost',
         },
+        className,
       )}
     >
       {children}
@@ -203,8 +218,21 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-      <p className="text-sm font-medium text-ink">{title}</p>
-      {description && <p className="max-w-md text-sm text-ink-faint">{description}</p>}
+      <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden>
+        <circle
+          cx="24"
+          cy="24"
+          r="19"
+          fill="none"
+          stroke="rgba(231,234,238,.18)"
+          strokeWidth="1"
+          strokeDasharray="3 4"
+        />
+        <circle cx="24" cy="24" r="2.5" fill="rgba(148,188,227,.5)" />
+        <circle cx="41" cy="24" r="1.6" fill="rgba(231,234,238,.3)" />
+      </svg>
+      <p className="text-[13.5px] font-medium text-ink">{title}</p>
+      {description && <p className="max-w-md text-[13px] text-ink-faint">{description}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
   )
@@ -238,7 +266,7 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
 /** A labelled key/value row, used throughout the detail pane. */
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[10rem_1fr] gap-3 py-1.5 text-sm">
+    <div className="grid grid-cols-[150px_1fr] gap-3 border-b border-ink/6 py-1.5 text-[13px] last:border-b-0">
       <dt className="text-ink-faint">{label}</dt>
       <dd className="min-w-0 break-words text-ink">{children}</dd>
     </div>
@@ -253,7 +281,7 @@ export function LabelChips({ labels }: { labels?: Record<string, string> }) {
       {entries.map(([k, v]) => (
         <span
           key={k}
-          className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
+          className="bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-border"
           title={`${k}=${v}`}
         >
           {k}
@@ -346,13 +374,13 @@ export function Modal({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={clsx(
-          'animate-in w-full rounded-lg bg-surface ring-1 ring-border shadow-2xl outline-none',
+          'animate-in w-full bg-raised ring-1 ring-border-strong shadow-[0_16px_40px_rgba(0,0,0,.6)] outline-none',
           wide ? 'max-w-4xl' : 'max-w-lg',
         )}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="border-b border-border px-4 py-3">
-          <h2 id={titleId} className="text-sm font-semibold text-ink">
+          <h2 id={titleId} className="font-condensed text-base font-semibold text-ink">
             {title}
           </h2>
         </header>

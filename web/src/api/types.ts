@@ -11,6 +11,8 @@ export type ColumnType =
   | 'ratio'
   /** Client-side only: renders Row._labels as clickable filter chips. */
   | 'labels'
+  /** Client-side only: a small usage bar; the cell value is a BarCell. */
+  | 'bar'
 
 export interface Column {
   key: string
@@ -18,6 +20,13 @@ export interface Column {
   type: ColumnType
   priority?: number
   align?: 'right'
+}
+
+/** The value behind a "bar" column: a formatted reading plus its fill. */
+export interface BarCell {
+  text: string
+  /** 0–100; drives the fill width and the warn/danger colour steps. */
+  percent: number
 }
 
 /** A projected table row. Keys correspond to Column.key, plus metadata. */
@@ -169,7 +178,13 @@ export interface MetricsResponse {
   available: boolean
   reason?: string
   nodes?: NodeMetric[]
-  pods?: { name: string; namespace: string; usage: Usage }[]
+  pods?: {
+    name: string
+    namespace: string
+    usage: Usage
+    /** Summed container limits; absent when no container declares one. */
+    limits?: Usage
+  }[]
   totals?: Usage
 }
 

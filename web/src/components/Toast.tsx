@@ -26,25 +26,19 @@ export function useToast(): ToastApi {
   return useContext(ToastContext)
 }
 
+/** A 2px rule in the tone colour along the left edge carries the severity;
+ *  the panel itself stays a quiet raised surface. */
 const TONE_CLASS: Record<Tone, string> = {
-  ok: 'ring-ok/30 bg-ok/10',
-  warn: 'ring-warn/30 bg-warn/10',
-  danger: 'ring-danger/30 bg-danger/10',
-  info: 'ring-info/30 bg-info/10',
-  idle: 'ring-border bg-surface-2',
-}
-
-const TITLE_CLASS: Record<Tone, string> = {
-  ok: 'text-ok',
-  warn: 'text-warn',
-  danger: 'text-danger',
-  info: 'text-info',
-  idle: 'text-ink',
+  ok: 'border-l-ok',
+  warn: 'border-l-warn',
+  danger: 'border-l-danger',
+  info: 'border-l-info',
+  idle: 'border-l-idle',
 }
 
 /** Stacked toasts beyond this collapse from the oldest: a bulk operation that
  *  fails N times must not wallpaper the screen. */
-const MAX_TOASTS = 5
+const MAX_TOASTS = 4
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -65,7 +59,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={api}>
       {children}
       <div
-        className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2"
+        className="pointer-events-none fixed right-[18px] bottom-[18px] z-[80] flex w-[300px] max-w-[calc(100vw-2rem)] flex-col gap-2"
         role="status"
         aria-live="polite"
       >
@@ -75,12 +69,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             // A failed delete must interrupt a screen reader; a success no.
             role={t.tone === 'danger' ? 'alert' : undefined}
             className={clsx(
-              'animate-in pointer-events-auto rounded-lg px-3 py-2.5 shadow-xl ring-1 backdrop-blur',
+              'animate-in pointer-events-auto border border-border-strong border-l-2 bg-raised px-3 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,.6)]',
               TONE_CLASS[t.tone],
             )}
           >
             <div className="flex items-start gap-2">
-              <p className={clsx('flex-1 text-sm font-medium', TITLE_CLASS[t.tone])}>{t.title}</p>
+              <p className="flex-1 text-[13px] font-medium text-ink">{t.title}</p>
               <button
                 onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
                 className="text-ink-faint hover:text-ink"

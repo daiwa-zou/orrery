@@ -14,6 +14,7 @@ import {
   Age,
   Badge,
   Button,
+  Corners,
   ErrorState,
   Field,
   GatedButton,
@@ -110,26 +111,27 @@ function ContainerSection({
   if (rows.length === 0) return null
 
   return (
-    <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
-      <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">
+    <section className="blueprint bg-surface p-3.5">
+      <Corners />
+      <h2 className="mb-1.5 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
         Containers
       </h2>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-[12.5px]">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-ink-faint uppercase">
-              <th className="py-1.5 pr-3 font-medium">Name</th>
-              <th className="py-1.5 pr-3 font-medium">State</th>
-              <th className="py-1.5 pr-3 text-right font-medium">Ready</th>
-              <th className="py-1.5 pr-3 text-right font-medium">Restarts</th>
-              <th className="py-1.5 pr-3 font-medium">Last exit</th>
-              <th className="py-1.5 pr-3 font-medium">Image</th>
-              <th className="py-1.5 font-medium" />
+            <tr className="border-b border-border text-left text-[11px] tracking-[.08em] text-ink-faint uppercase">
+              <th className="py-1.5 pr-3 font-semibold">Name</th>
+              <th className="py-1.5 pr-3 font-semibold">State</th>
+              <th className="py-1.5 pr-3 text-right font-semibold">Ready</th>
+              <th className="py-1.5 pr-3 text-right font-semibold">Restarts</th>
+              <th className="py-1.5 pr-3 font-semibold">Last exit</th>
+              <th className="py-1.5 pr-3 font-semibold">Image</th>
+              <th className="py-1.5 font-semibold" />
             </tr>
           </thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={`${c.init}-${c.name}`} className="border-b border-border/50">
+              <tr key={`${c.init}-${c.name}`} className="border-b border-ink/8">
                 <td className="py-1.5 pr-3 font-medium text-ink">
                   {c.name}
                   {c.init && (
@@ -146,15 +148,15 @@ function ContainerSection({
                     <span className="text-ink-faint">no</span>
                   )}
                 </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">
-                  <span className={c.restarts > 0 ? 'font-medium text-warn' : undefined}>
+                <td className="py-1.5 pr-3 text-right font-mono tabular-nums">
+                  <span className={c.restarts > 0 ? 'font-semibold text-warn' : undefined}>
                     {c.restarts}
                   </span>
                 </td>
-                <td className="py-1.5 pr-3 font-mono text-xs text-ink-muted">
+                <td className="py-1.5 pr-3 font-mono text-[11.5px] whitespace-nowrap text-ink-muted">
                   {c.lastExit ?? '—'}
                 </td>
-                <td className="max-w-[18rem] truncate py-1.5 pr-3 font-mono text-xs text-ink-muted" title={c.image}>
+                <td className="max-w-[18rem] truncate py-1.5 pr-3 font-mono text-[11.5px] text-ink-muted" title={c.image}>
                   {c.image}
                 </td>
                 <td className="py-1.5 text-right">
@@ -197,7 +199,7 @@ function TabButton({
         onClick={onClick}
         disabled={disabled}
         className={clsx(
-          'border-b-2 px-3 py-2 text-sm transition-colors',
+          'border-b-2 px-3 py-[7px] text-[13.5px] transition-colors',
           disabled && 'cursor-not-allowed opacity-40',
           active
             ? 'border-accent text-ink'
@@ -455,11 +457,13 @@ function ResourceDetailInner() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-base font-semibold text-ink">{obj.metadata.name}</h1>
+              <h1 className="max-w-[560px] truncate font-condensed text-lg font-semibold text-ink">
+                {obj.metadata.name}
+              </h1>
               {phase && <StatusBadge value={phase} />}
               {obj.metadata.deletionTimestamp && <Badge tone="warn">terminating</Badge>}
             </div>
-            <p className="mt-0.5 font-mono text-xs text-ink-faint">
+            <p className="mt-0.5 font-mono text-[11.5px] text-ink-faint">
               {obj.apiVersion} · {obj.kind}
               {ns && ` · ${ns}`}
             </p>
@@ -618,9 +622,10 @@ function ResourceDetailInner() {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === 'overview' && (
-          <div className="mx-auto max-w-5xl space-y-4 p-4">
-            <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
-              <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">
+          <div className="mx-auto max-w-[980px] space-y-4 p-4">
+            <section className="blueprint bg-surface p-3.5">
+              <Corners />
+              <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
                 Metadata
               </h2>
               <dl>
@@ -653,7 +658,11 @@ function ResourceDetailInner() {
                   <Field label="Controlled by">
                     <div className="flex flex-wrap gap-2">
                       {owners.map((o) => (
-                        <Link key={o.uid} to={ownerHref(cluster!, o, ns)} className="text-accent hover:underline">
+                        <Link
+                          key={o.uid}
+                          to={ownerHref(cluster!, o, ns)}
+                          className="text-accent-text hover:text-accent-text-hover hover:underline"
+                        >
                           {o.kind}/{o.name}
                         </Link>
                       ))}
@@ -713,7 +722,8 @@ function ResourceDetailInner() {
                 <Spinner /> Loading events
               </div>
             ) : (
-              <div className="rounded-lg bg-surface ring-1 ring-border">
+              <div className="blueprint bg-surface">
+                <Corners />
                 <DataTable
                   columns={events.data?.columns ?? []}
                   rows={events.data?.items ?? []}
@@ -732,6 +742,11 @@ function ResourceDetailInner() {
             pod={name!}
             containers={containers}
             initialContainer={logContainer}
+            lastExits={Object.fromEntries(
+              containerRows(obj)
+                .filter((c) => c.lastExit)
+                .map((c) => [c.name, c.lastExit!]),
+            )}
           />
         )}
 
@@ -828,23 +843,26 @@ function StatusSection({ status }: { status?: Record<string, unknown> }) {
   const rest = Object.fromEntries(Object.entries(status).filter(([k]) => k !== 'conditions'))
 
   return (
-    <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
-      <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">Status</h2>
+    <section className="blueprint bg-surface p-3.5">
+      <Corners />
+      <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
+        Status
+      </h2>
 
       {conditions.length > 0 && (
-        <table className="mb-4 w-full text-sm">
+        <table className="mb-4 w-full text-[12.5px]">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-ink-faint uppercase">
-              <th className="py-1.5 pr-3 font-medium">Condition</th>
-              <th className="py-1.5 pr-3 font-medium">Status</th>
-              <th className="py-1.5 pr-3 font-medium">Reason</th>
-              <th className="py-1.5 font-medium">Message</th>
+            <tr className="border-b border-border text-left text-[11px] tracking-[.08em] text-ink-faint uppercase">
+              <th className="py-1.5 pr-3 font-semibold">Condition</th>
+              <th className="py-1.5 pr-3 font-semibold">Status</th>
+              <th className="py-1.5 pr-3 font-semibold">Reason</th>
+              <th className="py-1.5 font-semibold">Message</th>
             </tr>
           </thead>
           <tbody>
             {conditions.map((c, i) => (
-              <tr key={`${c.type}-${i}`} className="border-b border-border/50">
-                <td className="py-1.5 pr-3 text-ink">{c.type}</td>
+              <tr key={`${c.type}-${i}`} className="border-b border-ink/8">
+                <td className="py-1.5 pr-3 whitespace-nowrap text-ink">{c.type}</td>
                 <td className="py-1.5 pr-3">
                   <Badge
                     tone={c.status === 'True' ? 'ok' : c.status === 'False' ? 'danger' : 'idle'}
@@ -861,7 +879,7 @@ function StatusSection({ status }: { status?: Record<string, unknown> }) {
       )}
 
       {Object.keys(rest).length > 0 && (
-        <pre className="max-h-80 overflow-auto rounded bg-canvas p-3 font-mono text-xs text-ink-muted">
+        <pre className="max-h-80 overflow-auto bg-code p-3 font-mono text-xs text-ink-muted">
           {JSON.stringify(rest, null, 2)}
         </pre>
       )}
@@ -1018,20 +1036,20 @@ function TaintsButton({
             onChange={(e) => setKey(e.target.value)}
             placeholder="key"
             aria-label="Taint key"
-            className="w-40 rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+            className="w-40 bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
           />
           <input
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder="value (optional)"
             aria-label="Taint value"
-            className="w-36 rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+            className="w-36 bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
           />
           <select
             value={effect}
             onChange={(e) => setEffect(e.target.value)}
             aria-label="Taint effect"
-            className="rounded bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
+            className="bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
           >
             <option>NoSchedule</option>
             <option>PreferNoSchedule</option>
@@ -1096,8 +1114,9 @@ function ProxySection({
   const ptype = kind === 'Service' ? 'services' : 'pods'
 
   return (
-    <section className="rounded-lg bg-surface p-4 ring-1 ring-border">
-      <h2 className="mb-2 text-xs font-semibold tracking-wide text-ink-faint uppercase">
+    <section className="blueprint bg-surface p-3.5">
+      <Corners />
+      <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
         HTTP proxy
       </h2>
       <p className="mb-2 text-xs text-ink-muted">
@@ -1112,7 +1131,7 @@ function ProxySection({
               href={proxyURL(cluster, namespace, ptype, name, p.port)}
               target="_blank"
               rel="noreferrer"
-              className="rounded bg-surface-2 px-2 py-1 font-mono text-xs text-accent ring-1 ring-border hover:bg-border/50"
+              className="bg-canvas px-2 py-1 font-mono text-xs text-accent-text ring-1 ring-border hover:text-accent-text-hover hover:ring-border-strong"
             >
               {p.label} ↗
             </a>
@@ -1120,7 +1139,7 @@ function ProxySection({
             <span
               key={`${p.label}-${p.port}`}
               title={`Requires get on ${ptype}/proxy`}
-              className="cursor-not-allowed rounded bg-surface-2 px-2 py-1 font-mono text-xs text-ink-faint opacity-40 ring-1 ring-border"
+              className="cursor-not-allowed bg-canvas px-2 py-1 font-mono text-xs text-ink-faint opacity-40 ring-1 ring-border"
             >
               {p.label} ↗
             </span>
