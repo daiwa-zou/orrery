@@ -148,7 +148,11 @@ Orrery itself speaks plain HTTP inside the cluster and marks its cookies
 ## Security posture
 
 Read [the RBAC template](../deploy/helm/orrery/templates/rbac.yaml) before
-installing — the grants are commented and deliberate. The short version: the
+installing — the grants are commented and deliberate. It covers only the
+cluster Orrery runs in; every remote cluster needs its own credential, and
+[deploy/remote-cluster](../deploy/remote-cluster/) has ready-made manifests for
+both auth modes plus a `preflight.sh` that verifies one before you register it.
+The short version: the
 dashboard's service account can read broadly (to fill shared caches; per-user
 reads are gated by SubjectAccessReview above the cache) and can **impersonate
 any user or group**. Treat the pod accordingly:

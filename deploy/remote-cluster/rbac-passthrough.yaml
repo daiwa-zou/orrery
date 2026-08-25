@@ -1,0 +1,107 @@
+# Grants for a remote cluster registered in `passthrough` mode.
+#
+# Apply this to each cluster the hub manages, then put the resulting token in
+# the kubeconfig the hub mounts. The Helm chart's rbac.yaml covers only the
+# cluster Orrery runs in; this is its counterpart for the others.
+#
+#   kubectl --context <remote> apply -f rbac-passthrough.yaml
+#
+# What this credential is for, and what it deliberately cannot do:
+#
+# In passthrough mode the end user's own OIDC ID token is the bearer token for
+# every read of a single object, every write, exec, log stream and access
+# review — so those need no grant here; they are governed by that user's own
+# RBAC on this cluster. This service account exists only to fill the shared
+# informer caches and read discovery, which is what makes list views cheap
+# regardless of how many people are looking.
+#
+# It therefore has NO `impersonate` and NO `subjectaccessreviews` grant. Access
+# reviews in passthrough mode are SelfSubjectAccessReviews created with the
+# user's credential, which every authenticated user may already create via the
+# built-in system:basic-user role. Compare rbac-impersonation.yaml, which needs
+# both — the whole point of choosing passthrough is that this token cannot act
+# as anyone else.
+#
+# What it can still do is read every object in the cluster, so treat it as a
+# fleet-wide read credential: it is long-lived, it does not expire on its own,
+# and it should be rotated like any other. Secret *values* are stripped before
+# anything enters the cache and are refetched under the viewer's own identity
+# when a secret is opened, so this token's reach over secrets ends at the
+# names and sizes the list view shows.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orrery
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orrery-remote
+  namespace: orrery
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orrery-remote-passthrough
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+rules:
+  # Populate the shared caches. Deliberately broad: the dashboard cannot know
+  # in advance which resources people will look at, and every user-facing read
+  # is gated by an access review made as that user before any cached object is
+  # served.
+  - apiGroups: ['*']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+
+  # Discovery, health probing and `explain`. The default system:discovery and
+  # system:public-info-viewer bindings already grant these to every
+  # authenticated identity; they are repeated here so a hardened cluster that
+  # removes those bindings does not silently break the fleet health column and
+  # the schema browser.
+  - nonResourceURLs:
+      - /api
+      - /api/*
+      - /apis
+      - /apis/*
+      - /version
+      - /readyz
+      - /openapi/v3
+      - /openapi/v3/*
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orrery-remote-passthrough
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orrery-remote-passthrough
+subjects:
+  - kind: ServiceAccount
+    name: orrery-remote
+    namespace: orrery
+---
+# A non-expiring token for the kubeconfig the hub mounts. Bound tokens from
+# `kubectl create token` expire, and a hub that has to be redeployed to keep
+# its credentials working is a hub that will be down at the wrong moment.
+#
+# The trade is that this token is valid until the Secret is deleted, so rotate
+# it deliberately: delete this Secret, let the controller mint a new one, and
+# update the kubeconfig.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orrery-remote-token
+  namespace: orrery
+  annotations:
+    kubernetes.io/service-account.name: orrery-remote
+type: kubernetes.io/service-account-token

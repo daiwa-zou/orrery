@@ -1,0 +1,111 @@
+# Grants for a remote cluster registered in `impersonation` mode.
+#
+# Apply this to each cluster the hub manages, then put the resulting token in
+# the kubeconfig the hub mounts. The Helm chart's rbac.yaml covers only the
+# cluster Orrery runs in; this is its counterpart for the others.
+#
+#   kubectl --context <remote> apply -f rbac-impersonation.yaml
+#
+# Two grants live here beyond the cache-filling reads, and both are powerful:
+#
+#  1. `subjectaccessreviews` — the dashboard asks this cluster "may this user
+#     read pods in that namespace?" before serving anything from a shared
+#     cache. Without it there is no way to answer, and reads would have to
+#     either guess or show nothing.
+#
+#  2. `impersonate` on users, groups and service accounts — every write, exec,
+#     log read and single-object get is made as the signed-in user, so the API
+#     server applies their RBAC and the audit log records their name rather
+#     than this service account's.
+#
+# The second grant means anyone who can use this token can act as any identity
+# on this cluster, including cluster-admin. That is the cost of impersonation
+# and the reason it buys so much: no cluster needs to know about your identity
+# provider. If you would rather not hand the hub that power, register this
+# cluster in `passthrough` mode and apply rbac-passthrough.yaml instead — the
+# same file minus these two rules — at the price of configuring this API
+# server to trust your OIDC issuer directly.
+#
+# Either way, restrict who can exec into or read secrets in the hub's
+# namespace as tightly as you restrict cluster-admin here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orrery
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orrery-remote
+  namespace: orrery
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orrery-remote-impersonation
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+rules:
+  # Populate the shared caches. Deliberately broad, and gated per user above
+  # this layer by the access review below.
+  - apiGroups: ['*']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+
+  # Decide what each end user may see.
+  - apiGroups: ['authorization.k8s.io']
+    resources: ['subjectaccessreviews']
+    verbs: ['create']
+
+  # Act as the signed-in user.
+  - apiGroups: ['']
+    resources: ['users', 'groups', 'serviceaccounts']
+    verbs: ['impersonate']
+  - apiGroups: ['authentication.k8s.io']
+    resources: ['userextras/scopes', 'userextras/oid']
+    verbs: ['impersonate']
+
+  # Discovery, health probing and `explain`. Normally covered by the default
+  # system:discovery / system:public-info-viewer bindings; explicit so a
+  # hardened cluster that removes them does not break the fleet health column.
+  - nonResourceURLs:
+      - /api
+      - /api/*
+      - /apis
+      - /apis/*
+      - /version
+      - /readyz
+      - /openapi/v3
+      - /openapi/v3/*
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orrery-remote-impersonation
+  labels:
+    app.kubernetes.io/name: orrery
+    app.kubernetes.io/component: remote-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orrery-remote-impersonation
+subjects:
+  - kind: ServiceAccount
+    name: orrery-remote
+    namespace: orrery
+---
+# A non-expiring token for the kubeconfig the hub mounts; see the note in
+# rbac-passthrough.yaml about rotating it deliberately.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orrery-remote-token
+  namespace: orrery
+  annotations:
+    kubernetes.io/service-account.name: orrery-remote
+type: kubernetes.io/service-account-token

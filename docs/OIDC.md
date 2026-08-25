@@ -263,6 +263,16 @@ Keep these four mapping flags identical to Orrery's `usernameClaim` /
 requires `offlineAccess` in practice: the ID token must stay fresh for as long
 as the user keeps the dashboard open.
 
+Getting this wrong is quiet rather than loud: health is probed with the
+dashboard's own credential, so a cluster whose audience or prefixes disagree
+still shows **healthy** in the fleet view while every user sees permission
+denied on it. [`deploy/remote-cluster/preflight.sh`](../deploy/remote-cluster/preflight.sh)
+takes an ID token, confirms the API server accepts it, and prints the username
+and groups that server derives — run it against each cluster before
+registering it. The reduced grants a passthrough cluster needs are in
+[`rbac-passthrough.yaml`](../deploy/remote-cluster/rbac-passthrough.yaml)
+alongside it.
+
 ## Troubleshooting
 
 **`oidc discovery for <issuer>: ...` at startup.** The issuer URL is wrong,
