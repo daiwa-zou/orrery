@@ -30,13 +30,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: go vet
-        working-directory: backend
         run: go vet ./...
       - name: go test
-        working-directory: backend
         env:
           # Points the Redis session-store tests at the service container;
           # without it they skip.
@@ -44,7 +42,6 @@ jobs:
         run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
       - name: Coverage total
         id: coverage
-        working-directory: backend
         run: |
           percent=$(go tool cover -func=coverage.out | awk '/^total:/ { sub(/%/, "", $3); print $3 }')
           echo "total statement coverage: ${percent}%"
@@ -139,7 +136,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: backend/Dockerfile
+          file: Dockerfile
           push: false
           # Loads the image into the local daemon so Trivy can scan exactly
           # what a release build would ship.
@@ -163,12 +160,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       # Call-graph aware: only reports vulnerabilities in code paths the
       # backend actually reaches, so a failure here is worth acting on.
       - name: govulncheck
-        working-directory: backend
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...

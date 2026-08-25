@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 240" width="820" height="240"
+     role="img" aria-label="Orrery — multi-cluster Kubernetes console">
+  <title>Orrery — multi-cluster Kubernetes console</title>
+
+  <!-- Palette and type lifted from web/src/index.css so the banner and the
+       console read as one system: canvas #14181e, accent #5980a6,
+       accent-text #94bce3, ink #e7eaee, ink-muted #a7afba.
+
+       The wordmark is drawn as geometry rather than set in Barlow Condensed:
+       a logo has to render identically for everyone, and the webfont is not
+       installed on the machines that read a README. Monoline condensed caps
+       (cap height 100, stroke 13, letter box 46, pitch 76) pair with the
+       monoline orbits of the mark. Every glyph is inlined rather than reused
+       through <use>, which keeps the file correct when it is rendered as an
+       <img> rather than as a document. -->
+
+  <defs>
+    <clipPath id="orrery-frame">
+      <rect x="1" y="1" width="818" height="238" rx="16"/>
+    </clipPath>
+  </defs>
+
+  <rect x="1" y="1" width="818" height="238" rx="16" fill="#14181e"/>
+
+  <!-- Decorative orbits: the console's own metaphor, many bodies tracked from
+       one centre. Faint, so the mark and wordmark carry the composition.
+       Clipped to the plate so the wider rings do not spill past its corners. -->
+  <g clip-path="url(#orrery-frame)" fill="none" stroke="#94bce3" stroke-opacity=".07">
+    <circle cx="128" cy="120" r="120"/>
+    <circle cx="128" cy="120" r="190"/>
+    <circle cx="128" cy="120" r="280"/>
+    <circle cx="128" cy="120" r="400"/>
+  </g>
+
+  <!-- The Orrery mark, proportions preserved from LogoMark (large variant)
+       in web/src/components/Logo.tsx, scaled 36 -> 90 units. -->
+  <g transform="translate(128 120) scale(3)">
+    <circle cx="0" cy="0" r="15" fill="none" stroke="#5980a6" stroke-width="1.4"/>
+    <circle cx="0" cy="0" r="9.5" fill="none" stroke="#94bce3" stroke-opacity=".5"
+            stroke-width="1" stroke-dasharray="3 3"/>
+    <circle cx="0" cy="0" r="2.6" fill="#94bce3"/>
+    <circle cx="9.5" cy="0" r="1.8" fill="#5980a6"/>
+  </g>
+
+  <!-- O R R E R Y -->
+  <g transform="translate(262 52) scale(0.86)" fill="none" stroke="#e7eaee"
+     stroke-width="13" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="4">
+    <rect x="6.5" y="6.5" width="33" height="87" rx="16.5" ry="22"/>
+
+    <path d="M82.5 93.5 V6.5 H102 A13.5 19.75 0 0 1 102 46 H82.5"/>
+    <path d="M98 46 L115.5 93.5"/>
+
+    <path d="M158.5 93.5 V6.5 H178 A13.5 19.75 0 0 1 178 46 H158.5"/>
+    <path d="M174 46 L191.5 93.5"/>
+
+    <path d="M274 6.5 H234.5 V93.5 H274"/>
+    <path d="M234.5 50 H266"/>
+
+    <path d="M310.5 93.5 V6.5 H330 A13.5 19.75 0 0 1 330 46 H310.5"/>
+    <path d="M326 46 L343.5 93.5"/>
+
+    <path d="M386.5 6.5 L403 42 L419.5 6.5"/>
+    <path d="M403 42 V93.5"/>
+  </g>
+
+  <!-- textLength pins the tagline to the wordmark's exact width, so it lands
+       identically whatever face the viewer's machine substitutes. -->
+  <text x="264" y="170" font-family="'Barlow Condensed','Oswald','Arial Narrow',sans-serif"
+        font-size="15" fill="#a7afba" textLength="364" lengthAdjust="spacingAndGlyphs"
+        >MULTI-CLUSTER KUBERNETES CONSOLE</text>
+
+  <!-- Accent rule, matching the active-row rules in the console chrome. -->
+  <rect x="264" y="186" width="110" height="2" fill="#5980a6"/>
+
+  <rect x="1" y="1" width="818" height="238" rx="16" fill="none" stroke="#e7eaee" stroke-opacity=".12"/>
+</svg>

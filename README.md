@@ -1,8 +1,16 @@
-# Orrery
+<p align="center">
+  <img src="docs/assets/orrery-banner.svg" width="720"
+       alt="Orrery — multi-cluster Kubernetes console">
+</p>
 
-[![CI](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml)
-[![Release image](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdaiwa-zou%2Forrery%2Fbadges%2Fcoverage.json)](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml)
+<p align="center">
+  <a href="https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml"><img
+     src="https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml"><img
+     src="https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml/badge.svg" alt="Release image"></a>
+  <a href="https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml"><img
+     src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdaiwa-zou%2Forrery%2Fbadges%2Fcoverage.json" alt="Coverage"></a>
+</p>
 
 A multi-cluster Kubernetes dashboard with OIDC sign-in.
 
@@ -111,7 +119,7 @@ unpack, and point it at a config:
 reports what you got. Set `server.webRoot` only to override the embedded UI
 with a build from disk.
 
-To hack on it instead, you need Go 1.25+, Node 22+ and a cluster. With `kind`:
+To hack on it instead, you need Go 1.26+, Node 22+ and a cluster. With `kind`:
 
 ```bash
 kind create cluster --name lens-a
@@ -120,11 +128,11 @@ kind create cluster --name lens-a
 Point the backend at it and start both halves:
 
 ```bash
-cd backend && go run ./cmd/orrery -config ../orrery.dev.yaml
+make run
 ```
 
 ```bash
-cd web && npm install && npm run dev
+make web-dev
 ```
 
 The dev config registers `kind-lens-a` in `serviceaccount` mode with OIDC off,
@@ -137,7 +145,7 @@ each context becomes a registered cluster.
 
 ### Trying the OIDC flow
 
-`orrery.oidc.yaml` is wired to a local [Dex](https://dexidp.io):
+`configs/orrery.oidc.yaml` is wired to a local [Dex](https://dexidp.io):
 
 ```bash
 docker run -d --name orrery-dex -p 5556:5556 \
@@ -292,13 +300,52 @@ size and subscriber counts per cluster and resource.
 many objects each holds, and how long they have been idle. It is the first
 place to look when memory use surprises you.
 
+## Project layout
+
+One Go module at the repository root, laid out the way Go projects usually
+are — so `go build ./cmd/orrery`, `go test ./...` and
+`go install github.com/daiwa-zou/orrery/cmd/orrery@latest` all work without
+a `cd` first:
+
+```
+cmd/orrery/        the server entry point — flags, logging, signal handling
+internal/api/      HTTP and WebSocket handlers; one generic resource path
+internal/auth/     OIDC, sessions, CSRF, and the session stores
+internal/authz/    SubjectAccessReview and its short-lived verdict cache
+internal/cluster/  per-cluster clients, informer caches, discovery
+internal/config/   configuration loading, defaults, environment expansion
+internal/server/   wiring: listeners, middleware, graceful shutdown
+internal/webfs/    optional embedded copy of the built SPA (bundleweb tag)
+web/               the Vite + React single-page app
+configs/           sample configurations for local runs
+deploy/            Helm chart, dev Dex, remote-cluster RBAC manifests
+docs/              architecture, deployment and OIDC guides; brand assets
+```
+
+Everything importable lives under `internal/`, so there is no public API
+surface to keep stable, and `cmd/orrery` is the only binary. The `Dockerfile`
+sits at the root because the image needs both halves — it builds the SPA and
+the Go binary in separate stages and ships only the results.
+
 ## Development
 
+`make help` lists every target. The ones worth knowing:
+
 ```bash
-cd backend && go test ./... -race     # backend
-cd web && npx tsc -b                  # frontend types
-cd web && npm test                    # frontend unit tests
-cd web && npm run build               # production bundle
+make run          # server against configs/orrery.dev.yaml
+make web-dev      # Vite dev server on :5173
+make test         # go test ./... -race
+make check        # everything CI gates on, in one command
+make bundle       # self-contained binary with the UI embedded
+```
+
+They are thin wrappers over the underlying commands, which work directly:
+
+```bash
+go test ./... -race            # backend
+cd web && npx tsc -b           # frontend types
+cd web && npm test             # frontend unit tests
+cd web && npm run build        # production bundle
 ```
 
 `tsc -b`, not `tsc --noEmit`: `tsconfig.json` uses project references with an
@@ -324,7 +371,37 @@ dependency review on pull requests. The whole suite re-runs weekly, because
 CVE databases move even when the code does not. The coverage badge above is
 the backend's total statement coverage, recomputed on every push to `main`.
 
-Further reading:
+## Brand
+
+The mark is an orrery — concentric orbits with a body riding the inner ring —
+drawn monoline so it holds together from a favicon to a banner. It is defined
+once for the console in
+[`web/src/components/Logo.tsx`](web/src/components/Logo.tsx) and mirrored as
+static assets for everything outside it:
+
+| Asset | Use |
+| --- | --- |
+| [`docs/assets/orrery-mark.svg`](docs/assets/orrery-mark.svg) | The mark alone — favicon, Helm chart icon, avatars |
+| [`docs/assets/orrery-banner.svg`](docs/assets/orrery-banner.svg) | Mark, wordmark and tagline on the console's own ground |
+
+The palette is the console's, defined as custom properties in
+[`web/src/index.css`](web/src/index.css):
+
+| Token | Value | Role |
+| --- | --- | --- |
+| `--color-canvas` | `#14181e` | Page ground |
+| `--color-surface` | `#1a2028` | Sidebar, headers, cards |
+| `--color-accent` | `#5980a6` | Fills, bars, active rules |
+| `--color-accent-text` | `#94bce3` | Links and active text |
+| `--color-ink` | `#e7eaee` | Primary text |
+| `--color-ink-muted` | `#a7afba` | Secondary text |
+
+Display type is Barlow Condensed, body text Barlow. The banner's wordmark is
+drawn as geometry rather than set in the webfont, so it renders identically
+wherever the README is read — including on machines that have neither font
+installed.
+
+## Further reading
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the caching and authorization
   design, including the parts deliberately made slower or more conservative in

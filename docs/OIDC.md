@@ -141,7 +141,7 @@ every case. Local development uses `http://localhost:5173/api/v1/auth/callback`
 ### Dex (local development)
 
 The repo ships a working setup — see [Trying the OIDC flow](../README.md#trying-the-oidc-flow)
-in the README, `deploy/dev/dex.yaml` and `orrery.oidc.yaml`. Dex is also a
+in the README, `deploy/dev/dex.yaml` and `configs/orrery.oidc.yaml`. Dex is also a
 good production choice as a *federating* layer when your upstream is LDAP,
 SAML or GitHub: point Orrery (and your API servers) at Dex, and Dex at the
 upstream.
