@@ -63,6 +63,9 @@ type errorBody struct {
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// Responses are per-user (authorization-gated) and can contain live secret
+	// values; nothing on this surface may land in a browser or proxy cache.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		// The status line is already written; all that is left is a log line.

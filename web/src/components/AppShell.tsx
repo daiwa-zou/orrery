@@ -370,8 +370,14 @@ export function UserMenu() {
   const label = data.user.name || data.user.email || data.user.username
 
   const signOut = async () => {
-    const res = await api.logout()
-    window.location.href = res.endSessionURL ?? '/login'
+    try {
+      const res = await api.logout()
+      window.location.href = res.endSessionURL ?? '/login'
+    } catch {
+      // The server-side session may or may not have been destroyed; either
+      // way the only useful place to send the user is the login page.
+      window.location.href = '/login'
+    }
   }
 
   return (

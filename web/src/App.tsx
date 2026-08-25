@@ -4,6 +4,7 @@ import {
   Route,
   BrowserRouter as Router,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from 'react-router-dom'
@@ -87,6 +88,10 @@ function Home() {
 /** Ensures a session exists before rendering anything that needs one. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { data, isLoading, error } = useMe()
+  const location = useLocation()
+  // Preserve the deep link, exactly like the 401 handlers in client.ts and
+  // the query cache do — signing in should land you where you were headed.
+  const login = `/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`
 
   if (isLoading) {
     return (
@@ -96,10 +101,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     )
   }
   if (error instanceof ApiError && error.isAuth) {
-    return <Navigate to="/login" replace />
+    return <Navigate to={login} replace />
   }
   if (error) return <ErrorState error={error} />
-  if (!data?.authenticated) return <Navigate to="/login" replace />
+  if (!data?.authenticated) return <Navigate to={login} replace />
 
   return <>{children}</>
 }

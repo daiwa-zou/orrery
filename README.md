@@ -1,5 +1,8 @@
 # Orrery
 
+[![CI](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml)
+[![Release image](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml)
+
 A multi-cluster Kubernetes dashboard with OIDC sign-in.
 
 One console for every cluster you run. Sign in with your own identity provider;
@@ -13,6 +16,22 @@ not by the dashboard.
 └──────────────┘  cookie     └───────────────┘   shared caches   │ cluster …  │
                                                                  └────────────┘
 ```
+
+![Live pod list with computed status and per-pod CPU/memory](docs/screenshots/pods.png)
+
+<details>
+<summary>More screenshots — fleet overview and the debugging walk</summary>
+
+The fleet page: every registered cluster, probed live, side by side.
+
+![Fleet overview](docs/screenshots/fleet.png)
+
+A broken pod's page: containers with state and last exit code, conditions with
+reasons, owner references linked upward, logs one click away.
+
+![Pod detail during an ImagePullBackOff](docs/screenshots/pod-detail.png)
+
+</details>
 
 ## What it does
 
@@ -119,7 +138,30 @@ kubectl create clusterrolebinding demo-view \
   --clusterrole=view --group='oidc:authors'
 ```
 
+A full walkthrough of the flow, claim mapping, per-provider setup (Dex,
+Keycloak, Entra ID, Okta, Google) and troubleshooting lives in
+[docs/OIDC.md](docs/OIDC.md).
+
+## Using it
+
+- **One search bar does everything.** Bare words are free text against name,
+  namespace and labels; `app=web`, `tier!=cache`, `!deprecated`,
+  `key in (a,b)` are label terms; dotted keys like `status.phase=Running` are
+  field terms. Autocomplete is fed by the facets of what you may actually see.
+- **`⌘K` opens search from anywhere; `?` shows every shortcut.**
+- **Lists are live** — the `live` badge means rows update over a WebSocket.
+  Click a label chip to filter by it; column headers sort server-side.
+- **Actions live on the row and the detail page.** Anything you lack
+  permission for is dimmed with a tooltip saying so, not hidden and not a
+  surprise 403.
+- **The debugging walk is linked end to end:** warning event → object →
+  container row → that container's logs (`previous` included) → terminal,
+  without leaving the page's context.
+
 ## Deploying it
+
+Full guide — topologies, scaling behaviour, security posture, upgrades —
+in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The short version:
 
 ```bash
 kubectl create secret generic orrery-session \
@@ -132,6 +174,11 @@ helm install orrery ./deploy/helm/orrery \
   --set oidc.issuer=https://accounts.example.com \
   --set oidc.clientID=orrery
 ```
+
+Container images are published by CI to
+`ghcr.io/daiwa-zou/orrery` (multi-arch, distroless, nonroot) on every push
+to `main` and on `v*` tags; the chart's default `session.store: redis`
+expects a Redis you provide (see the deployment guide).
 
 Three things bite people here:
 
@@ -248,6 +295,17 @@ docker run -d -p 6379:6379 redis:7-alpine
 ORRERY_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race
 ```
 
-`docs/ARCHITECTURE.md` explains the caching and authorization design in more
-detail, including the parts that were deliberately made slower or more
-conservative in exchange for being correct.
+CI runs all of the above (with a Redis service for the session-store tests),
+lints the Helm chart, and builds the container image on every pull request;
+pushes to `main` and `v*` tags publish the image to GHCR — see
+[.github/workflows](.github/workflows).
+
+Further reading:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the caching and authorization
+  design, including the parts deliberately made slower or more conservative in
+  exchange for being correct.
+- [docs/OIDC.md](docs/OIDC.md) — identity provider setup, claim mapping, and
+  troubleshooting.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production topologies, scaling
+  behaviour, and security posture.

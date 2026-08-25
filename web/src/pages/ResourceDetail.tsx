@@ -179,6 +179,19 @@ function containerNames(obj?: KubeObject): string[] {
   return [...(spec?.initContainers ?? []), ...(spec?.containers ?? [])].map((c) => c.name)
 }
 
+// The container a fresh Logs or Terminal tab opens in: the
+// kubectl.kubernetes.io/default-container annotation when it names a real
+// container, else the first app container — never an init container (whose
+// stream is usually long-finished silence) and never a trailing sidecar.
+function defaultContainer(obj?: KubeObject): string {
+  if (!obj) return ''
+  const spec = obj.spec as { containers?: { name: string }[] }
+  const names = (spec?.containers ?? []).map((c) => c.name)
+  const annotated = obj.metadata.annotations?.['kubectl.kubernetes.io/default-container']
+  if (annotated && names.includes(annotated)) return annotated
+  return names[0] ?? ''
+}
+
 function TabButton({
   active,
   onClick,
@@ -250,6 +263,7 @@ function ResourceDetailInner() {
 
   const [tab, setTab] = useState<Tab>('overview')
   const [scaleOpen, setScaleOpen] = useState(false)
+  const [scaleBusy, setScaleBusy] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [replicas, setReplicas] = useState(0)
   const [yamlDirty, setYamlDirty] = useState(false)
@@ -355,6 +369,7 @@ function ResourceDetailInner() {
   }
 
   const doScale = async () => {
+    setScaleBusy(true)
     try {
       await api.scale(cluster!, { group: ref.group, version: ref.version, resource: ref.resource, namespace: ns, name }, replicas)
       toast.push({ tone: 'ok', title: `Scaled ${name} to ${replicas}` })
@@ -362,6 +377,7 @@ function ResourceDetailInner() {
     } catch (e) {
       toast.push({ tone: 'danger', title: 'Scale failed', description: (e as Error).message })
     } finally {
+      setScaleBusy(false)
       setScaleOpen(false)
     }
   }
@@ -449,7 +465,20 @@ function ResourceDetailInner() {
   if (!obj) return null
 
   const status = obj.status as Record<string, unknown> | undefined
-  const phase = typeof status?.phase === 'string' ? status.phase : undefined
+  // For pods, mirror what the list column computes server-side: a container
+  // stuck waiting or terminated abnormally names the badge, so the header
+  // never says "Pending" while the container table says ImagePullBackOff.
+  let phase = typeof status?.phase === 'string' ? status.phase : undefined
+  if (isPod) {
+    const reason = typeof status?.reason === 'string' ? status.reason : undefined
+    phase = reason ?? phase
+    for (const c of containerRows(obj)) {
+      if (c.init) continue
+      if (c.state !== 'Running' && c.state !== 'Completed' && c.state !== 'Unknown') {
+        phase = c.state
+      }
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -741,7 +770,7 @@ function ResourceDetailInner() {
             namespace={ns!}
             pod={name!}
             containers={containers}
-            initialContainer={logContainer}
+            initialContainer={logContainer ?? defaultContainer(obj)}
             lastExits={Object.fromEntries(
               containerRows(obj)
                 .filter((c) => c.lastExit)
@@ -755,7 +784,7 @@ function ResourceDetailInner() {
             cluster={cluster!}
             namespace={ns!}
             pod={name!}
-            container={containers[containers.length - 1] ?? ''}
+            container={defaultContainer(obj)}
           />
         )}
       </div>
@@ -766,8 +795,10 @@ function ResourceDetailInner() {
         onClose={() => setScaleOpen(false)}
         footer={
           <>
-            <Button onClick={() => setScaleOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={doScale}>
+            <Button onClick={() => setScaleOpen(false)} disabled={scaleBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={doScale} disabled={scaleBusy}>
               Scale to {replicas}
             </Button>
           </>
@@ -1368,6 +1399,7 @@ function EvictButton({
       setOpen(false)
     } catch (e) {
       toast.push({ tone: 'danger', title: 'Eviction failed', description: (e as Error).message })
+    } finally {
       setBusy(false)
     }
   }
@@ -1509,7 +1541,11 @@ function DrainButton({
         {result && (
           <div className="mt-4 space-y-3 text-sm">
             {result.dryRun && <Badge tone="info">dry run — nothing was changed</Badge>}
-            <DrainList title="Would evict" items={result.evicted} tone="info" />
+            <DrainList
+              title={result.dryRun ? 'Would evict' : 'Evicted'}
+              items={result.evicted}
+              tone="info"
+            />
             <DrainList title="Skipped" items={result.skipped} tone="idle" />
             <DrainList title="Failed" items={result.failed} tone="danger" />
             {(result.notPermitted ?? 0) > 0 && (

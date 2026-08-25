@@ -336,3 +336,30 @@ func TestSelfSubjectReviewUsedForPassthrough(t *testing.T) {
 		t.Error("a Self subject must use SelfSubjectAccessReview")
 	}
 }
+
+func TestSelfVerdictsAreCachedPerIdentity(t *testing.T) {
+	// Two passthrough users ask the same question with different standing.
+	// Each carries their own client; the checker must not serve one user's
+	// cached verdict to the other.
+	allowAll, _ := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	denyAll, _ := fakeClient(func(*authzv1.ResourceAttributes) bool { return false })
+
+	c, _ := NewChecker(128, time.Minute, 50)
+	attrs := Attributes{Verb: "list", Resource: "secrets", Namespace: "prod"}
+
+	d, err := c.Allowed(context.Background(), allowAll, Subject{Self: true, SelfID: "alice"}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Allowed {
+		t.Fatal("alice should be allowed")
+	}
+
+	d, err = c.Allowed(context.Background(), denyAll, Subject{Self: true, SelfID: "bob"}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Allowed {
+		t.Error("bob received alice's cached verdict: Self subjects must be cached per identity")
+	}
+}

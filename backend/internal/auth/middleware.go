@@ -131,7 +131,9 @@ func OriginAllowed(origin, publicURL string, extra []string) bool {
 		return true
 	}
 	for _, e := range extra {
-		if e == "*" || strings.EqualFold(origin, e) {
+		// Exact origins only — "*" is rejected at config load, because the
+		// Origin check is what stands in for CSRF on streaming endpoints.
+		if strings.EqualFold(origin, e) {
 			return true
 		}
 	}

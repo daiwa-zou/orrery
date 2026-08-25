@@ -185,6 +185,10 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
       }
 
       socket.onmessage = (event) => {
+        // A message task can already be queued when cleanup runs; keyRef and
+        // setLive belong to the next list by then, so acting on it would poke
+        // the wrong query.
+        if (closed) return
         let msg: WatchMessage
         try {
           msg = JSON.parse(event.data)
@@ -241,8 +245,11 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
       window.clearTimeout(refetchTimer.current)
       window.clearTimeout(retryTimer)
       if (socket) {
-        // Detach before closing so the close event does not schedule a retry.
+        // Detach before closing so the close event does not schedule a retry
+        // and an already-queued message cannot touch the next list's state.
         socket.onclose = null
+        socket.onmessage = null
+        socket.onerror = null
         socket.close()
       }
     }

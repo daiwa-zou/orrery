@@ -44,11 +44,16 @@ type Subject struct {
 	// Self selects SelfSubjectAccessReview instead, for clusters where the
 	// client already carries the user's own credentials (passthrough mode).
 	Self bool
+	// SelfID discriminates cached Self verdicts between users. Without it every
+	// passthrough user shares one cache key and one user's allow is served to
+	// the next — a cross-user authorization bypass. Leave it empty only when
+	// every caller genuinely shares one identity (serviceaccount mode).
+	SelfID string
 }
 
 func (s Subject) key() string {
 	if s.Self {
-		return "self"
+		return "self\x1e" + s.SelfID
 	}
 	g := append([]string(nil), s.Groups...)
 	sort.Strings(g)

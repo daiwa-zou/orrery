@@ -36,15 +36,15 @@ type openAPIDoc struct {
 }
 
 type openAPISchema struct {
-	Type        string                    `json:"type"`
-	Description string                    `json:"description"`
-	Properties  map[string]*openAPISchema `json:"properties"`
-	Items       *openAPISchema            `json:"items"`
-	Required    []string                  `json:"required"`
-	Ref         string                    `json:"$ref"`
-	AllOf       []*openAPISchema          `json:"allOf"`
-	AdditionalProperties *openAPISchema   `json:"additionalProperties"`
-	GVKs        []struct {
+	Type                 string                    `json:"type"`
+	Description          string                    `json:"description"`
+	Properties           map[string]*openAPISchema `json:"properties"`
+	Items                *openAPISchema            `json:"items"`
+	Required             []string                  `json:"required"`
+	Ref                  string                    `json:"$ref"`
+	AllOf                []*openAPISchema          `json:"allOf"`
+	AdditionalProperties *openAPISchema            `json:"additionalProperties"`
+	GVKs                 []struct {
 		Group   string `json:"group"`
 		Version string `json:"version"`
 		Kind    string `json:"kind"`

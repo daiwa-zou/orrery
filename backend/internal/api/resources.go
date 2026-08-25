@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -343,36 +344,44 @@ func rowLess(rows []map[string]any, key string, desc bool) func(i, j int) bool {
 		key = "name"
 	}
 	return func(i, j int) bool {
-		a, b := compareCell(rows[i][key], rows[j][key])
-		if a == b {
+		c := compareCell(rows[i][key], rows[j][key])
+		if c == 0 {
 			// Ties break on name so paging is deterministic.
 			return fmt.Sprint(rows[i]["name"]) < fmt.Sprint(rows[j]["name"])
 		}
 		if desc {
-			return b < a
+			return c > 0
 		}
-		return a < b
+		return c < 0
 	}
 }
 
-// compareCell reduces two cells to comparable strings, keeping numbers in
-// numeric order by zero-padding rather than lexical order.
-func compareCell(x, y any) (string, string) {
+// compareCell orders two cells: numerically when both are numbers (zero-padded
+// strings would misorder negatives), false-before-true for booleans, and
+// case-insensitive text otherwise.
+func compareCell(x, y any) int {
 	switch xv := x.(type) {
 	case int64:
 		if yv, ok := y.(int64); ok {
-			return fmt.Sprintf("%020d", xv), fmt.Sprintf("%020d", yv)
+			return cmp.Compare(xv, yv)
 		}
 	case float64:
 		if yv, ok := y.(float64); ok {
-			return fmt.Sprintf("%020.4f", xv), fmt.Sprintf("%020.4f", yv)
+			return cmp.Compare(xv, yv)
 		}
 	case bool:
 		if yv, ok := y.(bool); ok {
-			return fmt.Sprint(xv), fmt.Sprint(yv)
+			switch {
+			case xv == yv:
+				return 0
+			case !xv:
+				return -1
+			default:
+				return 1
+			}
 		}
 	}
-	return strings.ToLower(fmt.Sprint(x)), strings.ToLower(fmt.Sprint(y))
+	return strings.Compare(strings.ToLower(fmt.Sprint(x)), strings.ToLower(fmt.Sprint(y)))
 }
 
 // listFilter is the parsed narrowing criteria shared by the list endpoint and
@@ -549,6 +558,7 @@ func (a *API) getResource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(raw)
 		return
 	}

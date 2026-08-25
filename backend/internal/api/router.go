@@ -24,8 +24,10 @@ func pathNamespace(r *http.Request) string {
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 
+	// No RealIP middleware: it rewrites RemoteAddr from spoofable headers
+	// (X-Forwarded-For et al.) whether or not a trusted proxy set them, and
+	// nothing here consumes the client IP anyway.
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(a.recoverer)
 	r.Use(a.observe)
 	// Compression pays off heavily on list payloads, which are repetitive
@@ -154,9 +156,13 @@ func (a *API) cors(next http.Handler) http.Handler {
 	})
 }
 
+// originAllowed matches exact origins only. There is deliberately no "*"
+// wildcard: every CORS response here carries Allow-Credentials, and
+// reflecting arbitrary origins with credentials would let any website read
+// cluster data with the visitor's session. Config validation rejects "*".
 func originAllowed(origin string, allowed []string) bool {
 	for _, a := range allowed {
-		if a == "*" || strings.EqualFold(a, origin) {
+		if strings.EqualFold(a, origin) {
 			return true
 		}
 	}

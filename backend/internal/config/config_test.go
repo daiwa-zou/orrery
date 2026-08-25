@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -131,7 +132,7 @@ clusters:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(cfg.OIDC.Scopes, "offline_access") {
+	if !slices.Contains(cfg.OIDC.Scopes, "offline_access") {
 		t.Errorf("offline_access was not requested: %v", cfg.OIDC.Scopes)
 	}
 }
@@ -236,5 +237,18 @@ clusters:
 	}
 	if cfg.Clusters[0].Enabled == nil || *cfg.Clusters[0].Enabled != no {
 		t.Error("enabled: false should be preserved for the registry to act on")
+	}
+}
+
+func TestWildcardCORSOriginIsRejected(t *testing.T) {
+	body := `
+server:
+  corsOrigins: ['*']
+clusters:
+  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}
+`
+	if _, err := Load(writeConfig(t, body)); err == nil ||
+		!strings.Contains(err.Error(), "corsOrigins") {
+		t.Errorf("a wildcard CORS origin must be rejected, got err=%v", err)
 	}
 }

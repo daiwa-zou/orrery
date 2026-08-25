@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -275,10 +276,18 @@ func (c *Config) finalize() error {
 	if c.Server.PublicURL != "" {
 		c.Server.PublicURL = strings.TrimRight(c.Server.PublicURL, "/")
 	}
+	for _, o := range c.Server.CORSOrigins {
+		// CORS responses carry Allow-Credentials, and the same list feeds the
+		// WebSocket Origin check that stands in for CSRF. A wildcard would let
+		// any website act with a visitor's session, so origins are explicit.
+		if o == "*" {
+			return fmt.Errorf("server.corsOrigins: %q is not allowed; list each origin explicitly", o)
+		}
+	}
 	if c.OIDC.Enabled && c.OIDC.RedirectURL == "" {
 		c.OIDC.RedirectURL = c.Server.PublicURL + "/api/v1/auth/callback"
 	}
-	if c.OIDC.OfflineAccess && !contains(c.OIDC.Scopes, "offline_access") {
+	if c.OIDC.OfflineAccess && !slices.Contains(c.OIDC.Scopes, "offline_access") {
 		c.OIDC.Scopes = append(c.OIDC.Scopes, "offline_access")
 	}
 	if c.Session.EncryptionKey == "" {
@@ -354,15 +363,6 @@ func (c *Config) SessionKey() ([]byte, error) {
 // EphemeralSessionKey reports whether the key was generated at boot, which
 // invalidates every session on restart and breaks multi-replica deployments.
 func (c *Config) EphemeralSessionKey() bool { return c.Session.ephemeralKey }
-
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
-}
 
 func firstNonEmpty(xs ...string) string {
 	for _, x := range xs {

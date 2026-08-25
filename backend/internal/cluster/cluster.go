@@ -180,10 +180,20 @@ func (c *Cluster) OpenAPIClient() openapi.Client {
 // AuthSubject converts an identity into the subject of an access review.
 func (c *Cluster) AuthSubject(id Identity) authz.Subject {
 	if c.Cfg.AuthMode == config.AuthModePassthrough {
-		return authz.Subject{Self: true}
+		// The review runs with the user's own credentials, but the verdict is
+		// cached — SelfID keeps one user's cached allow from being served to
+		// another. The username is stable across token refreshes; fall back to
+		// the token itself if it is somehow absent.
+		selfID := id.Username
+		if selfID == "" {
+			sum := sha256.Sum256([]byte(id.BearerToken))
+			selfID = "tok:" + hex.EncodeToString(sum[:16])
+		}
+		return authz.Subject{Self: true, SelfID: selfID}
 	}
 	if c.Cfg.AuthMode == config.AuthModeServiceAccount {
-		// No end-user identity exists; reviews run as the dashboard itself.
+		// No end-user identity exists; reviews run as the dashboard itself, so
+		// one shared cache entry is correct.
 		return authz.Subject{Self: true}
 	}
 	return authz.Subject{User: id.Username, Groups: id.Groups}
