@@ -14,12 +14,22 @@ import (
 	"github.com/daiwa-zou/orrery/backend/internal/server"
 )
 
+// version is stamped by the release build via
+// -ldflags "-X main.version=v1.2.3"; source builds report "dev".
+var version = "dev"
+
 func main() {
 	var (
 		configPath = flag.String("config", os.Getenv("ORRERY_CONFIG"), "path to the YAML configuration file")
 		printCfg   = flag.Bool("print-config", false, "print the resolved configuration and exit")
+		printVer   = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
+
+	if *printVer {
+		fmt.Println("orrery", version)
+		return
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -29,6 +39,7 @@ func main() {
 
 	log := newLogger(cfg.Log)
 	slog.SetDefault(log)
+	log.Info("orrery starting", "version", version)
 
 	if *printCfg {
 		printResolved(cfg)

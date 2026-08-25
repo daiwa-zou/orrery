@@ -1,0 +1,79 @@
+# Attach self-contained binaries to the GitHub Release for every version tag.
+#
+# Each binary embeds the compiled frontend (build tag `bundleweb`), so a
+# download is the entire dashboard: `./orrery -config orrery.yaml` and there
+# is nothing else to install. The container image remains the deployment
+# path; these are for laptops, VMs and anywhere a container runtime is not.
+name: Release binaries
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: Build and attach binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Cross-compile with the frontend embedded
+        working-directory: backend
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # The embed directive reads from inside the module, so the built
+          # frontend is copied under the webfs package first.
+          rm -rf internal/webfs/dist
+          cp -R ../web/dist internal/webfs/dist
+
+          mkdir -p ../out
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*}; GOARCH=${target#*/}
+            bin=orrery
+            [ "$GOOS" = windows ] && bin=orrery.exe
+            echo "building $target"
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+              go build -trimpath -tags bundleweb \
+                -ldflags="-s -w -X main.version=${VERSION}" \
+                -o "$bin" ./cmd/orrery
+            name="orrery_${VERSION}_${GOOS}_${GOARCH}"
+            if [ "$GOOS" = windows ]; then
+              zip -q "../out/${name}.zip" "$bin"
+            else
+              tar -czf "../out/${name}.tar.gz" "$bin"
+            fi
+            rm "$bin"
+          done
+
+      - name: Checksums
+        working-directory: out
+        run: sha256sum * > SHA256SUMS
+
+      - name: Create release with artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" out/* \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --verify-tag

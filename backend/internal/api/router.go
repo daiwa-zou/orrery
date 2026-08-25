@@ -1,13 +1,16 @@
 package api
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/daiwa-zou/orrery/backend/internal/webfs"
 )
 
 // pathNamespace reads the namespace path segment. Cluster-scoped resources use
@@ -115,7 +118,11 @@ func (a *API) Router() http.Handler {
 	})
 
 	if a.cfg.Server.WebRoot != "" {
-		r.NotFound(spaHandler(a.cfg.Server.WebRoot))
+		r.NotFound(spaHandler(os.DirFS(a.cfg.Server.WebRoot)))
+	} else if bundle := webfs.FS(); bundle != nil {
+		// Release binaries carry the frontend; webRoot still wins when set so
+		// a bundled binary can serve a newer or patched build from disk.
+		r.NotFound(spaHandler(bundle))
 	}
 	return r
 }
@@ -170,23 +177,18 @@ func originAllowed(origin string, allowed []string) bool {
 	return false
 }
 
-// spaHandler serves the built frontend, falling back to index.html so that
-// deep links into client-side routes work on a hard refresh.
-func spaHandler(root string) http.HandlerFunc {
-	fileServer := http.FileServer(http.Dir(root))
-	index := filepath.Join(root, "index.html")
+// spaHandler serves the built frontend from any filesystem — a directory on
+// disk or the bundle embedded in release binaries — falling back to
+// index.html so that deep links into client-side routes work on a hard
+// refresh. fs.FS path rules reject ".." traversal by construction.
+func spaHandler(fsys fs.FS) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(fsys))
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		clean := filepath.Clean(r.URL.Path)
-		// filepath.Clean already removes ".." segments relative to root, but
-		// refuse anything that still escapes rather than trusting that.
-		target := filepath.Join(root, clean)
-		if !strings.HasPrefix(target, filepath.Clean(root)) {
-			http.NotFound(w, r)
-			return
-		}
+		clean := path.Clean("/" + r.URL.Path)
+		name := strings.TrimPrefix(clean, "/")
 
-		if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		if info, err := fs.Stat(fsys, name); name != "" && err == nil && !info.IsDir() {
 			// Hashed assets are immutable; index.html must never be cached or
 			// a deploy leaves users on the old bundle.
 			if strings.HasPrefix(clean, "/assets/") {
@@ -195,7 +197,14 @@ func spaHandler(root string) http.HandlerFunc {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+
+		index, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, index)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(index)
 	}
 }

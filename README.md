@@ -99,7 +99,19 @@ exactly.
 
 ## Running it locally
 
-You need Go 1.25+, Node 22+ and a cluster. With `kind`:
+The quickest start is a [release binary](https://github.com/daiwa-zou/orrery/releases):
+one self-contained executable per platform with the web UI embedded — download,
+unpack, and point it at a config:
+
+```bash
+./orrery -config orrery.yaml
+```
+
+`SHA256SUMS` on the release page verifies the download, and `./orrery -version`
+reports what you got. Set `server.webRoot` only to override the embedded UI
+with a build from disk.
+
+To hack on it instead, you need Go 1.25+, Node 22+ and a cluster. With `kind`:
 
 ```bash
 kind create cluster --name lens-a
