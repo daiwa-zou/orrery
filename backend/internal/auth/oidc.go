@@ -187,7 +187,7 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "login took too long; please try again")
 		return
 	}
-	if subtleCompare(ls.State, q.Get("state")) != true {
+	if !subtleCompare(ls.State, q.Get("state")) {
 		a.fail(w, r, "state mismatch")
 		return
 	}

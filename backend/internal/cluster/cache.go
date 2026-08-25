@@ -33,14 +33,12 @@ const (
 	// EventOverflow tells a subscriber it fell behind and must reload; it is
 	// the only honest answer when we have dropped changes on the floor.
 	EventOverflow EventType = "OVERFLOW"
-	EventError    EventType = "ERROR"
 )
 
 // Event is one change to one object.
 type Event struct {
 	Type   EventType
 	Object *unstructured.Unstructured
-	Err    string
 }
 
 // Broadcaster fans one informer's events out to many WebSocket subscribers.
@@ -130,12 +128,11 @@ func (b *Broadcaster) close() {
 	}
 }
 
-// informerEntry is one running reflector plus its fan-out.
+// informerEntry is one running reflector plus its fan-out. The entry does not
+// carry its own GVR; the manager's map key is the single source of that truth.
 type informerEntry struct {
-	gvr        schema.GroupVersionResource
-	namespaced bool
-	informer   cache.SharedIndexInformer
-	bc         *Broadcaster
+	informer cache.SharedIndexInformer
+	bc       *Broadcaster
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -324,22 +321,20 @@ func (m *InformerManager) entry(ctx context.Context, ar APIResource) (*informerE
 func (m *InformerManager) start(ar APIResource) *informerEntry {
 	gvr := ar.GVR()
 	e := &informerEntry{
-		gvr:        gvr,
-		namespaced: ar.Namespaced,
-		bc:         newBroadcaster(),
-		stop:       make(chan struct{}),
-		synced:     make(chan struct{}),
-		failed:     make(chan struct{}),
-		startedAt:  time.Now(),
+		bc:        newBroadcaster(),
+		stop:      make(chan struct{}),
+		synced:    make(chan struct{}),
+		failed:    make(chan struct{}),
+		startedAt: time.Now(),
 	}
 	e.touch()
 
 	lw := &cache.ListWatch{
-		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
-			return m.dyn.Resource(gvr).Namespace(metav1.NamespaceAll).List(context.Background(), opts)
+		ListWithContextFunc: func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
+			return m.dyn.Resource(gvr).Namespace(metav1.NamespaceAll).List(ctx, opts)
 		},
-		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-			return m.dyn.Resource(gvr).Namespace(metav1.NamespaceAll).Watch(context.Background(), opts)
+		WatchFuncWithContext: func(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+			return m.dyn.Resource(gvr).Namespace(metav1.NamespaceAll).Watch(ctx, opts)
 		},
 	}
 

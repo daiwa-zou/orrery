@@ -313,10 +313,6 @@ func sortByMeta(objs []*unstructured.Unstructured, key string, desc bool) {
 	})
 }
 
-func sortRows(rows []map[string]any, key string, desc bool) {
-	sort.SliceStable(rows, rowLess(rows, key, desc))
-}
-
 // sortProjected orders rows by a projected column and keeps the parallel
 // object slice in the same order, so both response views agree on what the
 // requested page contains.

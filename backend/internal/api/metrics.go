@@ -5,8 +5,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
@@ -45,6 +45,9 @@ type metricsResponse struct {
 	Nodes     []nodeMetric `json:"nodes,omitempty"`
 	Pods      []podMetric  `json:"pods,omitempty"`
 	Totals    *usage       `json:"totals,omitempty"`
+	// Warnings surface partial answers — a truncated namespace scan must not
+	// read as "these are all the pods".
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type podMetric struct {
@@ -140,23 +143,18 @@ func (a *API) nodeMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// quantityUsage reads a node's capacity or allocatable block.
-func quantityUsage(n interface {
-	UnstructuredContent() map[string]any
-}, field string) usage {
+// quantityUsage reads a node's capacity or allocatable block. It shares the
+// overview's quantity helpers so one parser answers for the whole dashboard.
+func quantityUsage(n *unstructured.Unstructured, field string) usage {
 	content := n.UnstructuredContent()
 	status, _ := content["status"].(map[string]any)
 	block, _ := status[field].(map[string]any)
 	u := usage{}
 	if cpu, ok := block["cpu"].(string); ok {
-		if q, err := resource.ParseQuantity(cpu); err == nil {
-			u.CPUMilli = q.MilliValue()
-		}
+		u.CPUMilli = parseCPUMilli(cpu)
 	}
 	if mem, ok := block["memory"].(string); ok {
-		if q, err := resource.ParseQuantity(mem); err == nil {
-			u.MemoryMiB = q.Value() / (1024 * 1024)
-		}
+		u.MemoryMiB = parseMemMiB(mem)
 	}
 	return u
 }
@@ -182,17 +180,27 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 	// the filter applied to the response below. "May list pods in at least one
 	// namespace" must never gate a cluster-wide answer.
 	var permitted map[string]struct{}
+	var warnings []string
 	if namespace != "" {
 		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
 			a.writeErr(w, r, err)
 			return
 		}
 	} else {
-		all, allowed, _ := res.cluster.Authz.VisibleNamespaces(ctx,
+		all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(ctx,
 			res.cluster.AuthzClient(res.clients),
 			res.cluster.AuthSubject(res.identity),
 			authz.Attributes{Verb: "list", Group: "", Version: "v1", Resource: "pods"},
 			a.namespaceNames(ctx, res.cluster))
+		// A truncated scan is reported, like every other VisibleNamespaces
+		// caller: a partial answer that looks complete is worse than an error.
+		if scanErr != nil && !all && len(allowed) == 0 {
+			a.writeErr(w, r, scanErr)
+			return
+		}
+		if scanErr != nil {
+			warnings = append(warnings, scanErr.Error())
+		}
 		if !all && len(allowed) == 0 {
 			a.writeErr(w, r, &forbiddenError{verb: "list", resource: "pods"})
 			return
@@ -244,7 +252,7 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out := metricsResponse{Available: true}
+	out := metricsResponse{Available: true, Warnings: warnings}
 	totals := usage{}
 	for _, m := range metrics.Items {
 		if permitted != nil {
@@ -272,9 +280,7 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 
 // podLimits sums container limits from a cached pod's spec. The bool is false
 // when no container declares a limit for either resource.
-func podLimits(p interface {
-	UnstructuredContent() map[string]any
-}) (usage, bool) {
+func podLimits(p *unstructured.Unstructured) (usage, bool) {
 	content := p.UnstructuredContent()
 	spec, _ := content["spec"].(map[string]any)
 	containers, _ := spec["containers"].([]any)
@@ -285,16 +291,12 @@ func podLimits(p interface {
 		resources, _ := cm["resources"].(map[string]any)
 		limits, _ := resources["limits"].(map[string]any)
 		if cpu, ok := limits["cpu"].(string); ok {
-			if q, err := resource.ParseQuantity(cpu); err == nil {
-				u.CPUMilli += q.MilliValue()
-				found = true
-			}
+			u.CPUMilli += parseCPUMilli(cpu)
+			found = true
 		}
 		if mem, ok := limits["memory"].(string); ok {
-			if q, err := resource.ParseQuantity(mem); err == nil {
-				u.MemoryMiB += q.Value() / (1024 * 1024)
-				found = true
-			}
+			u.MemoryMiB += parseMemMiB(mem)
+			found = true
 		}
 	}
 	return u, found

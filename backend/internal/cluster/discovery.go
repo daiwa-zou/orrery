@@ -36,11 +36,6 @@ func (r APIResource) GVR() schema.GroupVersionResource {
 	return schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Name}
 }
 
-// GVK returns the resource's group-version-kind triple.
-func (r APIResource) GVK() schema.GroupVersionKind {
-	return schema.GroupVersionKind{Group: r.Group, Version: r.Version, Kind: r.Kind}
-}
-
 // Supports reports whether the API server advertises a verb for this resource.
 func (r APIResource) Supports(verb string) bool {
 	for _, v := range r.Verbs {
@@ -226,7 +221,7 @@ func (d *DiscoveryCache) Resolve(ctx context.Context, group, version, resource s
 	if _, err := d.Resources(ctx); err != nil {
 		return APIResource{}, err
 	}
-	group = normalizeGroup(group)
+	group = NormalizeGroup(group)
 
 	if ar, ok := d.lookup(group, version, resource); ok {
 		return ar, nil
@@ -278,8 +273,10 @@ func (d *DiscoveryCache) lookup(group, version, resource string) (APIResource, b
 	return APIResource{}, false
 }
 
-// normalizeGroup maps the URL-friendly placeholder onto the empty core group.
-func normalizeGroup(group string) string {
+// NormalizeGroup maps the URL-friendly placeholders ("core", "_", "-") onto
+// the empty core group. It is the single spelling authority: every endpoint
+// that accepts a group parameter must agree on which placeholders work.
+func NormalizeGroup(group string) string {
 	if group == "core" || group == "_" || group == "-" {
 		return ""
 	}

@@ -21,11 +21,11 @@ import (
 	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
 
-// API holds the dependencies every handler needs.
+// API holds the dependencies every handler needs. Sessions are reached only
+// through the middleware, which owns refresh and liveness policy.
 type API struct {
 	cfg      *config.Config
 	registry *cluster.Registry
-	sessions *auth.SessionManager
 	authn    *auth.Authenticator
 	mw       *auth.Middleware
 	log      *slog.Logger
@@ -39,13 +39,12 @@ type API struct {
 func New(
 	cfg *config.Config,
 	registry *cluster.Registry,
-	sessions *auth.SessionManager,
 	authn *auth.Authenticator,
 	mw *auth.Middleware,
 	log *slog.Logger,
 ) *API {
 	return &API{
-		cfg: cfg, registry: registry, sessions: sessions,
+		cfg: cfg, registry: registry,
 		authn: authn, mw: mw, log: log,
 		tables: newTableCache(cfg.Cache.DiscoveryTTL),
 	}

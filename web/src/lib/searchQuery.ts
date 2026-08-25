@@ -21,7 +21,7 @@ export interface SearchQuery {
 
 /** Mirrors the server's supportedFieldKeys, minus the dotless `type` — a bare
  *  `type=x` reads as (and is treated as) a label term. */
-export const SUPPORTED_FIELD_KEYS = [
+const SUPPORTED_FIELD_KEYS = [
   'metadata.name',
   'metadata.namespace',
   'status.phase',

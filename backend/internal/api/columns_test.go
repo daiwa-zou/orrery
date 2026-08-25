@@ -14,10 +14,8 @@ func pod(t *testing.T, status map[string]any, spec map[string]any, meta map[stri
 		"kind":       "Pod",
 		"metadata":   map[string]any{"name": "p", "namespace": "n"},
 	}
-	if meta != nil {
-		for k, v := range meta {
-			obj["metadata"].(map[string]any)[k] = v
-		}
+	for k, v := range meta {
+		obj["metadata"].(map[string]any)[k] = v
 	}
 	if spec != nil {
 		obj["spec"] = spec

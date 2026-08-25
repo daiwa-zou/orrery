@@ -8,10 +8,10 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useListAccess, useMe, useNamespaces } from '../api/hooks'
 import type { ClusterSummary, HealthStatus } from '../api/types'
-import { navLabel } from '../lib/format'
+import { HEALTH_TONE, navLabel } from '../lib/format'
 import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
 import { SearchIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
@@ -20,11 +20,15 @@ import { LogoMark, Wordmark } from './Logo'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
 import { buildNav, type NavItem } from './nav'
 
-const HEALTH_TONE: Record<HealthStatus, 'ok' | 'warn' | 'danger' | 'idle'> = {
-  healthy: 'ok',
-  degraded: 'warn',
-  unreachable: 'danger',
-  unknown: 'idle',
+/** The sidebar's top-level link style: an accent bar and soft fill on the
+ *  active route, shared so the links cannot drift apart visually. */
+function sidebarLinkClass({ isActive }: { isActive: boolean }): string {
+  return clsx(
+    'block border-l-2 py-1.5 pr-3 pl-4 text-[13px] transition-colors',
+    isActive
+      ? 'border-accent bg-accent-soft text-ink'
+      : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
+  )
 }
 
 function HealthDot({ status }: { status: HealthStatus }) {
@@ -299,7 +303,7 @@ function NavGroup({
       {open && (
         <ul className="mt-0.5">
           {items.map((item) => {
-            const groupSeg = item.group === '' ? 'core' : item.group
+            const groupSeg = groupSegment(item.group)
             const to = `/c/${cluster}/r/${groupSeg}/${item.version}/${item.resource}`
             const search = item.namespaced && namespace ? `?namespace=${namespace}` : ''
             // Dimmed, not hidden: hiding makes "where did Pods go?" support
@@ -590,30 +594,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <nav className="flex-1 overflow-y-auto px-0 py-2">
-              <NavLink
-                to={`/c/${cluster}`}
-                end
-                className={({ isActive }) =>
-                  clsx(
-                    'block border-l-2 py-1.5 pr-3 pl-4 text-[13px] transition-colors',
-                    isActive
-                      ? 'border-accent bg-accent-soft text-ink'
-                      : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
-                  )
-                }
-              >
+              <NavLink to={`/c/${cluster}`} end className={sidebarLinkClass}>
                 Overview
               </NavLink>
               <NavLink
                 to={`/c/${cluster}/events${namespace ? `?namespace=${namespace}` : ''}`}
-                className={({ isActive }) =>
-                  clsx(
-                    'block border-l-2 py-1.5 pr-3 pl-4 text-[13px] transition-colors',
-                    isActive
-                      ? 'border-accent bg-accent-soft text-ink'
-                      : 'border-transparent text-ink-muted hover:border-border-strong hover:text-ink',
-                  )
-                }
+                className={sidebarLinkClass}
               >
                 Events
               </NavLink>

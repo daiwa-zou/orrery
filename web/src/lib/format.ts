@@ -1,5 +1,7 @@
 /** Formatting helpers shared by tables, detail panes and charts. */
 
+import type { HealthStatus } from '../api/types'
+
 const UNITS: [number, string][] = [
   [365 * 24 * 3600, 'y'],
   [24 * 3600, 'd'],
@@ -61,12 +63,25 @@ export function memory(mib: number): string {
   return `${(mib / 1024).toFixed(1)} GiB`
 }
 
-export function percent(value: number): string {
-  return `${value.toFixed(value < 10 ? 1 : 0)}%`
-}
-
 /** Severity used to colour a status badge. */
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'idle'
+
+/**
+ * Kinds whose pod template the backend's restart action can stamp — the set
+ * behind every "rolling restart" button. One list, with the resource-name
+ * form derived from it, so a new restartable kind cannot be added to the
+ * detail page and forgotten on the list page.
+ */
+export const RESTARTABLE_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet'])
+export const RESTARTABLE_RESOURCES = new Set([...RESTARTABLE_KINDS].map((k) => kindToResource(k)))
+
+/** Maps a cluster's probed health onto the badge tone that colours it. */
+export const HEALTH_TONE: Record<HealthStatus, Tone> = {
+  healthy: 'ok',
+  degraded: 'warn',
+  unreachable: 'danger',
+  unknown: 'idle',
+}
 
 const DANGER = new Set([
   'CrashLoopBackOff',
@@ -165,14 +180,6 @@ export function splitApiVersion(apiVersion?: string): { group: string; version: 
     : { group: parts[0], version: parts[1] }
 }
 
-/** Truncates the middle of a long identifier, keeping both ends legible. */
-export function ellipsize(value: string, max = 44): string {
-  if (value.length <= max) return value
-  const head = Math.ceil((max - 1) / 2)
-  const tail = Math.floor((max - 1) / 2)
-  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`
-}
-
 /**
  * Nav labels for kinds whose real name does not fit a 256px sidebar, plus the
  * handful whose plural is irregular. Everything else is pluralised by rule.
@@ -195,7 +202,7 @@ const NAV_LABELS: Record<string, string> = {
  * Pluralises a Kubernetes kind for display. Nav entries name a collection, so
  * "Pods" reads better than "Pod" above a table of them.
  */
-export function pluralize(kind: string): string {
+function pluralize(kind: string): string {
   if (!kind) return kind
   const lower = kind.toLowerCase()
 

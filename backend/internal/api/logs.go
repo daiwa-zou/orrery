@@ -25,10 +25,11 @@ func podLogOptions(r *http.Request, follow bool) *corev1.PodLogOptions {
 		Timestamps: queryBool(r, "timestamps", false),
 		Previous:   queryBool(r, "previous", false),
 	}
-	if n := queryInt(r, "tailLines", 500, 1, 100000); n > 0 {
-		tail := int64(n)
-		opts.TailLines = &tail
-	}
+	// The minimum clamp is 1, so a tail is always set — there is deliberately
+	// no "all lines" mode; unbounded scrollback belongs to the log store, not
+	// a browser tab.
+	tail := int64(queryInt(r, "tailLines", 500, 1, 100000))
+	opts.TailLines = &tail
 	if s := queryInt(r, "sinceSeconds", 0, 0, 30*24*3600); s > 0 {
 		since := int64(s)
 		opts.SinceSeconds = &since

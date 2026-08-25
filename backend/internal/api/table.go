@@ -13,7 +13,7 @@ import (
 	"github.com/daiwa-zou/orrery/backend/internal/cluster"
 )
 
-// crdColumnsGVR is where additional printer columns live.
+// crdResource is where additional printer columns live.
 var crdResource = cluster.APIResource{
 	Group:      "apiextensions.k8s.io",
 	Version:    "v1",

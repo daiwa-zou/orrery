@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useNamespaces } from '../api/hooks'
@@ -121,10 +121,13 @@ export function CommandPalette({
     [discovery],
   )
 
-  const resourceHref = (r: { group: string; version: string; name: string; namespaced: boolean }) => {
-    const scope = r.namespaced && namespace ? `?namespace=${namespace}` : ''
-    return `/c/${cluster}/r/${groupSegment(r.group)}/${r.version}/${r.name}${scope}`
-  }
+  const resourceHref = useCallback(
+    (r: { group: string; version: string; name: string; namespaced: boolean }) => {
+      const scope = r.namespaced && namespace ? `?namespace=${namespace}` : ''
+      return `/c/${cluster}/r/${groupSegment(r.group)}/${r.version}/${r.name}${scope}`
+    },
+    [cluster, namespace],
+  )
 
   const entries = useMemo<Entry[]>(() => {
     const q = query.trim()
@@ -218,7 +221,7 @@ export function CommandPalette({
     return out
     // `open` is a real input: the Recents list is read from localStorage, so it
     // must be recomputed on every open, not only when the query changes.
-  }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate])
+  }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate, resourceHref])
 
   // Clamp the cursor when the result set shrinks under it.
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { APIResource, DiscoveryResponse } from '../api/types'
-import { buildNav, isBrowsable, isCustomGroup, navItemCount } from './nav'
+import { buildNav, isBrowsable, isCustomGroup } from './nav'
 import { rankResources, scoreResource } from './CommandPalette'
 
 function resource(partial: Partial<APIResource> & { kind: string; name: string }): APIResource {
@@ -81,7 +81,8 @@ describe('buildNav', () => {
   it('returns nothing before discovery has loaded', () => {
     const empty = buildNav(undefined)
     expect(empty.primary).toEqual([])
-    expect(navItemCount(empty)).toBe(0)
+    expect(empty.custom).toEqual([])
+    expect(empty.rest).toEqual([])
   })
 
   it('puts the everyday resources in named sections, in the curated order', () => {

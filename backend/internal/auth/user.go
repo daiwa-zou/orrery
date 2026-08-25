@@ -30,9 +30,11 @@ type Session struct {
 	RefreshToken string    `json:"refreshToken,omitempty"`
 	TokenExpiry  time.Time `json:"tokenExpiry,omitempty"`
 	CSRFToken    string    `json:"csrfToken"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastSeen     time.Time `json:"lastSeen"`
-	ExpiresAt    time.Time `json:"expiresAt"`
+	// CreatedAt is not read by any code path; it is kept because a session
+	// record in the store should say when it was minted (audit, debugging).
+	CreatedAt time.Time `json:"createdAt"`
+	LastSeen  time.Time `json:"lastSeen"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 // Expired reports whether the session is past its absolute lifetime or has

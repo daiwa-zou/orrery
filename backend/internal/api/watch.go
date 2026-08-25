@@ -143,9 +143,6 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 				_ = ws.WriteJSON(map[string]any{"type": "OVERFLOW"})
 				ws.closeWith(1000, "reload required")
 				return
-			case cluster.EventError:
-				ws.wsError(ev.Err)
-				return
 			default:
 				if ev.Object == nil || !visible.permits(ev.Object) {
 					continue

@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, proxyURL, type ResourceRef } from '../api/client'
+import { api, apiGroup, groupSegment, proxyURL, type ResourceRef } from '../api/client'
 import { useAccess, useEvents, useResource } from '../api/hooks'
 import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
@@ -19,16 +19,16 @@ import {
   Field,
   GatedButton,
   Modal,
+  Loading,
   Spinner,
   StatusBadge,
 } from '../components/primitives'
 import { useToast } from '../components/Toast'
-import { kindToResource, splitApiVersion } from '../lib/format'
+import { kindToResource, RESTARTABLE_KINDS, splitApiVersion } from '../lib/format'
 
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
 const SCALABLE = new Set(['Deployment', 'StatefulSet', 'ReplicaSet', 'ReplicationController'])
-const RESTARTABLE = new Set(['Deployment', 'StatefulSet', 'DaemonSet'])
 /** Kinds whose spec.selector selects pods, enabling a "view pods" jump. */
 const POD_OWNERS = new Set([
   'Deployment',
@@ -254,7 +254,7 @@ function ResourceDetailInner() {
   const ns = namespace === '_' ? undefined : namespace
   const ref: ResourceRef = {
     cluster: cluster!,
-    group: group === 'core' ? '' : group!,
+    group: apiGroup(group!),
     version: version!,
     resource: resource!,
     namespace: ns,
@@ -456,9 +456,7 @@ function ResourceDetailInner() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
-        <Spinner /> Loading {name}
-      </div>
+      <Loading label={`Loading ${name}`} />
     )
   }
   if (error) return <ErrorState error={error} retry={refetch} />
@@ -540,7 +538,7 @@ function ResourceDetailInner() {
                 Scale
               </GatedButton>
             )}
-            {RESTARTABLE.has(kind) && (
+            {RESTARTABLE_KINDS.has(kind) && (
               <GatedButton
                 allowed={mayPatch}
                 deniedTitle={`Requires patch on ${resource}`}
@@ -723,9 +721,7 @@ function ResourceDetailInner() {
         {tab === 'yaml' && (
           <div className="h-full">
             {yamlQuery.isLoading ? (
-              <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
-                <Spinner /> Loading manifest
-              </div>
+              <Loading label="Loading manifest" />
             ) : yamlQuery.error ? (
               <ErrorState error={yamlQuery.error} retry={yamlQuery.refetch} />
             ) : (
@@ -747,9 +743,7 @@ function ResourceDetailInner() {
         {tab === 'events' && (
           <div className="p-4">
             {events.isLoading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-ink-faint">
-                <Spinner /> Loading events
-              </div>
+              <Loading className="py-16" label="Loading events" />
             ) : (
               <div className="blueprint bg-surface">
                 <Corners />
@@ -860,7 +854,7 @@ function ownerHref(
   ns?: string,
 ): string {
   const { group, version } = splitApiVersion(owner.apiVersion)
-  const seg = group === '' ? 'core' : group
+  const seg = groupSegment(group)
   return `/c/${cluster}/r/${seg}/${version || 'v1'}/${kindToResource(owner.kind)}/${ns ?? '_'}/${owner.name}`
 }
 

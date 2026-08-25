@@ -103,7 +103,7 @@ export interface LiveListState {
  * spliced in locally — that keeps pagination and sorting honest rather than
  * approximately right.
  */
-export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled = true): LiveListState {
+export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveListState {
   const qc = useQueryClient()
   const [live, setLive] = useState<LiveListState['live']>('off')
 
@@ -114,7 +114,7 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
   const query = useQuery({
     queryKey: key,
     queryFn: ({ signal }) => api.list(ref!, params, signal),
-    enabled: !!ref && enabled,
+    enabled: !!ref,
     placeholderData: keepPreviousData,
     // The watch is the freshness mechanism; this is a safety net for a socket
     // that silently dies behind a proxy.
@@ -126,7 +126,7 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
   keyRef.current = key
 
   useEffect(() => {
-    if (!ref || !enabled) {
+    if (!ref) {
       setLive('off')
       return
     }
@@ -264,7 +264,6 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams, enabled
     params.q,
     params.labelSelector,
     params.fieldSelector,
-    enabled,
     qc,
   ])
 
@@ -323,7 +322,6 @@ export function useEvents(
   })
 }
 
-/** Batch-checks permissions so the UI only offers actions that will succeed. */
 /**
  * Batch-checks list access for a set of resources in the current scope, so
  * the navigation can show what this identity can actually open. Answers come

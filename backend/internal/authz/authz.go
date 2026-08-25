@@ -279,15 +279,6 @@ func (c *Checker) VisibleNamespaces(
 	return false, allowed, nil
 }
 
-// Purge drops every cached verdict, used when an operator wants a permission
-// change to take effect immediately.
-func (c *Checker) Purge() {
-	c.cache.Purge()
-	c.nsMu.Lock()
-	c.nsCache = make(map[string]nsEntry)
-	c.nsMu.Unlock()
-}
-
 // AttributesKey exposes the canonical key so callers can index AllowedMany's
 // result without knowing the encoding.
 func AttributesKey(a Attributes) string { return a.key() }

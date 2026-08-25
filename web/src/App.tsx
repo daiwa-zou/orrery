@@ -13,7 +13,7 @@ import { ApiError } from './api/client'
 import { useClusters, useMe } from './api/hooks'
 import { AppShell } from './components/AppShell'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { EmptyState, ErrorState, Spinner } from './components/primitives'
+import { EmptyState, ErrorState, Loading } from './components/primitives'
 import { ToastProvider } from './components/Toast'
 import { CreateResource } from './pages/CreateResource'
 import { Events } from './pages/Events'
@@ -67,9 +67,7 @@ function Home() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-ink-faint">
-        <Spinner /> Loading clusters
-      </div>
+      <Loading className="h-full" label="Loading clusters" />
     )
   }
   if (error) return <ErrorState error={error} retry={refetch} />
@@ -95,9 +93,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-ink-faint">
-        <Spinner /> Signing in
-      </div>
+      <Loading className="h-full" label="Signing in" />
     )
   }
   if (error instanceof ApiError && error.isAuth) {

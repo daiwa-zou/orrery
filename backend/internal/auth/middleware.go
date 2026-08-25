@@ -105,20 +105,6 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 	})
 }
 
-// WebSocketAuth resolves a session for an upgrade request. Browsers cannot set
-// headers on a WebSocket handshake, so the cookie is the only credential and
-// the Origin check below is what stands in for CSRF.
-func (m *Middleware) WebSocketAuth(r *http.Request) (*Session, *User, bool) {
-	if m.anonymous != nil {
-		return nil, m.anonymous, true
-	}
-	sess, err := m.sessions.FromRequest(r)
-	if err != nil {
-		return nil, nil, false
-	}
-	return sess, &sess.User, true
-}
-
 // FreshSession re-reads a live session by ID, renewing its tokens when they
 // are near expiry. It exists for long-lived streams (watch, logs, exec), which
 // authenticate once at the handshake and must notice what happens afterwards:

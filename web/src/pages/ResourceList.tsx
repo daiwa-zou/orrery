@@ -1,24 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { api, type ResourceRef } from '../api/client'
+import { api, apiGroup, type ResourceRef } from '../api/client'
 import { useAccess, useFacets, useLiveList, usePodMetrics } from '../api/hooks'
 import type { AccessCheck, Column, Row } from '../api/types'
-import { cpu as formatCpu, memory as formatMemory } from '../lib/format'
+import { cpu as formatCpu, memory as formatMemory, RESTARTABLE_RESOURCES } from '../lib/format'
 import { toggleSelectorTerm } from '../lib/labels'
 import type { SearchQuery } from '../lib/searchQuery'
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { RefreshIcon, TagIcon, TrashIcon } from '../components/icons'
 import { SearchBar } from '../components/SearchBar'
-import { Badge, Button, ErrorState, GatedButton, Modal, Spinner } from '../components/primitives'
+import { Badge, Button, ErrorState, GatedButton, Loading, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
 type BulkAction = 'delete' | 'restart'
 
-/** The backend's restart action patches the pod template, so it only exists
- *  for the kinds that have one. */
-const RESTARTABLE = new Set(['deployments', 'statefulsets', 'daemonsets'])
 
 function nameList(rows: Row[]): string {
   const names = rows.map((r) => r.name)
@@ -81,7 +78,7 @@ export function ResourceList() {
 
   const ref: ResourceRef | null =
     cluster && group && version && resource
-      ? { cluster, group: group === 'core' ? '' : group, version, resource }
+      ? { cluster, group: apiGroup(group), version, resource }
       : null
 
   const listParams = useMemo(
@@ -97,22 +94,16 @@ export function ResourceList() {
   const canRestart =
     !!meta &&
     meta.group === 'apps' &&
-    RESTARTABLE.has(meta.name) &&
+    RESTARTABLE_RESOURCES.has(meta.name) &&
     meta.verbs.includes('patch')
 
   const canCreate = meta?.verbs.includes('create') ?? false
 
   // Ask once whether this user may act in this scope, so actions are only
-  // offered when they would actually work. The verb order here is the index
-  // order of the answers below.
-  const checkVerbs = useMemo(() => {
-    const verbs: string[] = []
-    if (canDelete) verbs.push('delete')
-    if (canRestart) verbs.push('patch')
-    if (canCreate) verbs.push('create')
-    return verbs
-  }, [canDelete, canRestart, canCreate])
-  const checks = useMemo(() => {
+  // offered when they would actually work. Keyed, not positional: each key
+  // lives beside its check, so adding one cannot silently gate the wrong
+  // button — the same rule the detail page follows.
+  const checkList = useMemo(() => {
     if (!meta) return []
     const base = {
       group: meta.group,
@@ -120,13 +111,20 @@ export function ResourceList() {
       resource: meta.name,
       namespace: namespace || undefined,
     }
-    return checkVerbs.map((verb): AccessCheck => ({ ...base, verb }))
-  }, [meta, namespace, checkVerbs])
+    const list: { key: string; check: AccessCheck }[] = []
+    if (canDelete) list.push({ key: 'delete', check: { ...base, verb: 'delete' } })
+    if (canRestart) list.push({ key: 'restart', check: { ...base, verb: 'patch' } })
+    if (canCreate) list.push({ key: 'create', check: { ...base, verb: 'create' } })
+    return list
+  }, [meta, namespace, canDelete, canRestart, canCreate])
+  const checks = useMemo(() => checkList.map((c) => c.check), [checkList])
   const access = useAccess(cluster, checks)
-  const may = (verb: string) =>
-    access.data?.[checkVerbs.indexOf(verb)]?.allowed ?? false
+  const may = (key: string) => {
+    const i = checkList.findIndex((c) => c.key === key)
+    return i >= 0 ? (access.data?.[i]?.allowed ?? false) : false
+  }
   const mayDelete = canDelete && may('delete')
-  const mayRestart = canRestart && may('patch')
+  const mayRestart = canRestart && may('restart')
   const mayCreate = canCreate && may('create')
 
   const update = useCallback(
@@ -429,9 +427,7 @@ export function ResourceList() {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {isLoading && rows.length === 0 ? (
-          <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
-            <Spinner /> Loading {resource}
-          </div>
+          <Loading label={`Loading ${resource}`} />
         ) : (
           <DataTable
             columns={columns}

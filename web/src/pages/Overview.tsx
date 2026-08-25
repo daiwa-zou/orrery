@@ -8,6 +8,7 @@ import {
   Corners,
   EmptyState,
   ErrorState,
+  Loading,
   Spinner,
   StatusBadge,
 } from '../components/primitives'
@@ -190,9 +191,7 @@ export function Overview() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
-        <Spinner /> Loading cluster
-      </div>
+      <Loading label="Loading cluster" />
     )
   }
   if (error) return <ErrorState error={error} retry={refetch} />

@@ -3,13 +3,7 @@ import type { ClusterSummary, HealthStatus } from '../api/types'
 import { UserMenu } from '../components/AppShell'
 import { LogoMark, Wordmark } from '../components/Logo'
 import { Badge, Corners } from '../components/primitives'
-
-const TONE: Record<HealthStatus, 'ok' | 'warn' | 'danger' | 'idle'> = {
-  healthy: 'ok',
-  degraded: 'warn',
-  unreachable: 'danger',
-  unknown: 'idle',
-}
+import { HEALTH_TONE } from '../lib/format'
 
 const DOT_COLOR: Record<HealthStatus, string> = {
   healthy: 'var(--color-ok)',
@@ -151,7 +145,7 @@ function ClusterCard({ cluster }: { cluster: ClusterSummary }) {
         <h2 className="truncate font-condensed text-[16.5px] font-semibold tracking-[.02em] text-ink">
           {cluster.displayName}
         </h2>
-        <Badge tone={TONE[cluster.health.status]}>{cluster.health.status}</Badge>
+        <Badge tone={HEALTH_TONE[cluster.health.status]}>{cluster.health.status}</Badge>
       </div>
 
       <dl className="mt-2.5 space-y-1 text-xs">

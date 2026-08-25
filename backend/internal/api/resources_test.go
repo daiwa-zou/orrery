@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -207,7 +209,7 @@ func TestSortRowsHandlesNumbersNumerically(t *testing.T) {
 		{"name": "c", "restarts": int64(2)},
 	}
 
-	sortRows(rows, "restarts", false)
+	sort.SliceStable(rows, rowLess(rows, "restarts", false))
 	// Lexical sorting would put 10 before 9; that is the bug this guards.
 	want := []any{int64(2), int64(9), int64(10)}
 	for i, w := range want {
@@ -224,7 +226,7 @@ func TestSortRowsFallsBackToNameForTies(t *testing.T) {
 		{"name": "mango", "status": "Pending"},
 	}
 
-	sortRows(rows, "status", false)
+	sort.SliceStable(rows, rowLess(rows, "status", false))
 	if rows[0]["name"] != "mango" {
 		t.Errorf("Pending should sort first, got %v", rows[0]["name"])
 	}
@@ -262,7 +264,7 @@ func TestPageBounds(t *testing.T) {
 func TestPageOfNeverPanics(t *testing.T) {
 	rows := make([]map[string]any, 10)
 	for i := range rows {
-		rows[i] = map[string]any{"name": itoa(i)}
+		rows[i] = map[string]any{"name": strconv.Itoa(i)}
 	}
 	if got := pageOf(rows, 100, 25); len(got) != 0 {
 		t.Errorf("a page past the end returned %d rows", len(got))

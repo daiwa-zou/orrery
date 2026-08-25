@@ -299,23 +299,6 @@ func TestAllowedManyReturnsOneVerdictPerQuestion(t *testing.T) {
 	}
 }
 
-func TestPurgeClearsCache(t *testing.T) {
-	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
-	c, _ := NewChecker(128, time.Hour, 50)
-
-	subj := Subject{User: "alice"}
-	attrs := Attributes{Verb: "list", Resource: "pods"}
-	ctx := context.Background()
-
-	_, _ = c.Allowed(ctx, client, subj, attrs)
-	c.Purge()
-	_, _ = c.Allowed(ctx, client, subj, attrs)
-
-	if n := calls.Load(); n != 2 {
-		t.Errorf("made %d reviews; Purge did not clear the cache", n)
-	}
-}
-
 func TestSelfSubjectReviewUsedForPassthrough(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	var sawSelf bool

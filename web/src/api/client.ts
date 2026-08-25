@@ -98,8 +98,13 @@ export function groupSegment(group: string): string {
   return group === '' ? 'core' : group
 }
 
+/** The inverse of groupSegment: decodes a URL segment back to the API group. */
+export function apiGroup(segment: string): string {
+  return segment === 'core' ? '' : segment
+}
+
 /** Cluster-scoped objects use "_" in the namespace position. */
-export function nsSegment(namespace?: string): string {
+function nsSegment(namespace?: string): string {
   return namespace && namespace.length > 0 ? namespace : '_'
 }
 
@@ -112,7 +117,6 @@ export interface ListParams {
   order?: 'asc' | 'desc'
   page?: number
   pageSize?: number
-  view?: 'table' | 'full'
 }
 
 function qs(params: Record<string, unknown>): string {
@@ -125,7 +129,7 @@ function qs(params: Record<string, unknown>): string {
   return s ? `?${s}` : ''
 }
 
-export interface ExplainField {
+interface ExplainField {
   name: string
   type: string
   description?: string
@@ -280,13 +284,6 @@ export const api = {
     },
     signal?: AbortSignal,
   ) => request<ListResponse>(`/clusters/${cluster}/events${qs(params)}`, {}, signal),
-
-  podLogs: (
-    cluster: string,
-    namespace: string,
-    name: string,
-    params: { container?: string; tailLines?: number; previous?: boolean; timestamps?: boolean },
-  ) => request<string>(`/clusters/${cluster}/pods/${namespace}/${name}/logs${qs(params)}`),
 
   access: async (cluster: string, checks: AccessCheck[], signal?: AbortSignal): Promise<Decision[]> => {
     if (checks.length === 0) return []

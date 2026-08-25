@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/daiwa-zou/orrery/backend/internal/auth"
@@ -156,7 +157,7 @@ func (a *API) checkAccess(w http.ResponseWriter, r *http.Request) {
 	keys := make([]string, 0, len(body.Checks))
 	for _, c := range body.Checks {
 		a := authz.Attributes{
-			Verb: c.Verb, Group: normalizeGroupParam(c.Group), Version: c.Version,
+			Verb: c.Verb, Group: cluster.NormalizeGroup(c.Group), Version: c.Version,
 			Resource: c.Resource, Subresource: c.Subresource,
 			Namespace: c.Namespace, Name: c.Name,
 		}
@@ -173,16 +174,9 @@ func (a *API) checkAccess(w http.ResponseWriter, r *http.Request) {
 	// to reconstruct our internal key encoding.
 	results := make(map[string]any, len(keys))
 	for i, k := range keys {
-		results[itoa(i)] = decisions[k]
+		results[strconv.Itoa(i)] = decisions[k]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
-}
-
-func normalizeGroupParam(g string) string {
-	if g == "core" || g == "_" {
-		return ""
-	}
-	return g
 }
 
 // cacheStats exposes what the dashboard is currently caching. It is the first

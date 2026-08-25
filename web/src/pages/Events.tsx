@@ -1,11 +1,12 @@
 import { useCallback, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { groupSegment } from '../api/client'
 import { useDiscovery, useEvents } from '../api/hooks'
 import type { APIResource, Row } from '../api/types'
 import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
 import { RefreshIcon } from '../components/icons'
-import { Button, ErrorState, Spinner } from '../components/primitives'
+import { Button, ErrorState, Loading, Spinner } from '../components/primitives'
 import { useDebouncedInput } from '../lib/useDebouncedInput'
 
 /**
@@ -45,7 +46,7 @@ export function Events() {
 
   // Maps an involvedObject kind to the resource that serves it, so a row click
   // can land on the object the event is about.
-  const kindToResource = useMemo(() => {
+  const resourceByKind = useMemo(() => {
     const map = new Map<string, APIResource>()
     for (const group of discovery?.groups ?? []) {
       for (const res of group.resources) {
@@ -85,9 +86,9 @@ export function Events() {
   const openInvolved = (row: Row) => {
     const [kind, name] = String(row.object ?? '').split('/')
     if (!kind || !name) return
-    const res = kindToResource.get(kind.toLowerCase())
+    const res = resourceByKind.get(kind.toLowerCase())
     if (!res) return
-    const groupSeg = res.group === '' ? 'core' : res.group
+    const groupSeg = groupSegment(res.group)
     const ns = res.namespaced ? (row.namespace ?? '_') : '_'
     navigate(`/c/${cluster}/r/${groupSeg}/${res.version}/${res.name}/${ns}/${name}`)
   }
@@ -142,9 +143,7 @@ export function Events() {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {isLoading ? (
-          <div className="flex items-center justify-center gap-2 py-24 text-ink-faint">
-            <Spinner /> Loading events
-          </div>
+          <Loading label="Loading events" />
         ) : (
           <DataTable
             columns={columns}

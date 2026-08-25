@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml } from '@codemirror/lang-yaml'
 
-import { api } from '../api/client'
+import { api, apiGroup } from '../api/client'
 import { useDiscovery } from '../api/hooks'
 import { ExplainPanel } from '../components/ExplainPanel'
 import { codeTheme } from '../components/YamlEditor'
@@ -32,7 +32,7 @@ export function CreateResource() {
 
   const { data: discovery } = useDiscovery(cluster)
   const meta = useMemo(() => {
-    const g = group === 'core' ? '' : group
+    const g = apiGroup(group!)
     for (const grp of discovery?.groups ?? []) {
       for (const r of grp.resources) {
         if (r.group === g && r.version === version && r.name === resource) return r
@@ -64,7 +64,7 @@ export function CreateResource() {
       const created = await api.create(
         {
           cluster,
-          group: group === 'core' ? '' : group,
+          group: apiGroup(group!),
           version,
           resource,
           namespace: namespace || undefined,

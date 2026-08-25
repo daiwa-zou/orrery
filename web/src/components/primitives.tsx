@@ -188,6 +188,24 @@ export function GatedButton({
   )
 }
 
+/**
+ * The centered spinner-with-label block every loading state renders. The
+ * className replaces the default vertical padding for hosts that need to fill
+ * their box instead (e.g. "h-full").
+ */
+export function Loading({ label, className }: { label: ReactNode; className?: string }) {
+  return (
+    <div
+      className={clsx(
+        'flex items-center justify-center gap-2 text-ink-faint',
+        className ?? 'py-24',
+      )}
+    >
+      <Spinner /> {label}
+    </div>
+  )
+}
+
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg
@@ -210,11 +228,9 @@ export function Spinner({ className }: { className?: string }) {
 export function EmptyState({
   title,
   description,
-  action,
 }: {
   title: string
   description?: ReactNode
-  action?: ReactNode
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
@@ -233,7 +249,6 @@ export function EmptyState({
       </svg>
       <p className="text-[13.5px] font-medium text-ink">{title}</p>
       {description && <p className="max-w-md text-[13px] text-ink-faint">{description}</p>}
-      {action && <div className="mt-2">{action}</div>}
     </div>
   )
 }

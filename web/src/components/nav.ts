@@ -149,10 +149,3 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
 
   return { primary, custom, rest }
 }
-
-/** Total resources reachable from the nav, for the "All resources" count. */
-export function navItemCount(nav: Nav): number {
-  return (
-    nav.primary.reduce((n, s) => n + s.items.length, 0) + nav.custom.length + nav.rest.length
-  )
-}

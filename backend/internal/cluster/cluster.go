@@ -41,9 +41,6 @@ type Clients struct {
 	Dynamic dynamic.Interface
 	Kube    kubernetes.Interface
 	Metrics metricsv.Interface
-	// Self is true when these clients carry the user's own credentials, which
-	// selects SelfSubjectAccessReview over SubjectAccessReview.
-	Self bool
 }
 
 // HealthStatus is the coarse state shown in the cluster switcher.
@@ -100,7 +97,7 @@ func New(cfg config.ClusterConfig, appCfg *config.Config, log *slog.Logger) (*Cl
 	restCfg.Burst = cfg.Burst
 	restCfg.UserAgent = "orrery/1.0"
 
-	base, err := clientsFor(restCfg, false)
+	base, err := clientsFor(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("cluster %s: %w", cfg.Name, err)
 	}
@@ -148,7 +145,7 @@ func restConfigFor(cfg config.ClusterConfig) (*rest.Config, error) {
 	return rc, nil
 }
 
-func clientsFor(rc *rest.Config, self bool) (*Clients, error) {
+func clientsFor(rc *rest.Config) (*Clients, error) {
 	kube, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return nil, fmt.Errorf("typed client: %w", err)
@@ -163,12 +160,8 @@ func clientsFor(rc *rest.Config, self bool) (*Clients, error) {
 	if err != nil {
 		return nil, fmt.Errorf("metrics client: %w", err)
 	}
-	return &Clients{Rest: rc, Dynamic: dyn, Kube: kube, Metrics: mc, Self: self}, nil
+	return &Clients{Rest: rc, Dynamic: dyn, Kube: kube, Metrics: mc}, nil
 }
-
-// Base returns the dashboard's own clients, used for informers and for
-// SubjectAccessReview.
-func (c *Cluster) Base() *Clients { return c.base }
 
 // OpenAPIClient exposes the cluster's OpenAPI v3 discovery. The document is
 // the API's shape, not object data, and is served with the dashboard's own
@@ -221,11 +214,11 @@ func (c *Cluster) ClientsFor(id Identity) (*Clients, error) {
 		}
 		sum := sha256.Sum256([]byte(id.BearerToken))
 		key := "pt:" + hex.EncodeToString(sum[:8])
-		return c.cachedClients(key, func() (*rest.Config, bool) {
+		return c.cachedClients(key, func() *rest.Config {
 			rc := rest.AnonymousClientConfig(c.base.Rest)
 			rc.BearerToken = id.BearerToken
 			rc.QPS, rc.Burst, rc.UserAgent = c.Cfg.QPS, c.Cfg.Burst, c.base.Rest.UserAgent
-			return rc, true
+			return rc
 		})
 
 	default: // impersonation
@@ -241,18 +234,18 @@ func (c *Cluster) ClientsFor(id Identity) (*Clients, error) {
 			parts = append(parts, strconv.Quote(g))
 		}
 		key := "imp:" + strings.Join(parts, "\x1e")
-		return c.cachedClients(key, func() (*rest.Config, bool) {
+		return c.cachedClients(key, func() *rest.Config {
 			rc := rest.CopyConfig(c.base.Rest)
 			rc.Impersonate = rest.ImpersonationConfig{
 				UserName: id.Username,
 				Groups:   id.Groups,
 			}
-			return rc, false
+			return rc
 		})
 	}
 }
 
-func (c *Cluster) cachedClients(key string, build func() (*rest.Config, bool)) (*Clients, error) {
+func (c *Cluster) cachedClients(key string, build func() *rest.Config) (*Clients, error) {
 	if cl, ok := c.userClients.Get(key); ok {
 		return cl, nil
 	}
@@ -261,8 +254,7 @@ func (c *Cluster) cachedClients(key string, build func() (*rest.Config, bool)) (
 	if cl, ok := c.userClients.Get(key); ok {
 		return cl, nil
 	}
-	rc, self := build()
-	cl, err := clientsFor(rc, self)
+	cl, err := clientsFor(build())
 	if err != nil {
 		return nil, err
 	}

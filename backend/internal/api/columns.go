@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -521,9 +522,9 @@ func intOrString(u *unstructured.Unstructured, fields ...string) string {
 	case string:
 		return t
 	case int64:
-		return itoa(int(t))
+		return strconv.Itoa(int(t))
 	case float64:
-		return itoa(int(t))
+		return strconv.Itoa(int(t))
 	}
 	return fmt.Sprint(v)
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -88,27 +89,5 @@ func joinLimit(items []string, max int) string {
 	if len(items) <= max {
 		return strings.Join(items, ", ")
 	}
-	return strings.Join(items[:max], ", ") + ", +" + itoa(len(items)-max) + " more"
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
+	return strings.Join(items[:max], ", ") + ", +" + strconv.Itoa(len(items)-max) + " more"
 }

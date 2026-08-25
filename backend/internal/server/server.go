@@ -94,7 +94,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	}
 
 	mw := auth.NewMiddleware(sessions, authn, anon)
-	apiSrv := api.New(cfg, registry, sessions, authn, mw, log)
+	apiSrv := api.New(cfg, registry, authn, mw, log)
 
 	prometheus.MustRegister(api.NewCacheCollector(apiSrv))
 

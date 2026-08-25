@@ -57,7 +57,6 @@ export interface Scope {
 
 export interface ListResponse {
   items?: Row[]
-  objects?: KubeObject[]
   columns?: Column[]
   total: number
   page: number

@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
+
+	"github.com/daiwa-zou/orrery/backend/internal/cluster"
 )
 
 // explain answers `kubectl explain <resource>[.field...]` from the cluster's
@@ -117,9 +120,7 @@ func (a *API) explainHandler(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, badRequest("version and kind are required"))
 		return
 	}
-	if group == "core" || group == "_" {
-		group = ""
-	}
+	group = cluster.NormalizeGroup(group)
 
 	// The OpenAPI document is world-readable metadata on every cluster
 	// (system:discovery), so no per-user review is needed — there is no
@@ -230,14 +231,10 @@ func (a *API) explainHandler(w http.ResponseWriter, r *http.Request) {
 
 func sortFields(fields []explainField) {
 	// Required fields first, then alphabetical — the order a reader wants.
-	for i := 1; i < len(fields); i++ {
-		for j := i; j > 0; j-- {
-			a, b := fields[j-1], fields[j]
-			if (b.Required && !a.Required) || (a.Required == b.Required && b.Name < a.Name) {
-				fields[j-1], fields[j] = b, a
-			} else {
-				break
-			}
+	sort.SliceStable(fields, func(i, j int) bool {
+		if fields[i].Required != fields[j].Required {
+			return fields[i].Required
 		}
-	}
+		return fields[i].Name < fields[j].Name
+	})
 }

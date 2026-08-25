@@ -10,7 +10,7 @@ import { Button, Corners, Spinner } from '../components/primitives'
  */
 export function Login() {
   const [params] = useSearchParams()
-  const [config, setConfig] = useState<{ oidcEnabled: boolean; loginPath: string }>()
+  const [config, setConfig] = useState<Awaited<ReturnType<typeof api.authConfig>>>()
   const [loadError, setLoadError] = useState<string>()
 
   const error = params.get('error')
