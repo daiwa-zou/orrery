@@ -9,6 +9,7 @@ import { toggleSelectorTerm } from '../lib/labels'
 import type { SearchQuery } from '../lib/searchQuery'
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
+import { RefreshIcon, TagIcon, TrashIcon } from '../components/icons'
 import { SearchBar } from '../components/SearchBar'
 import { Badge, Button, ErrorState, GatedButton, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
@@ -331,8 +332,10 @@ export function ResourceList() {
         />
         <Button
           size="sm"
+          icon
           variant={showLabels ? 'primary' : 'default'}
           aria-pressed={showLabels}
+          aria-label="Toggle labels column"
           title={
             showLabels
               ? 'Hide the labels column'
@@ -340,10 +343,16 @@ export function ResourceList() {
           }
           onClick={() => update({ labels: showLabels ? null : '1' })}
         >
-          Labels
+          <TagIcon />
         </Button>
-        <Button size="sm" onClick={() => refetch()}>
-          Refresh
+        <Button
+          size="sm"
+          icon
+          aria-label="Refresh"
+          title="Refresh this list now"
+          onClick={() => refetch()}
+        >
+          <RefreshIcon />
         </Button>
         {canCreate && (
           <GatedButton
@@ -447,11 +456,13 @@ export function ResourceList() {
                       allowed={mayDelete}
                       deniedTitle={`Requires delete on ${resource}`}
                       size="sm"
+                      icon
                       variant="ghost"
+                      aria-label={`Delete ${row.name}`}
                       title={`Delete ${row.name}`}
                       onClick={() => setPendingBulk({ action: 'delete', rows: [row] })}
                     >
-                      Delete
+                      <TrashIcon className="size-3.5" />
                     </GatedButton>
                   )
                 : undefined

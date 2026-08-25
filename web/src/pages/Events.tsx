@@ -4,6 +4,7 @@ import { useDiscovery, useEvents } from '../api/hooks'
 import type { APIResource, Row } from '../api/types'
 import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
+import { RefreshIcon } from '../components/icons'
 import { Button, ErrorState, Spinner } from '../components/primitives'
 import { useDebouncedInput } from '../lib/useDebouncedInput'
 
@@ -126,8 +127,14 @@ export function Events() {
           title="Matches object, reason, message or namespace"
           className="w-56 rounded-md bg-surface-2 px-2.5 py-1.5 text-sm text-ink ring-1 ring-border placeholder:text-ink-faint"
         />
-        <Button size="sm" onClick={() => refetch()}>
-          Refresh
+        <Button
+          size="sm"
+          icon
+          aria-label="Refresh"
+          title="Refresh events now"
+          onClick={() => refetch()}
+        >
+          <RefreshIcon />
         </Button>
       </div>
 

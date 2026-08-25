@@ -99,6 +99,9 @@ export function Button({
   disabled,
   title,
   type = 'button',
+  icon,
+  'aria-label': ariaLabel,
+  'aria-pressed': ariaPressed,
 }: {
   children: ReactNode
   onClick?: () => void
@@ -107,18 +110,30 @@ export function Button({
   disabled?: boolean
   title?: string
   type?: 'button' | 'submit'
+  /** Icon-only: square padding; pass aria-label and title, the icon is mute. */
+  icon?: boolean
+  'aria-label'?: string
+  'aria-pressed'?: boolean
 }) {
   return (
     <button
       type={type}
       title={title}
+      aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
       onClick={onClick}
       disabled={disabled}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-md font-medium transition-colors',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         'disabled:cursor-not-allowed disabled:opacity-45',
-        size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm',
+        icon
+          ? size === 'sm'
+            ? 'p-1.5'
+            : 'p-2'
+          : size === 'sm'
+            ? 'px-2 py-1 text-xs'
+            : 'px-3 py-1.5 text-sm',
         {
           'bg-surface-2 text-ink ring-1 ring-border hover:bg-border/60': variant === 'default',
           'bg-accent text-canvas hover:brightness-110': variant === 'primary',

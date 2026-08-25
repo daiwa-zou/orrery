@@ -13,6 +13,7 @@ import { useClusters, useDiscovery, useListAccess, useMe, useNamespaces } from '
 import type { ClusterSummary, HealthStatus } from '../api/types'
 import { navLabel } from '../lib/format'
 import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
+import { SearchIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
 import { buildNav, type NavItem } from './nav'
@@ -575,6 +576,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 onClick={() => setPaletteOpen(true)}
                 className="flex w-full items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5 text-left text-sm text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
               >
+                <SearchIcon className="size-3.5" />
                 <span>Search</span>
                 <kbd className="ml-auto rounded border border-border px-1 font-sans text-[10px]">
                   ⌘K

@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { wsURL } from '../api/client'
 import type { LogMessage } from '../api/types'
+import { DownloadIcon, FollowIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
 
 /** How many lines to keep in the DOM. Beyond this the browser, not the
@@ -236,17 +237,27 @@ export function LogViewer({
         {!follow && (
           <Button
             size="sm"
+            icon
+            aria-label="Follow"
+            title="Jump to the newest lines and keep following"
             onClick={() => {
               setFollow(true)
               const el = scrollRef.current
               if (el) el.scrollTop = el.scrollHeight
             }}
           >
-            Follow
+            <FollowIcon />
           </Button>
         )}
-        <Button size="sm" onClick={download} disabled={buf.items.length === 0}>
-          Download
+        <Button
+          size="sm"
+          icon
+          aria-label="Download logs"
+          title="Download the visible log lines"
+          onClick={download}
+          disabled={buf.items.length === 0}
+        >
+          <DownloadIcon />
         </Button>
       </div>
 

@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from 'react'
 import type { Column, Row } from '../api/types'
 import { duration, ratioTone } from '../lib/format'
 import { rowKey, toggleAll, toggleRow } from '../lib/selection'
+import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { Age, Badge, EmptyState, StatusBadge } from './primitives'
 
 export interface DataTableProps {
@@ -369,21 +370,25 @@ export function Pagination({
 
         <div className="flex items-center gap-1">
           <button
-            className="rounded px-2 py-1 hover:bg-surface-2 disabled:opacity-40"
+            aria-label="Previous page"
+            title="Previous page"
+            className="rounded p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page - 1)}
             disabled={page <= 1}
           >
-            Previous
+            <ChevronLeftIcon className="size-3.5" />
           </button>
           <span className="tabular-nums">
             {page} / {pages}
           </span>
           <button
-            className="rounded px-2 py-1 hover:bg-surface-2 disabled:opacity-40"
+            aria-label="Next page"
+            title="Next page"
+            className="rounded p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page + 1)}
             disabled={page >= pages}
           >
-            Next
+            <ChevronRightIcon className="size-3.5" />
           </button>
         </div>
       </div>
