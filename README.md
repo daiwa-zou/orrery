@@ -12,11 +12,9 @@
      src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdaiwa-zou%2Forrery%2Fbadges%2Fcoverage.json" alt="Coverage"></a>
 </p>
 
-A multi-cluster Kubernetes dashboard with OIDC sign-in.
-
-One console for every cluster you run. Sign in with your own identity provider;
-what you can see and do in each cluster is decided by that cluster's own RBAC,
-not by the dashboard.
+One console for every cluster you run. Sign in with your own identity
+provider; what you can see and do in each cluster is decided by that cluster's
+own RBAC, not by the dashboard.
 
 ```
 ┌──────────────┐    OIDC     ┌───────────────┐   impersonation   ┌────────────┐
@@ -45,44 +43,45 @@ reasons, owner references linked upward, logs one click away.
 ## What it does
 
 **Every resource, including yours.** One generic API path serves every
-group/version/resource the cluster advertises, so built-in kinds and custom
-resources work identically — no per-kind backend code, and a CRD installed a
-minute ago is browsable immediately. Well-known kinds get hand-tuned tables;
-custom resources get their own `additionalPrinterColumns`, the same columns
-`kubectl get` would show.
+group/version/resource the cluster advertises, so custom resources work
+exactly like built-in kinds and a CRD installed a minute ago is browsable
+immediately — with the same columns `kubectl get` would show.
 
 **Live by default.** Lists stream changes over a WebSocket. A pod flipping to
-`CrashLoopBackOff` updates the row you are looking at without a refresh.
+`CrashLoopBackOff` updates the row you are looking at, without a refresh.
 
-**The things you open a dashboard for.** Log streaming with follow and filter,
-an interactive terminal into any container, YAML view and edit, scale, rolling
-restart, cordon, drain with dry run, evict, delete, a cluster-wide event feed
-plus events scoped to an object, and node/pod metrics from metrics-server —
-including live CPU/memory columns on the pod list. A pod's page resolves each
-container's environment — ConfigMap and Secret references, downward-API fields
-— with the referenced objects read under your own RBAC, and Secret and
-ConfigMap pages show their data decoded, secret values masked until you ask.
+**The things you open a dashboard for.** Log streaming, a terminal into any
+container, YAML view and edit, scale, rolling restart, cordon, drain with dry
+run, evict, delete, event feeds, and node/pod metrics from metrics-server.
+Pod pages resolve each container's environment — ConfigMap and Secret
+references, downward-API fields — reading the referenced objects under your
+own RBAC.
 
-**Made for the "why is it broken?" walk.** A pod's page tables its containers
-with state, restarts and last exit code, each row one click from that
-container's logs. Workloads link to the pods their selector owns; nodes link
-to the pods scheduled on them; owner references link upward. The trail from a
-warning event to the crashing container's previous logs never leaves the UI.
+**Made for the "why is it broken?" walk.** Warning event → object → container
+row → that container's logs (`previous` included) → terminal, all without
+leaving the page's context. Workloads link to the pods their selector owns;
+nodes link to the pods scheduled on them; owner references link upward.
 
 **Multi-cluster that is actually multi-cluster.** Clusters are registered
-independently, probed for health, and shown side by side on the fleet page.
-One unreachable cluster does not stop the others from working — it is marked
-unreachable and retried in the background.
+independently, probed for health, and shown side by side. One unreachable
+cluster is marked unreachable and retried in the background; the others keep
+working.
+
+**One search bar does everything.** Bare words are free text; `app=web`,
+`tier!=cache`, `!deprecated` and `key in (a,b)` are label terms; dotted keys
+like `status.phase=Running` are field terms. `⌘K` opens it from anywhere, `?`
+lists every shortcut.
 
 ## How permission works
 
 This is the part worth understanding before you deploy it.
 
-Orrery never decides what you may see. Every read and every write is
-preceded by a `SubjectAccessReview` against the cluster in question, so your
-Roles, ClusterRoles, webhook authorizers and admission plugins remain the only
-authority. Verdicts are cached for 30 seconds so a fifty-row table is not fifty
-round trips.
+Orrery never decides what you may see. Every read and every write is preceded
+by a `SubjectAccessReview` against the cluster in question, so your Roles,
+ClusterRoles, webhook authorizers and admission plugins remain the only
+authority. Verdicts are cached briefly, so a fifty-row table is not fifty
+round trips. Anything you lack permission for is dimmed with a tooltip saying
+so — not hidden, and not a surprise 403.
 
 Each cluster picks one of three modes:
 
@@ -92,58 +91,41 @@ Each cluster picks one of three modes:
 | `passthrough` | The user, via their own OIDC token as bearer | The cluster's API server already trusts your OIDC issuer. |
 | `serviceaccount` | The dashboard | Read-only demo clusters with no per-user identity. |
 
-Under impersonation the dashboard holds one credential per cluster and adds the
-user's identity as headers. That gets you correct per-user RBAC *and* a single
-shared cache — the reason the dashboard stays cheap as users are added. The
-trade is real and worth stating plainly: **the dashboard's service account can
-impersonate anyone**, so the pod must be treated as a sensitive workload.
+Under impersonation the dashboard holds one credential per cluster and adds
+the user's identity as headers. That buys correct per-user RBAC *and* a single
+shared cache — the reason it stays cheap as users are added. The trade is real
+and worth stating plainly: **the dashboard's service account can impersonate
+anyone**, so the pod must be treated as a sensitive workload.
 
-Claim mapping mirrors the kube-apiserver's own flags (`usernameClaim`,
-`groupsClaim`, and their prefixes): a configured prefix always applies, `-`
-disables prefixing, and when no prefix is set the default is the bare address
-for an `email` claim and `issuer#value` for any other claim. Configure both
-the same way and an impersonated identity matches your existing bindings
-exactly.
+Claim mapping mirrors the kube-apiserver's own flags, so an impersonated
+identity matches your existing bindings exactly — see [docs/OIDC.md](docs/OIDC.md).
 
-## Running it locally
+## Quick start
 
 The quickest start is a [release binary](https://github.com/daiwa-zou/orrery/releases):
-one self-contained executable per platform with the web UI embedded — download,
-unpack, and point it at a config:
+one self-contained executable per platform with the web UI embedded.
 
 ```bash
 ./orrery -config orrery.yaml
 ```
 
 `SHA256SUMS` on the release page verifies the download, and `./orrery -version`
-reports what you got. Set `server.webRoot` only to override the embedded UI
-with a build from disk.
+reports what you got.
 
-To hack on it instead, you need Go 1.26+, Node 22+ and a cluster. With `kind`:
+To hack on it instead you need Go 1.26+, Node 22+ and a cluster:
 
 ```bash
 kind create cluster --name lens-a
-```
-
-Point the backend at it and start both halves:
-
-```bash
-make run
-```
-
-```bash
-make web-dev
+make run        # backend on :8080, against configs/orrery.dev.yaml
+make web-dev    # SPA on :5173, proxying /api to the backend
 ```
 
 The dev config registers `kind-lens-a` in `serviceaccount` mode with OIDC off,
-which is the fastest way to see something. The SPA runs on
-<http://localhost:5173> and proxies `/api` — REST and WebSocket alike — to the
-backend on `:8080`.
+which is the fastest way to see something. Set `context: '*'` to turn every
+context in your kubeconfig into a registered cluster.
 
-To point at every context in your kubeconfig at once, set `context: '*'` and
-each context becomes a registered cluster.
-
-### Trying the OIDC flow
+<details>
+<summary>Trying the OIDC flow locally</summary>
 
 `configs/orrery.oidc.yaml` is wired to a local [Dex](https://dexidp.io):
 
@@ -155,258 +137,88 @@ docker run -d --name orrery-dex -p 5556:5556 \
 
 Dex's mock connector signs you in as `kilgore@kilgore.trout` in group
 `authors`. Both clusters in that config use impersonation, so grant the
-identity something before expecting to see anything:
+identity something first:
 
 ```bash
 kubectl create clusterrolebinding demo-view \
   --clusterrole=view --group='oidc:authors'
 ```
 
-A full walkthrough of the flow, claim mapping, per-provider setup (Dex,
-Keycloak, Entra ID, Okta, Google) and troubleshooting lives in
+Full walkthrough, per-provider setup and troubleshooting:
 [docs/OIDC.md](docs/OIDC.md).
 
-## Using it
-
-- **One search bar does everything.** Bare words are free text against name,
-  namespace and labels; `app=web`, `tier!=cache`, `!deprecated`,
-  `key in (a,b)` are label terms; dotted keys like `status.phase=Running` are
-  field terms. Autocomplete is fed by the facets of what you may actually see.
-- **`⌘K` opens search from anywhere; `?` shows every shortcut.**
-- **Lists are live** — the `live` badge means rows update over a WebSocket.
-  Click a label chip to filter by it; column headers sort server-side.
-- **Actions live on the row and the detail page.** Anything you lack
-  permission for is dimmed with a tooltip saying so, not hidden and not a
-  surprise 403.
-- **The debugging walk is linked end to end:** warning event → object →
-  container row → that container's logs (`previous` included) → terminal,
-  without leaving the page's context.
+</details>
 
 ## Deploying it
 
-Full guide — topologies, scaling behaviour, security posture, upgrades —
-in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The short version:
-
 ```bash
-kubectl create secret generic orrery-session \
-  --from-literal=encryptionKey="$(openssl rand -base64 32)"
-kubectl create secret generic orrery-oidc \
-  --from-literal=clientSecret='...'
-
 helm install orrery ./deploy/helm/orrery \
   --set publicURL=https://orrery.example.com \
   --set oidc.issuer=https://accounts.example.com \
   --set oidc.clientID=orrery
 ```
 
-Container images are published by CI to
-`ghcr.io/daiwa-zou/orrery` (multi-arch, distroless, nonroot) on every push
-to `main` and on `v*` tags; the chart's default `session.store: redis`
-expects a Redis you provide (see the deployment guide).
+The chart expects two secrets and a Redis you provide. Images are published by
+CI to `ghcr.io/daiwa-zou/orrery` (multi-arch, distroless, nonroot) on every
+push to `main` and on `v*` tags.
 
-Three things bite people here:
-
-- **The session key must be shared across replicas.** Without it each pod mints
-  its own at boot and users are signed out whenever they land on a different
-  one. The server logs a warning when it generates one.
-- **More than one replica needs `session.store: redis`.** The default in-memory
-  store keeps sessions inside the pod, so a request that lands elsewhere looks
-  unauthenticated. The chart defaults to Redis for exactly this reason; point
-  `session.redisURL` at your instance.
-- **Long-lived streams need long proxy timeouts.** Log follows, watches and
-  exec sessions stay open for hours; the chart sets the nginx annotations, but
-  any other proxy in front needs the same treatment.
-
-Remote clusters are added by mounting a kubeconfig secret and listing them:
-
-```yaml
-kubeconfigSecret: orrery-kubeconfigs
-clusters:
-  - name: in-cluster
-    inCluster: true
-    authMode: impersonation
-  - name: prod-eu
-    kubeconfig: /etc/orrery/kubeconfigs/prod-eu.yaml
-    authMode: impersonation
-    labels: { env: production, region: eu-west-1 }
-```
-
-## Configuration reference
-
-Every field has a default; `-print-config` shows what the server actually
-resolved, with secrets masked. Environment variables
-(`ORRERY_OIDC_CLIENT_SECRET`, `ORRERY_SESSION_KEY`, …) override the
-file, and `${VAR}` inside the file is expanded — so secrets never have to be
-written down next to the rest of the config.
-
-The knobs that matter under load:
-
-| Field | Default | What it controls |
-| --- | --- | --- |
-| `cache.idleTimeout` | `10m` | How long an unwatched resource cache survives before being stopped. |
-| `cache.maxInformersPerCluster` | `64` | Ceiling on concurrent caches per cluster; the least recently used is retired past it. |
-| `authz.ttl` | `30s` | How long an access-review verdict is cached. Lower means revocations apply sooner and more load on the API server. |
-| `authz.namespaceScanLimit` | `200` | Bound on the per-namespace probe used for users without cluster-wide read. Truncation is reported to the UI, never hidden. |
-
-## API
-
-The whole surface is one shape. `{group}` is `core` for the legacy group and
-`{namespace}` is `_` for cluster-scoped resources, so one route serves
-everything:
-
-```
-GET    /api/v1/clusters
-GET    /api/v1/clusters/{c}/discovery
-GET    /api/v1/clusters/{c}/overview
-GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}
-GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
-POST   /api/v1/clusters/{c}/resources/{group}/{version}/{resource}
-PUT    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
-PATCH  /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
-DELETE /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
-POST   /api/v1/clusters/{c}/access
-POST   /api/v1/clusters/{c}/actions/{scale|restart|cordon|drain|evict}
-GET    /api/v1/clusters/{c}/ws/watch/{group}/{version}/{resource}
-GET    /api/v1/clusters/{c}/ws/logs
-GET    /api/v1/clusters/{c}/ws/exec
-GET    /api/v1/clusters/{c}/stats
-```
-
-List endpoints take `namespace`, `q`, `labelSelector`, `fieldSelector`, `sort`,
-`order`, `page`, `pageSize` and `view=table|full`. `q` is free text matched
-against name, namespace and labels (`app=web` works). The watch endpoint
-accepts the same `q`/`labelSelector`/`fieldSelector` and translates edits
-across the filter boundary into ADDED/DELETED, so a filtered page only hears
-about objects it shows. Unsupported `fieldSelector` fields are rejected with
-a 400 naming the supported set rather than silently matching nothing.
-
-`GET .../resources/{g}/{v}/{r}/facets` returns the distinct label keys/values
-and low-cardinality field values on the objects the caller may list — the
-vocabulary behind the search bar's autocomplete. The UI exposes all of this as
-one search input: bare words are free text, `key=value` / `key!=value` /
-`!key` / `key in (a,b)` are label terms, and dotted keys like
-`status.phase=Running` are field terms.
-
-Sessions are cookie-based: the session cookie is `HttpOnly` and encrypted, and
-mutating requests carry a double-submit CSRF token in `X-CSRF-Token`.
-
-## Observability
-
-`/metrics` on the metrics listener exposes request rate and latency by route
-(labelled by pattern, so cardinality stays bounded), plus live gauges for cache
-size and subscriber counts per cluster and resource.
-
-`GET /api/v1/clusters/{c}/stats` shows exactly which caches are running, how
-many objects each holds, and how long they have been idle. It is the first
-place to look when memory use surprises you.
-
-## Project layout
-
-One Go module at the repository root, laid out the way Go projects usually
-are — so `go build ./cmd/orrery`, `go test ./...` and
-`go install github.com/daiwa-zou/orrery/cmd/orrery@latest` all work without
-a `cd` first:
-
-```
-cmd/orrery/        the server entry point — flags, logging, signal handling
-internal/api/      HTTP and WebSocket handlers; one generic resource path
-internal/auth/     OIDC, sessions, CSRF, and the session stores
-internal/authz/    SubjectAccessReview and its short-lived verdict cache
-internal/cluster/  per-cluster clients, informer caches, discovery
-internal/config/   configuration loading, defaults, environment expansion
-internal/server/   wiring: listeners, middleware, graceful shutdown
-internal/webfs/    optional embedded copy of the built SPA (bundleweb tag)
-web/               the Vite + React single-page app
-configs/           sample configurations for local runs
-deploy/            Helm chart, dev Dex, remote-cluster RBAC manifests
-docs/              architecture, deployment and OIDC guides; brand assets
-```
-
-Everything importable lives under `internal/`, so there is no public API
-surface to keep stable, and `cmd/orrery` is the only binary. The `Dockerfile`
-sits at the root because the image needs both halves — it builds the SPA and
-the Go binary in separate stages and ships only the results.
+Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before going to production — it
+covers the prerequisites, the topologies that work, what to tune, and
+[three failure modes](docs/DEPLOYMENT.md#three-things-that-bite-people) that
+each look like an unrelated bug when you hit them.
 
 ## Development
 
 `make help` lists every target. The ones worth knowing:
 
 ```bash
-make run          # server against configs/orrery.dev.yaml
-make web-dev      # Vite dev server on :5173
-make test         # go test ./... -race
-make check        # everything CI gates on, in one command
-make bundle       # self-contained binary with the UI embedded
+make run        # server against configs/orrery.dev.yaml
+make web-dev    # Vite dev server on :5173
+make test       # go test ./... -race
+make check      # everything CI gates on, in one command
+make bundle     # self-contained binary with the UI embedded
 ```
 
-They are thin wrappers over the underlying commands, which work directly:
+Two things that catch people out:
 
-```bash
-go test ./... -race            # backend
-cd web && npx tsc -b           # frontend types
-cd web && npm test             # frontend unit tests
-cd web && npm run build        # production bundle
+- **`tsc -b`, not `tsc --noEmit`.** `tsconfig.json` uses project references
+  with an empty `files` list, so the latter typechecks nothing and passes on
+  anything.
+- **The Redis session tests skip** unless you point them at an instance:
+  `ORRERY_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race`.
+
+CI runs all of it on every pull request, plus a Helm lint, a container build,
+and security scans (`govulncheck`, `npm audit`, Trivy over the image and for
+committed secrets, dependency review). The suite re-runs weekly, because CVE
+databases move even when the code does not.
+
+## Project layout
+
+One Go module at the repository root, so `go build ./cmd/orrery`,
+`go test ./...` and `go install github.com/daiwa-zou/orrery/cmd/orrery@latest`
+work without a `cd` first.
+
+```
+cmd/orrery/   the server entry point
+internal/     api, auth, authz, cluster, config, server, webfs
+web/          the Vite + React single-page app
+configs/      sample configurations for local runs
+deploy/       Helm chart, dev Dex, remote-cluster RBAC
+docs/         guides and brand assets
 ```
 
-`tsc -b`, not `tsc --noEmit`: `tsconfig.json` uses project references with an
-empty `files` list, so the latter typechecks nothing and passes on anything.
+Everything importable lives under `internal/`, so there is no public API
+surface to keep stable, and `cmd/orrery` is the only binary.
 
-The Redis session tests skip unless you point them at an instance:
+## Documentation
 
-```bash
-docker run -d -p 6379:6379 redis:7-alpine
-ORRERY_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race
-```
-
-CI runs all of the above (with a Redis service for the session-store tests),
-lints the Helm chart, and builds the container image on every pull request;
-pushes to `main` and `v*` tags publish the image to GHCR — see
-[.github/workflows](.github/workflows).
-
-CI also gates on security scans: `govulncheck` over the backend (call-graph
-aware, so a failure means a vulnerable code path is actually reachable),
-`npm audit` over the web app's production dependencies, a Trivy scan of the
-built container image and of the repository for committed secrets, and a
-dependency review on pull requests. The whole suite re-runs weekly, because
-CVE databases move even when the code does not. The coverage badge above is
-the backend's total statement coverage, recomputed on every push to `main`.
-
-## Brand
-
-The mark is an orrery — concentric orbits with a body riding the inner ring —
-drawn monoline so it holds together from a favicon to a banner. It is defined
-once for the console in
-[`web/src/components/Logo.tsx`](web/src/components/Logo.tsx) and mirrored as
-static assets for everything outside it:
-
-| Asset | Use |
-| --- | --- |
-| [`docs/assets/orrery-mark.svg`](docs/assets/orrery-mark.svg) | The mark alone — favicon, Helm chart icon, avatars |
-| [`docs/assets/orrery-banner.svg`](docs/assets/orrery-banner.svg) | Mark, wordmark and tagline on the console's own ground |
-
-The palette is the console's, defined as custom properties in
-[`web/src/index.css`](web/src/index.css):
-
-| Token | Value | Role |
-| --- | --- | --- |
-| `--color-canvas` | `#14181e` | Page ground |
-| `--color-surface` | `#1a2028` | Sidebar, headers, cards |
-| `--color-accent` | `#5980a6` | Fills, bars, active rules |
-| `--color-accent-text` | `#94bce3` | Links and active text |
-| `--color-ink` | `#e7eaee` | Primary text |
-| `--color-ink-muted` | `#a7afba` | Secondary text |
-
-Display type is Barlow Condensed, body text Barlow. The banner's wordmark is
-drawn as geometry rather than set in the webfont, so it renders identically
-wherever the README is read — including on machines that have neither font
-installed.
-
-## Further reading
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the caching and authorization
-  design, including the parts deliberately made slower or more conservative in
-  exchange for being correct.
-- [docs/OIDC.md](docs/OIDC.md) — identity provider setup, claim mapping, and
-  troubleshooting.
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production topologies, scaling
-  behaviour, and security posture.
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — the caching and authorization
+  design, including what was deliberately made slower in exchange for being
+  correct.
+- [API.md](docs/API.md) — the HTTP and WebSocket surface, and the metrics.
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — production topologies, scaling, tuning
+  and security posture.
+- [OIDC.md](docs/OIDC.md) — provider setup, claim mapping, troubleshooting.
+- [deploy/remote-cluster](deploy/remote-cluster/) — registering a remote
+  cluster: RBAC manifests for both auth modes, and a preflight check.
+- [BRAND.md](docs/BRAND.md) — the mark, the palette and the type.
