@@ -43,7 +43,11 @@ type ServerConfig struct {
 }
 
 type OIDCConfig struct {
-	Enabled      bool     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// AutoLogin sends unauthenticated visitors straight into the OIDC flow
+	// instead of showing the sign-in button first. Sign-out and login errors
+	// still land on the login page, or signing out would bounce right back in.
+	AutoLogin    bool     `yaml:"autoLogin"`
 	Issuer       string   `yaml:"issuer"`
 	ClientID     string   `yaml:"clientID"`
 	ClientSecret string   `yaml:"clientSecret"`
@@ -258,6 +262,9 @@ func (c *Config) applyEnv() {
 
 	if v := os.Getenv("ORRERY_OIDC_ENABLED"); v != "" {
 		c.OIDC.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ORRERY_OIDC_AUTOLOGIN"); v != "" {
+		c.OIDC.AutoLogin = v == "true" || v == "1"
 	}
 	if v := os.Getenv("ORRERY_SESSION_INSECURE"); v == "true" || v == "1" {
 		c.Session.Secure = false

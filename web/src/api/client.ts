@@ -175,11 +175,29 @@ export interface ResourceRef {
   name?: string
 }
 
+/** One resolved container environment variable, as the backend reports it. */
+export interface EnvVarRow {
+  name: string
+  value?: string
+  source: 'literal' | 'configMap' | 'secret' | 'field' | 'resource'
+  from?: string
+  sensitive?: boolean
+  error?: string
+}
+
+export interface ContainerEnv {
+  name: string
+  init?: boolean
+  env: EnvVarRow[]
+}
+
 export const api = {
   me: (signal?: AbortSignal) => request<Me>('/me', {}, signal),
 
   authConfig: () =>
-    request<{ oidcEnabled: boolean; anonymous: boolean; loginPath: string }>('/auth/config'),
+    request<{ oidcEnabled: boolean; anonymous: boolean; loginPath: string; autoLogin: boolean }>(
+      '/auth/config',
+    ),
 
   logout: () => request<{ loggedOut: boolean; endSessionURL?: string }>('/auth/logout', { method: 'POST' }),
 
@@ -197,6 +215,13 @@ export const api = {
 
   podMetrics: (cluster: string, namespace?: string, signal?: AbortSignal) =>
     request<MetricsResponse>(`/clusters/${cluster}/metrics/pods${qs({ namespace })}`, {}, signal),
+
+  podEnv: (cluster: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request<{ containers: ContainerEnv[] }>(
+      `/clusters/${cluster}/pods/${namespace}/${name}/env`,
+      {},
+      signal,
+    ),
 
   cacheStats: (cluster: string, signal?: AbortSignal) =>
     request<{ cluster: string; informers: unknown[]; totalObjects: number }>(

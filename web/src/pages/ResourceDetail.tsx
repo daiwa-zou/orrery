@@ -25,6 +25,7 @@ import {
 } from '../components/primitives'
 import { useToast } from '../components/Toast'
 import { kindToResource, RESTARTABLE_KINDS, splitApiVersion } from '../lib/format'
+import { decodeSecretValue } from '../lib/secrets'
 
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
@@ -169,6 +170,169 @@ function ContainerSection({
           </tbody>
         </table>
       </div>
+    </section>
+  )
+}
+
+/**
+ * Resolved environment variables, fetched only when opened: resolution reads
+ * the referenced ConfigMaps and Secrets under the viewer's own RBAC, and that
+ * work (and those reads) should not happen for every pod page view.
+ */
+function EnvSection({ cluster, namespace, pod }: { cluster: string; namespace: string; pod: string }) {
+  const [open, setOpen] = useState(false)
+  const [revealed, setRevealed] = useState<Set<string>>(new Set())
+
+  const env = useQuery({
+    queryKey: ['podenv', cluster, namespace, pod],
+    queryFn: ({ signal }) => api.podEnv(cluster, namespace, pod, signal),
+    enabled: open,
+  })
+
+  const toggleReveal = (key: string) =>
+    setRevealed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  return (
+    <section className="blueprint bg-surface p-3.5">
+      <Corners />
+      <div className="flex items-center justify-between">
+        <h2 className="text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
+          Environment
+        </h2>
+        <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)}>
+          {open ? 'Hide' : 'Show'}
+        </Button>
+      </div>
+
+      {open && env.isLoading && (
+        <p className="mt-2 flex items-center gap-2 text-[12.5px] text-ink-faint">
+          <Spinner className="size-3.5" /> Resolving references
+        </p>
+      )}
+      {open && env.error && (
+        <p className="mt-2 text-[12.5px] text-danger">{(env.error as Error).message}</p>
+      )}
+
+      {open &&
+        env.data?.containers.map((c) => (
+          <div key={c.name} className="mt-2.5">
+            <h3 className="mb-1 font-mono text-[11.5px] text-ink-muted">
+              {c.name}
+              {c.init && <span className="ml-1.5 text-[10px] text-ink-faint uppercase">init</span>}
+            </h3>
+            {c.env.length === 0 ? (
+              <p className="text-[12px] text-ink-faint">No environment variables.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {c.env.map((e) => {
+                      const key = `${c.name}/${e.name}`
+                      const hidden = e.sensitive && !revealed.has(key)
+                      return (
+                        <tr key={key} className="border-b border-ink/8 align-top">
+                          <td className="py-1 pr-3 font-mono whitespace-nowrap text-ink">
+                            {e.name}
+                          </td>
+                          <td className="w-full py-1 pr-3 font-mono text-ink-muted">
+                            {e.error ? (
+                              <span className="text-warn">{e.error}</span>
+                            ) : hidden ? (
+                              <span className="tracking-widest text-ink-faint">••••••••</span>
+                            ) : (
+                              <span className="break-all">{e.value}</span>
+                            )}
+                          </td>
+                          <td className="py-1 pr-3 text-right whitespace-nowrap text-[11px] text-ink-faint">
+                            {e.source === 'literal' ? '' : (e.from ?? e.source)}
+                          </td>
+                          <td className="py-1 text-right">
+                            {e.sensitive && !e.error && (
+                              <Button size="sm" variant="ghost" onClick={() => toggleReveal(key)}>
+                                {hidden ? 'Reveal' : 'Hide'}
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+    </section>
+  )
+}
+
+/**
+ * The data of a Secret or ConfigMap as a key table. Secret values stay masked
+ * until asked for, key by key — reading the object needed RBAC `get` on it,
+ * but a value on screen should still be a deliberate act, not a side effect
+ * of opening the page.
+ */
+function DataSection({ obj }: { obj: KubeObject }) {
+  const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  const isSecret = obj.kind === 'Secret'
+
+  const data = (obj as { data?: Record<string, string> }).data ?? {}
+  const binaryData = (obj as { binaryData?: Record<string, string> }).binaryData ?? {}
+  const keys = [...Object.keys(data), ...Object.keys(binaryData)].sort()
+  if (keys.length === 0) return null
+
+  const toggle = (k: string) =>
+    setRevealed((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+
+  return (
+    <section className="blueprint bg-surface p-3.5">
+      <Corners />
+      <h2 className="mb-1.5 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
+        Data
+      </h2>
+      <table className="w-full text-[12px]">
+        <tbody>
+          {keys.map((k) => {
+            const fromBinary = k in binaryData
+            const decoded = isSecret || fromBinary ? decodeSecretValue(data[k] ?? binaryData[k]) : undefined
+            const value = decoded ? (decoded.text ?? '') : (data[k] ?? '')
+            const binary = decoded?.binary ?? false
+            const size = decoded ? decoded.size : value.length
+            const hidden = isSecret && !revealed.has(k)
+            return (
+              <tr key={k} className="border-b border-ink/8 align-top">
+                <td className="py-1 pr-3 font-mono whitespace-nowrap text-ink">{k}</td>
+                <td className="w-full py-1 pr-3 font-mono text-ink-muted">
+                  {binary ? (
+                    <Badge tone="idle">binary · {size} bytes</Badge>
+                  ) : hidden ? (
+                    <span className="tracking-widest text-ink-faint">••••••••</span>
+                  ) : (
+                    <pre className="max-h-48 overflow-auto break-all whitespace-pre-wrap">{value}</pre>
+                  )}
+                </td>
+                <td className="py-1 text-right">
+                  {isSecret && !binary && (
+                    <Button size="sm" variant="ghost" onClick={() => toggle(k)}>
+                      {hidden ? 'Reveal' : 'Hide'}
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </section>
   )
 }
@@ -708,6 +872,10 @@ function ResourceDetailInner() {
                 }}
               />
             )}
+
+            {isPod && ns && <EnvSection cluster={cluster!} namespace={ns} pod={name!} />}
+
+            {(kind === 'Secret' || kind === 'ConfigMap') && <DataSection obj={obj} />}
 
             {(isPod || kind === 'Service') && ns && (
               <ProxySection

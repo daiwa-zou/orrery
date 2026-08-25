@@ -47,6 +47,7 @@ mechanisms for the client secret rather than writing it into the file.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Turn the whole flow on. Off means no authentication — development only. |
+| `autoLogin` | `false` | Send unauthenticated visitors straight to the provider instead of showing the sign-in button first (`ORRERY_OIDC_AUTOLOGIN` also works). Sign-out and login errors still land on the login page, so signing out does not bounce straight back in. |
 | `issuer` | — (required) | The provider's issuer URL. Discovery is fetched from `<issuer>/.well-known/openid-configuration` at startup; the server will not start if it is unreachable. |
 | `clientID` | — (required) | OAuth2 client ID registered at the provider. |
 | `clientSecret` | — | Client secret. Prefer `ORRERY_OIDC_CLIENT_SECRET`. |

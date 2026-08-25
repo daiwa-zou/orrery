@@ -67,6 +67,7 @@ func (a *API) Router() http.Handler {
 				r.Get("/metrics/nodes", a.nodeMetrics)
 				r.Get("/metrics/pods", a.podMetrics)
 				r.Get("/pods/{namespace}/{name}/logs", a.getPodLogs)
+				r.Get("/pods/{namespace}/{name}/env", a.podEnv)
 
 				r.Get("/resources/{group}/{version}/{resource}", a.listResources)
 				r.Get("/resources/{group}/{version}/{resource}/facets", a.listFacets)

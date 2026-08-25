@@ -329,5 +329,6 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 		"oidcEnabled": a.cfg.OIDC.Enabled,
 		"anonymous":   a.mw.Anonymous(),
 		"loginPath":   "/api/v1/auth/login",
+		"autoLogin":   a.cfg.OIDC.Enabled && a.cfg.OIDC.AutoLogin,
 	})
 }

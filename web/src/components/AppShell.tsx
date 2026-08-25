@@ -374,13 +374,15 @@ export function UserMenu() {
   const label = data.user.name || data.user.email || data.user.username
 
   const signOut = async () => {
+    // signedOut=1 tells the login page this was deliberate, so autoLogin
+    // (when enabled) does not bounce the user straight back in.
     try {
       const res = await api.logout()
-      window.location.href = res.endSessionURL ?? '/login'
+      window.location.href = res.endSessionURL ?? '/login?signedOut=1'
     } catch {
       // The server-side session may or may not have been destroyed; either
       // way the only useful place to send the user is the login page.
-      window.location.href = '/login'
+      window.location.href = '/login?signedOut=1'
     }
   }
 

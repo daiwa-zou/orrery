@@ -50,7 +50,10 @@ custom resources get their own `additionalPrinterColumns`, the same columns
 an interactive terminal into any container, YAML view and edit, scale, rolling
 restart, cordon, drain with dry run, evict, delete, a cluster-wide event feed
 plus events scoped to an object, and node/pod metrics from metrics-server —
-including live CPU/memory columns on the pod list.
+including live CPU/memory columns on the pod list. A pod's page resolves each
+container's environment — ConfigMap and Secret references, downward-API fields
+— with the referenced objects read under your own RBAC, and Secret and
+ConfigMap pages show their data decoded, secret values masked until you ask.
 
 **Made for the "why is it broken?" walk.** A pod's page tables its containers
 with state, restarts and last exit code, each row one click from that

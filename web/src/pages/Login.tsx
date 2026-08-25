@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { LogoMark } from '../components/Logo'
 import { Button, Corners, Spinner } from '../components/primitives'
+import { shouldAutoLogin } from '../lib/autologin'
 
 /**
  * The login page is the only route that renders without a session, so it
@@ -12,6 +13,7 @@ export function Login() {
   const [params] = useSearchParams()
   const [config, setConfig] = useState<Awaited<ReturnType<typeof api.authConfig>>>()
   const [loadError, setLoadError] = useState<string>()
+  const [redirecting, setRedirecting] = useState(false)
 
   const error = params.get('error')
   const returnTo = params.get('returnTo') ?? '/'
@@ -27,6 +29,16 @@ export function Login() {
     if (!config) return
     window.location.href = `${config.loginPath}?returnTo=${encodeURIComponent(returnTo)}`
   }
+
+  // With autoLogin the button is a formality; skip it. Errors and fresh
+  // sign-outs still render the page (see shouldAutoLogin).
+  useEffect(() => {
+    if (config && shouldAutoLogin(config, params)) {
+      setRedirecting(true)
+      window.location.href = `${config.loginPath}?returnTo=${encodeURIComponent(returnTo)}`
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once, when config arrives
+  }, [config])
 
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -59,7 +71,13 @@ export function Login() {
           </p>
         )}
 
-        {config?.oidcEnabled && (
+        {redirecting && (
+          <p className="flex items-center gap-2 text-[13px] text-ink-faint">
+            <Spinner className="size-3.5" /> Redirecting to your identity provider
+          </p>
+        )}
+
+        {config?.oidcEnabled && !redirecting && (
           <div className="blueprint bg-surface p-[18px]">
             <Corners />
             <p className="mb-3.5 text-[13.5px] leading-relaxed text-ink-muted">
