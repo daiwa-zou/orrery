@@ -175,6 +175,35 @@ func identityFrom(r *http.Request) (cluster.Identity, error) {
 	return id, nil
 }
 
+// refreshStreamIdentity re-resolves a stream's identity from the session
+// store, called on each re-authorization cycle. It renews OIDC tokens that
+// have gone stale since the handshake — without this, a passthrough cluster's
+// re-authorization starts presenting an expired token and healthy streams die
+// — and it returns an error when the session itself is gone (signed out or
+// expired), because a watch or shell must not outlive the login that opened
+// it. With OIDC disabled it is a no-op.
+func (a *API) refreshStreamIdentity(ctx context.Context, r *http.Request, res *resolved) error {
+	sess, ok := auth.SessionFrom(r.Context())
+	if !ok {
+		return nil // anonymous mode: the identity cannot go stale
+	}
+	fresh, err := a.mw.FreshSession(ctx, sess.ID)
+	if err != nil {
+		return err
+	}
+	id := cluster.Identity{
+		Username:    fresh.User.Username,
+		Groups:      fresh.User.Groups,
+		BearerToken: fresh.IDToken,
+	}
+	clients, err := res.cluster.ClientsFor(id)
+	if err != nil {
+		return err
+	}
+	res.identity, res.clients = id, clients
+	return nil
+}
+
 // resolved bundles everything a resource handler needs after routing.
 type resolved struct {
 	cluster  *cluster.Cluster

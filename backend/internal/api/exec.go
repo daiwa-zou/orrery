@@ -186,7 +186,10 @@ func (a *API) execIntoPod(w http.ResponseWriter, r *http.Request) {
 	go session.readLoop()
 
 	// An interactive shell is the most privileged stream the dashboard offers;
-	// like watches, it must not outlive the permission that opened it.
+	// like watches, it must not outlive the permission — or the session — that
+	// opened it. The goroutine works on its own copy of res because the main
+	// goroutine still reads res for the executor.
+	reauthRes := *res
 	go func() {
 		t := time.NewTicker(reauthorizeInterval)
 		defer t.Stop()
@@ -195,7 +198,12 @@ func (a *API) execIntoPod(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := a.authorize(ctx, res, "create", namespace, pod, "exec"); err != nil {
+				if err := a.refreshStreamIdentity(ctx, r, &reauthRes); err != nil {
+					ws.wsError("session expired; sign in again")
+					cancel()
+					return
+				}
+				if err := a.authorize(ctx, &reauthRes, "create", namespace, pod, "exec"); err != nil {
 					ws.wsError("access to this pod was revoked")
 					cancel()
 					return

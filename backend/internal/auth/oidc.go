@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	oidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/daiwa-zou/orrery/backend/internal/config"
 )
@@ -47,7 +47,9 @@ type Authenticator struct {
 	// not configure one.
 	endSessionURL string
 
-	refreshMu sync.Mutex
+	// refreshSF collapses concurrent refreshes of the same session (keyed by
+	// session ID); see Refresh for why that matters with rotating providers.
+	refreshSF singleflight.Group
 }
 
 // NewAuthenticator performs OIDC discovery and builds the flow configuration.
@@ -299,44 +301,79 @@ func (a *Authenticator) mapUsername(rawName string) string {
 	return a.cfg.Issuer + "#" + rawName
 }
 
-// Refresh renews an access/ID token that is close to expiry. Callers hold no
-// lock; the mutex only serialises concurrent refreshes of the same process.
+// Refresh renews an access/ID token that is close to expiry. Concurrent
+// refreshes of the same session collapse into one provider round trip —
+// presenting the same refresh token twice trips providers with rotation reuse
+// detection, which invalidates the whole token family and logs the user out.
+// Different sessions refresh independently, so one user's slow provider call
+// does not queue everyone else's.
 func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 	if s.RefreshToken == "" {
 		return errors.New("session has no refresh token")
 	}
-	a.refreshMu.Lock()
-	defer a.refreshMu.Unlock()
 
-	// Re-read from the store: s is this request's private copy, so checking it
-	// again learns nothing. Another request may have refreshed while we waited
-	// on the lock — presenting the same refresh token twice trips providers
-	// with rotation reuse detection, which invalidates the whole token family
-	// and logs the user out.
-	if fresh, err := a.sessions.Get(ctx, s.ID); err == nil {
-		*s = *fresh
-	}
-	if !s.TokenExpiry.IsZero() && time.Until(s.TokenExpiry) > time.Minute {
-		return nil
-	}
-
-	src := a.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: s.RefreshToken})
-	tok, err := src.Token()
-	if err != nil {
-		return fmt.Errorf("refresh token: %w", err)
-	}
-	if raw, ok := tok.Extra("id_token").(string); ok && raw != "" {
-		if _, err := a.verifier.Verify(ctx, raw); err != nil {
-			return fmt.Errorf("refreshed id_token invalid: %w", err)
+	v, err, _ := a.refreshSF.Do(s.ID, func() (any, error) {
+		// Re-read from the store: s is this caller's private copy, so checking
+		// it again learns nothing. Another request may have refreshed while we
+		// waited to enter the group.
+		fresh, err := a.sessions.Get(ctx, s.ID)
+		if err != nil {
+			return nil, fmt.Errorf("session gone: %w", err)
 		}
-		s.IDToken = raw
+		if !fresh.TokenExpiry.IsZero() && time.Until(fresh.TokenExpiry) > time.Minute {
+			return fresh, nil
+		}
+
+		src := a.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: fresh.RefreshToken})
+		tok, err := src.Token()
+		if err != nil {
+			return nil, fmt.Errorf("refresh token: %w", err)
+		}
+		if raw, ok := tok.Extra("id_token").(string); ok && raw != "" {
+			if _, err := a.verifier.Verify(ctx, raw); err != nil {
+				return nil, fmt.Errorf("refreshed id_token invalid: %w", err)
+			}
+			fresh.IDToken = raw
+		}
+		fresh.AccessToken = tok.AccessToken
+		if tok.RefreshToken != "" {
+			fresh.RefreshToken = tok.RefreshToken
+		}
+		fresh.TokenExpiry = tok.Expiry
+		if err := a.sessions.Save(ctx, fresh); err != nil {
+			return nil, err
+		}
+		return fresh, nil
+	})
+	if err != nil {
+		return err
 	}
-	s.AccessToken = tok.AccessToken
-	if tok.RefreshToken != "" {
-		s.RefreshToken = tok.RefreshToken
+	*s = *v.(*Session)
+	return nil
+}
+
+// RefreshFatal reports whether a refresh failure is definitive — the grant
+// itself is gone — rather than a transient provider hiccup. Callers destroy
+// the session on a fatal failure and keep serving on a transient one, so an
+// identity provider blip does not sign everyone out.
+func RefreshFatal(err error) bool {
+	if err == nil {
+		return false
 	}
-	s.TokenExpiry = tok.Expiry
-	return a.sessions.Save(ctx, s)
+	var rerr *oauth2.RetrieveError
+	if errors.As(err, &rerr) {
+		// invalid_grant is the spec's "this refresh token is expired, revoked
+		// or already rotated out". Any other 4xx except 429 is a request the
+		// provider understood and refused; retrying will not change its mind.
+		if rerr.ErrorCode == "invalid_grant" {
+			return true
+		}
+		if rerr.Response != nil {
+			code := rerr.Response.StatusCode
+			return code >= 400 && code < 500 && code != http.StatusTooManyRequests
+		}
+	}
+	return false
 }
 
 // NeedsRefresh reports whether the session's tokens are near or past expiry.

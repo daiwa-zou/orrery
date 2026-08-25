@@ -112,6 +112,13 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case <-reauth.C:
+			// A signed-out or expired session ends the stream; a token near
+			// expiry is renewed here so the scope check below never presents
+			// stale credentials.
+			if err := a.refreshStreamIdentity(ctx, r, res); err != nil {
+				ws.wsError("session expired; sign in again")
+				return
+			}
 			// Adopt the recomputed scope, not just the yes/no: losing one
 			// namespace out of several must stop that namespace's objects from
 			// streaming, and only total revocation closes the socket.

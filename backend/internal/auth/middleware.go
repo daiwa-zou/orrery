@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Middleware resolves the session cookie into a request-scoped identity and
@@ -45,13 +48,23 @@ func (m *Middleware) Authenticated(next http.Handler) http.Handler {
 
 		if m.auth != nil && NeedsRefresh(sess) {
 			if err := m.auth.Refresh(r.Context(), sess); err != nil {
-				_ = m.sessions.Destroy(r.Context(), sess.ID)
-				m.sessions.ClearCookies(w)
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error":  "session_expired",
-					"reason": "could not refresh credentials; sign in again",
-				})
-				return
+				// Only a definitive refusal ends the session. On a transient
+				// provider failure the current token is still valid for a
+				// little while (NeedsRefresh fires ahead of expiry), so serve
+				// this request and let a later one retry — an identity
+				// provider blip must not sign everyone out.
+				if !RefreshFatal(err) {
+					slog.Warn("token refresh failed transiently; serving with current token",
+						"session", sess.ID[:8], "err", err)
+				} else {
+					_ = m.sessions.Destroy(r.Context(), sess.ID)
+					m.sessions.ClearCookies(w)
+					writeJSON(w, http.StatusUnauthorized, map[string]any{
+						"error":  "session_expired",
+						"reason": "could not refresh credentials; sign in again",
+					})
+					return
+				}
 			}
 		}
 
@@ -104,6 +117,38 @@ func (m *Middleware) WebSocketAuth(r *http.Request) (*Session, *User, bool) {
 		return nil, nil, false
 	}
 	return sess, &sess.User, true
+}
+
+// FreshSession re-reads a live session by ID, renewing its tokens when they
+// are near expiry. It exists for long-lived streams (watch, logs, exec), which
+// authenticate once at the handshake and must notice what happens afterwards:
+// a sign-out or expired session returns an error — the stream must not outlive
+// the login that opened it — while a refresh keeps a passthrough stream's
+// re-authorization working past the original token's lifetime. Transient
+// refresh failures are tolerated for the same reason they are on the request
+// path.
+func (m *Middleware) FreshSession(ctx context.Context, id string) (*Session, error) {
+	sess, err := m.sessions.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// An open stream is activity: without this stamp a long log follow or
+	// shell would hit the idle timeout mid-use. The absolute TTL still bounds
+	// the session's total lifetime.
+	if time.Since(sess.LastSeen) > time.Minute {
+		sess.LastSeen = time.Now()
+		_ = m.sessions.Save(ctx, sess)
+	}
+	if m.auth != nil && NeedsRefresh(sess) {
+		if err := m.auth.Refresh(ctx, sess); err != nil {
+			if RefreshFatal(err) {
+				return nil, err
+			}
+			slog.Warn("stream token refresh failed transiently; keeping current token",
+				"session", sess.ID[:8], "err", err)
+		}
+	}
+	return sess, nil
 }
 
 // Anonymous reports whether authentication is disabled.

@@ -27,10 +27,14 @@ what your RBAC bindings expect. Everything else has a sensible default.
    never in the browser.
 4. When `offlineAccess` is on (the default), Orrery requests a refresh token
    and renews tokens shortly before expiry, so a 12-hour session survives a
-   provider that issues 5-minute ID tokens. Refreshes are serialized and the
-   session is re-read from the store first, so token-rotation providers
-   (which invalidate the whole token family if a refresh token is replayed)
-   are safe across concurrent requests.
+   provider that issues 5-minute ID tokens. Concurrent refreshes of one
+   session collapse into a single provider round trip, so token-rotation
+   providers (which invalidate the whole token family if a refresh token is
+   replayed) are safe across concurrent requests. Long-lived streams — watches,
+   log follows, terminals — renew on their 60-second re-authorization cycle
+   too, and end when the session ends, so a sign-out closes them. A transient
+   provider failure (5xx, throttling) never signs the user out; only a
+   definitive `invalid_grant` does.
 
 ## Configuration reference
 

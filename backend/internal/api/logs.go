@@ -175,6 +175,11 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 		case <-ws.Done():
 			return
 		case <-reauth.C:
+			if err := a.refreshStreamIdentity(ctx, r, res); err != nil {
+				flush()
+				ws.wsError("session expired; sign in again")
+				return
+			}
 			if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
 				flush()
 				ws.wsError("access to this pod's logs was revoked")

@@ -46,7 +46,10 @@ therefore load-bearing, not decorative. Three properties keep it honest:
   begin with it.
 - Long-lived watches are **re-authorized every 60 seconds** and closed if
   access was revoked, so a removed RoleBinding does not leave a stream running
-  until the user closes the tab.
+  until the user closes the tab. The same cycle re-validates the session —
+  a sign-out or expired session closes the stream — and renews OIDC tokens
+  that are about to expire, so a passthrough cluster's re-authorization never
+  presents a stale credential.
 
 RBAC has no per-object read filtering: a user who can `list` pods in a
 namespace can see every pod in it. Orrery reproduces that exactly rather
