@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36" role="img" aria-label="Orrery">
+  <title>Orrery</title>
+  <!-- The Orrery mark: concentric orbits with a planet on the outer ring.
+       Mirrors LogoMark (large variant) in web/src/components/Logo.tsx. -->
+  <circle cx="18" cy="18" r="15" fill="none" stroke="#5980a6" stroke-width="1.4"/>
+  <circle cx="18" cy="18" r="9.5" fill="none" stroke="#94bce3" stroke-opacity=".5"
+          stroke-width="1" stroke-dasharray="3 3"/>
+  <circle cx="18" cy="18" r="2.6" fill="#94bce3"/>
+  <circle cx="27.5" cy="18" r="1.8" fill="#5980a6"/>
+</svg>

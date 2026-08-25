@@ -33,20 +33,19 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Cross-compile with the frontend embedded
-        working-directory: backend
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           # The embed directive reads from inside the module, so the built
           # frontend is copied under the webfs package first.
           rm -rf internal/webfs/dist
-          cp -R ../web/dist internal/webfs/dist
+          cp -R web/dist internal/webfs/dist
 
-          mkdir -p ../out
+          mkdir -p out
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             GOOS=${target%/*}; GOARCH=${target#*/}
             bin=orrery
@@ -58,9 +57,9 @@ jobs:
                 -o "$bin" ./cmd/orrery
             name="orrery_${VERSION}_${GOOS}_${GOARCH}"
             if [ "$GOOS" = windows ]; then
-              zip -q "../out/${name}.zip" "$bin"
+              zip -q "out/${name}.zip" "$bin"
             else
-              tar -czf "../out/${name}.tar.gz" "$bin"
+              tar -czf "out/${name}.tar.gz" "$bin"
             fi
             rm "$bin"
           done

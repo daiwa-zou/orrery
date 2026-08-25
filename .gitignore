@@ -2,5 +2,14 @@ node_modules/
 dist/
 *.log
 .DS_Store
-/backend/orrery
+
+# Compiled binaries: `go build` at the root and the Makefile's bin/ output.
+/orrery
+/bin/
+
+# The release build copies web/dist here so `go:embed` can reach it.
 internal/webfs/dist/
+
+# Coverage profiles.
+coverage.out
+coverage.html

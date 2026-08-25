@@ -4,6 +4,22 @@ How to run Orrery in production, what actually needs to scale, and the
 topologies that work. The [README](../README.md#deploying-it) has the
 five-minute version; this is the rest.
 
+## Three things that bite people
+
+Each of these looks like an unrelated bug when you hit it, so they are worth
+recognising by symptom:
+
+- **Users are randomly signed out.** The session encryption key is not shared
+  across replicas, so each pod minted its own at boot and a request landing on
+  a different pod does not recognise the cookie. The server logs a warning
+  when it generates one. See [Prerequisites](#prerequisites).
+- **Requests look unauthenticated at random.** More than one replica with
+  `session.store: memory`, which keeps sessions inside the pod. The chart
+  defaults to Redis for exactly this reason; point `session.redisURL` at your
+  instance.
+- **Terminals and log follows die after a minute.** A proxy in front is
+  timing out long-lived streams. See [The proxy in front](#the-proxy-in-front).
+
 ## The shape of the workload
 
 One container serves everything: the Go backend embeds the compiled SPA
@@ -176,14 +192,18 @@ for them and forwards each user's own token (see [OIDC.md](OIDC.md)).
 
 ## Configuration you will actually tune
 
-| Setting | When to change it |
-| --- | --- |
-| `resources.limits.memory` | Big clusters, many CRDs, many concurrent viewers. Watch `orrery` cache gauges / `stats` endpoint. |
-| `cache.maxInformersPerCluster` | Raise when users legitimately browse more distinct resource types than the cap; lower to bound memory harder. |
-| `cache.idleTimeout` | Raise for snappier repeat visits at the cost of memory; lower on memory-constrained installs. |
-| `authz.ttl` | Lower for faster revocation propagation, at the cost of more SubjectAccessReviews. 30s is a good default. |
-| `session.ttl` / `idleTimeout` | Your org's session policy. |
-| `clusters[].qps` / `burst` | Bound what one dashboard may put on one API server (defaults 50/100). |
+Every field has a default; `-print-config` shows what the server actually
+resolved, with secrets masked.
+
+| Setting | Default | What it controls, and when to change it |
+| --- | --- | --- |
+| `resources.limits.memory` | `2Gi` | Big clusters, many CRDs, many concurrent viewers. Watch `orrery` cache gauges / `stats` endpoint. |
+| `cache.maxInformersPerCluster` | `64` | Ceiling on concurrent caches per cluster; the least recently used is retired past it. Raise when users legitimately browse more distinct resource types than the cap; lower to bound memory harder. |
+| `cache.idleTimeout` | `10m` | How long an unwatched resource cache survives before being stopped. Raise for snappier repeat visits at the cost of memory; lower on memory-constrained installs. |
+| `authz.ttl` | `30s` | How long an access-review verdict is cached. Lower for faster revocation propagation, at the cost of more SubjectAccessReviews. |
+| `authz.namespaceScanLimit` | `200` | Bounds the per-namespace probe used for users without cluster-wide read. Truncation is reported to the UI, never hidden. |
+| `session.ttl` / `idleTimeout` | `12h` / `2h` | Your org's session policy. |
+| `clusters[].qps` / `burst` | `50` / `100` | Bound what one dashboard may put on one API server. |
 
 ## Upgrades
 

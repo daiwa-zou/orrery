@@ -1,0 +1,12 @@
+# The build context is the repository root; keep it to what the image needs.
+.git
+.github
+docs
+deploy
+configs
+Makefile
+web/node_modules
+web/dist
+internal/webfs/dist
+**/*_test.go
+**/.DS_Store
