@@ -2,6 +2,8 @@ module github.com/daiwa-zou/orrery/backend
 
 go 1.26.0
 
+toolchain go1.26.6
+
 require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-chi/chi/v5 v5.3.2

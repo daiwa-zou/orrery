@@ -1,20 +1,27 @@
 # Test everything on every push and pull request. The container image is
 # built here too (without pushing) so a Dockerfile break fails the PR, not
-# the release.
+# the release. Security scans (govulncheck, npm audit, Trivy, dependency
+# review) run alongside, and a weekly run re-checks published images and
+# dependencies against newly disclosed CVEs even when nothing was committed.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Monday 06:30 UTC — CVE databases move without commits.
+    - cron: '30 6 * * 1'
 
 permissions:
   contents: read
 
 jobs:
   backend:
-    name: Backend (go test -race)
+    name: Backend (go test -race, coverage)
     runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.coverage.outputs.percent }}
     services:
       redis:
         image: redis:7-alpine
@@ -34,7 +41,52 @@ jobs:
           # Points the Redis session-store tests at the service container;
           # without it they skip.
           ORRERY_TEST_REDIS_URL: redis://127.0.0.1:6379/1
-        run: go test ./... -race -count=1
+        run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
+      - name: Coverage total
+        id: coverage
+        working-directory: backend
+        run: |
+          percent=$(go tool cover -func=coverage.out | awk '/^total:/ { sub(/%/, "", $3); print $3 }')
+          echo "total statement coverage: ${percent}%"
+          echo "percent=${percent}" >> "$GITHUB_OUTPUT"
+
+  # Regenerates the README's coverage badge. The badge JSON lives on the
+  # orphan `badges` branch (never merged, no history that matters) and is
+  # served to shields.io via raw.githubusercontent.com.
+  coverage-badge:
+    name: Publish coverage badge
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write badge JSON to the badges branch
+        env:
+          PERCENT: ${{ needs.backend.outputs.coverage }}
+        run: |
+          color=$(awk -v p="$PERCENT" 'BEGIN {
+            print (p >= 80 ? "brightgreen" : p >= 70 ? "green" : p >= 60 ? "yellowgreen" \
+                 : p >= 50 ? "yellow" : p >= 40 ? "orange" : "red")
+          }')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code origin badges > /dev/null 2>&1; then
+            git fetch origin badges
+            git switch -c badges FETCH_HEAD
+          else
+            git switch --orphan badges
+          fi
+          printf '{"schemaVersion": 1, "label": "coverage", "message": "%s%%", "color": "%s"}\n' \
+            "$PERCENT" "$color" > coverage.json
+          git add coverage.json
+          if git diff --cached --quiet; then
+            echo "badge unchanged"
+          else
+            git commit -m "coverage badge: ${PERCENT}%"
+            git push origin badges
+          fi
 
   web:
     name: Web (types, lint, tests, build)
@@ -78,8 +130,7 @@ jobs:
             --set oidc.clientID=orrery > /dev/null
 
   image:
-    name: Container image (build only)
-    if: github.event_name == 'pull_request'
+    name: Container image (build + vulnerability scan)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,5 +141,73 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: false
+          # Loads the image into the local daemon so Trivy can scan exactly
+          # what a release build would ship.
+          load: true
+          tags: orrery:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: orrery:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  govulncheck:
+    name: Go vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Call-graph aware: only reports vulnerabilities in code paths the
+      # backend actually reaches, so a failure here is worth acting on.
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  npm-audit:
+    name: Web dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Gate on production dependencies only — dev-tooling advisories don't
+      # ship to users. The full audit still prints for visibility.
+      - name: npm audit
+        working-directory: web
+        run: |
+          npm audit --audit-level=none || true
+          npm audit --omit=dev --audit-level=high
+
+  secrets:
+    name: Secret scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan repository for committed secrets
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: table
+          exit-code: '1'
+
+  # Fails a PR that introduces a dependency with a known high/critical
+  # advisory, before it ever lands on main.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high

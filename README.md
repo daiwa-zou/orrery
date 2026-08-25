@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml)
 [![Release image](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml/badge.svg)](https://github.com/daiwa-zou/orrery/actions/workflows/release.yaml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdaiwa-zou%2Forrery%2Fbadges%2Fcoverage.json)](https://github.com/daiwa-zou/orrery/actions/workflows/ci.yaml)
 
 A multi-cluster Kubernetes dashboard with OIDC sign-in.
 
@@ -299,6 +300,14 @@ CI runs all of the above (with a Redis service for the session-store tests),
 lints the Helm chart, and builds the container image on every pull request;
 pushes to `main` and `v*` tags publish the image to GHCR — see
 [.github/workflows](.github/workflows).
+
+CI also gates on security scans: `govulncheck` over the backend (call-graph
+aware, so a failure means a vulnerable code path is actually reachable),
+`npm audit` over the web app's production dependencies, a Trivy scan of the
+built container image and of the repository for committed secrets, and a
+dependency review on pull requests. The whole suite re-runs weekly, because
+CVE databases move even when the code does not. The coverage badge above is
+the backend's total statement coverage, recomputed on every push to `main`.
 
 Further reading:
 

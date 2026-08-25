@@ -141,7 +141,9 @@ export function toneFor(value: string): Tone {
 /** A "2/3" ratio is healthy only when both halves agree. */
 export function ratioTone(value: string): Tone {
   const [have, want] = value.split('/').map((n) => Number.parseInt(n, 10))
-  if (Number.isNaN(have) || Number.isNaN(want)) return 'idle'
+  // Number.isInteger, not isNaN: a value without a slash leaves `want`
+  // undefined, which isNaN would wave through and misread as a bad ratio.
+  if (!Number.isInteger(have) || !Number.isInteger(want)) return 'idle'
   if (want === 0) return 'idle'
   if (have >= want) return 'ok'
   if (have === 0) return 'danger'
