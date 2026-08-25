@@ -2,8 +2,12 @@ apiVersion: v2
 name: orrery
 description: A multi-cluster Kubernetes dashboard with OIDC sign-in
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
+# Kept in lockstep with the released tag: `appVersion` is what `image.tag`
+# defaults to, so a mismatch means the chart points at an image that was
+# never published. The release workflow fails a tag whose version disagrees
+# with these, rather than letting the two drift apart silently.
+version: 0.1.0
+appVersion: "0.1.0"
 icon: https://raw.githubusercontent.com/daiwa-zou/orrery/main/docs/assets/orrery-mark.svg
 home: https://github.com/daiwa-zou/orrery
 sources:

@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: ghcr.io/example/orrery
+  repository: ghcr.io/daiwa-zou/orrery
   tag: ''            # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
