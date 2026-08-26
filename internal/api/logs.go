@@ -42,6 +42,11 @@ func podLogOptions(r *http.Request, follow bool) *corev1.PodLogOptions {
 	return opts
 }
 
+// maxAggregatedPods bounds how many pods one request may read at once. A
+// merged view of a hundred pods is a hundred streams held open against the API
+// server by one caller, whether it follows them or takes a snapshot.
+const maxAggregatedPods = 20
+
 // logResource is the pods resource; logs are a subresource of it.
 func (a *API) logResource(ctx context.Context, c *cluster.Cluster) (cluster.APIResource, error) {
 	return c.Discovery.Resolve(ctx, "", "v1", "pods")
@@ -90,6 +95,124 @@ func (a *API) getPodLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// podsLogSnapshot returns the recent logs of several pods in one JSON reply.
+//
+// The WebSocket at /ws/logs already merges many pods into one feed, and for a
+// console watching a rollout that is the right shape. It is the wrong shape
+// for a client that asks a question and wants an answer: a socket handshake,
+// an origin check the caller cannot satisfy, a frame protocol and an idle
+// connection, all to read the last hundred lines of three replicas. Request
+// and response is what that client speaks, and "what are these pods saying?"
+// is one of the first questions asked about a failing workload.
+//
+// Every pod is authorized on its own, exactly as the stream does — reading
+// several at once is a convenience over the same per-object checks, never a
+// way around them. One unreadable pod is reported in its own entry rather than
+// failing the batch, so a terminating replica does not hide its healthy
+// siblings; a pod the caller may not read at all is refused outright, because
+// silently dropping it would present a partial answer as a complete one.
+func (a *API) podsLogSnapshot(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := a.clusterOnly(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	namespace := r.URL.Query().Get("namespace")
+	pods := r.URL.Query()["pod"]
+	if namespace == "" || len(pods) == 0 {
+		a.writeErr(w, r, badRequest("namespace and at least one pod are required"))
+		return
+	}
+	if len(pods) > maxAggregatedPods {
+		a.writeErr(w, r, badRequest(
+			"cannot read more than %d pods at once (asked for %d)", maxAggregatedPods, len(pods)))
+		return
+	}
+	for _, pod := range pods {
+		if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
+	}
+
+	opts := podLogOptions(r, false)
+	out := logSnapshotResponse{
+		Namespace: namespace,
+		Container: opts.Container,
+		Pods:      make([]podLogSnapshot, len(pods)),
+	}
+
+	// Read concurrently: the batch is capped well below anything that would
+	// stress the API server, and a serial read makes the caller wait for the
+	// sum of what it could have waited for the maximum of.
+	var wg sync.WaitGroup
+	for i, pod := range pods {
+		wg.Add(1)
+		go func(i int, pod string) {
+			defer wg.Done()
+			out.Pods[i] = a.readPodLog(ctx, res, namespace, pod, opts)
+		}(i, pod)
+	}
+	wg.Wait()
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// logSnapshotResponse is one batch of pod logs.
+type logSnapshotResponse struct {
+	Namespace string           `json:"namespace"`
+	Container string           `json:"container,omitempty"`
+	Pods      []podLogSnapshot `json:"pods"`
+}
+
+type podLogSnapshot struct {
+	Pod   string   `json:"pod"`
+	Lines []string `json:"lines"`
+	// Error explains a pod that could not be read — still terminating, no such
+	// container, no previous instance. The other pods are unaffected.
+	Error string `json:"error,omitempty"`
+	// Truncated marks a pod whose output hit the line ceiling, so a cut log is
+	// not read as the whole story.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// maxSnapshotLines caps one pod's share of a snapshot. TailLines already
+// bounds what the API server sends, but a single line can be arbitrarily long
+// and a JSON reply is held whole in memory at both ends.
+const maxSnapshotLines = 10000
+
+func (a *API) readPodLog(
+	ctx context.Context,
+	res *resolved,
+	namespace, pod string,
+	opts *corev1.PodLogOptions,
+) podLogSnapshot {
+	out := podLogSnapshot{Pod: pod, Lines: []string{}}
+	stream, err := res.clients.Kube.CoreV1().
+		Pods(namespace).GetLogs(pod, opts).
+		Stream(ctx)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	defer stream.Close()
+
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for scanner.Scan() {
+		if len(out.Lines) >= maxSnapshotLines {
+			out.Truncated = true
+			break
+		}
+		out.Lines = append(out.Lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil && !isClientGone(err) {
+		out.Error = err.Error()
+	}
+	return out
+}
+
 // streamPodLogs follows a container's logs over a WebSocket.
 // taggedLine is one log line and the pod it came from. Aggregating several
 // pods into one stream means the pod name has to travel with the text.
@@ -121,9 +244,6 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, badRequest("namespace and at least one pod are required"))
 		return
 	}
-	// A merged view of a hundred pods is a hundred streams held open against
-	// the API server by one browser tab.
-	const maxAggregatedPods = 20
 	if len(pods) > maxAggregatedPods {
 		a.writeErr(w, r, badRequest(
 			"cannot follow more than %d pods at once (asked for %d)", maxAggregatedPods, len(pods)))

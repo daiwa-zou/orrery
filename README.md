@@ -85,6 +85,19 @@ independently, probed for health, and shown side by side. One unreachable
 cluster is marked unreachable and retried in the background; the others keep
 working.
 
+**Readable by programs, not just people.** The whole read surface is plain
+`GET` — no CSRF token to acquire, no socket to hold open — and
+`GET /api/v1/capabilities` describes it: every read route, its parameters,
+their types and defaults, for the build that is actually answering. So an
+agent, an MCP server or a script gets the questions a human asks, in one call
+each: `/search` finds an object by name across every cluster, `.../related`
+returns an object's owners, children, node, services, mounted ConfigMaps and
+events together, `/logs` reads twenty pods at once without a WebSocket, and
+`/access` answers "may I?" before a tool reports that a list is empty when it
+is really forbidden. Every one of them runs the same `SubjectAccessReview` the
+console does; a scan the caller may not run comes back as a warning rather than
+a silent gap.
+
 **One search bar does everything.** Bare words are free text; `app=web`,
 `tier!=cache`, `!deprecated` and `key in (a,b)` are label terms; dotted keys
 like `status.phase=Running` are field terms. `⌘K` opens it from anywhere, `?`

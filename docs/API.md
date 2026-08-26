@@ -19,7 +19,9 @@ GET    /api/v1/auth/login                        starts the OIDC flow
 GET    /api/v1/auth/callback                     completes it
 POST   /api/v1/auth/logout
 GET    /api/v1/me                                the caller as the dashboard resolved them
+GET    /api/v1/capabilities                      the read-only surface, machine-readable
 GET    /api/v1/clusters
+GET    /api/v1/search                            find objects by name across clusters
 
 GET    /api/v1/clusters/{c}/discovery
 GET    /api/v1/clusters/{c}/overview
@@ -31,16 +33,20 @@ GET    /api/v1/clusters/{c}/explain
 GET    /api/v1/clusters/{c}/rollout/history
 GET    /api/v1/clusters/{c}/pods/{namespace}/{name}/logs
 GET    /api/v1/clusters/{c}/pods/{namespace}/{name}/env
+GET    /api/v1/clusters/{c}/logs                 several pods at once, no socket
+GET    /api/v1/clusters/{c}/access               may I? — one resource, several verbs
+GET    /api/v1/clusters/{c}/access/namespaces    where may I?
 
 GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}
 GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/facets
 GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
+GET    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}/related
 POST   /api/v1/clusters/{c}/resources/{group}/{version}/{resource}
 PUT    /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
 PATCH  /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
 DELETE /api/v1/clusters/{c}/resources/{group}/{version}/{resource}/{namespace}/{name}
 
-POST   /api/v1/clusters/{c}/access
+POST   /api/v1/clusters/{c}/access               (batch; the GET above is the read-only form)
 POST   /api/v1/clusters/{c}/actions/{action}
 GET    /api/v1/clusters/{c}/proxy/{namespace}/{pods|services}/{name}/*   (optional)
 
@@ -125,6 +131,16 @@ dotted keys like `status.phase=Running` are field terms.
 `GET .../pods/{namespace}/{name}/logs` is a plain-text snapshot;
 `download=true` sends it as an attachment.
 
+`GET .../logs?namespace=&pod=` is the same for several pods at once, returned
+as JSON rather than text: repeat `pod` for up to 20, and each comes back with
+its own lines or its own error. It is the snapshot half of `/ws/logs`, for
+callers that ask a question rather than watch a rollout — a socket handshake,
+an origin check and an idle connection are a lot of machinery for reading the
+last hundred lines of three replicas. One unreadable pod is reported in its own
+entry so a terminating replica does not hide its healthy siblings; a pod the
+caller may not read at all refuses the whole request, because dropping it
+silently would present a partial answer as a complete one.
+
 `GET .../ws/logs` follows. Repeat the `pod` parameter to merge several pods
 into one feed — up to 20, each line tagged with the pod it came from. Every pod
 is authorized *before* the socket opens, so a caller who may read some of a
@@ -163,6 +179,71 @@ that publishes a schema.
 `warningsOnly`, and by the object involved (`involvedUID`, `involvedName`,
 `involvedKind`) — the last of which is what an object's own event list uses.
 
+## Neighbourhoods
+
+`GET .../resources/{g}/{v}/{r}/{namespace}/{name}/related` returns everything
+attached to one object: the owners above it, the objects it owns below it, the
+node or services it is tied to, the ConfigMaps and Secrets its spec names, and
+its own events.
+
+It exists because assembling that from the resource routes means knowing
+Kubernetes convention the server already knows. A Deployment's pods are two
+hops away through ReplicaSets nobody thinks about — list the ReplicaSets, match
+owner UIDs, list the pods, match again, then fetch events. This walks it once,
+server-side, and every client agrees on what "related" means.
+
+Each entry carries a `relation` — `owner`, `child`, `descendant`, `node`,
+`hosts`, `selects`, `selected-by`, `reference` — and a `path` that is the route
+serving it, already assembled, so a caller follows a link rather than rebuilding
+one out of placeholders. `depth` (default 2, max 4) bounds the ownership walk in
+each direction; `childResource` names an extra resource to scan, for custom
+controllers whose children are not one of the built-in edges; `events=false`
+drops the bundled events.
+
+Nothing here bypasses a check. Every scan runs the same access review a list
+would, and a scan the caller may not run becomes a `warning` rather than a
+silent gap — "this Deployment has no pods" and "I could not look" are different
+answers. A link the caller may not follow comes back as a named reference with
+a `note`: the name was already visible in the object they just read, but its
+contents are not.
+
+## Search
+
+`GET /api/v1/search?q=` finds objects by name across every cluster at once,
+which is the question an alert or a ticket actually poses. `cluster` and
+`namespace` narrow it, `resource` replaces the default scan set, and `limit`
+caps the answer.
+
+The default set is deliberately not "everything discovery advertises": listing
+every resource would start an informer for every resource, and informer caches
+are shared and long-lived, so a broad search would permanently enlarge the
+dashboard's footprint to answer one question. The defaults are the kinds people
+go looking for by name, all of which the cluster overview already caches.
+
+Hits are scored — an exact name match above a prefix above a label-only match —
+and the score is reported, so a caller can tell a real hit from a coincidence
+instead of trusting the order. `scanned` says what was looked at and `warnings`
+name the clusters and resources that could not be, so "no results" is never
+confused with "nowhere to look".
+
+## Permission checks
+
+`POST .../access` answers a batch of questions in one round trip; it is what
+the console uses to decide which buttons to render, and it carries a CSRF token
+because every POST here does.
+
+`GET .../access?resource=&verb=` is the same question for a client that only
+reads. Asking changes nothing — a `SubjectAccessReview` is itself a read — so
+it needs no token. Name one resource (as a plural, singular, kind or short
+name) and any number of verbs; naming none asks about `get`, `list` and
+`watch`. A denial is an answer with a 200, not a 403: the caller asked a
+question and got "no".
+
+`GET .../access/namespaces?resource=` answers *where*. A client refused a
+cluster-wide list otherwise has no way to find the namespaces it can read
+short of probing each one, and the scan behind this is the one every list
+already performs and caches.
+
 ## Metrics
 
 `GET .../metrics/nodes` and `GET .../metrics/pods?namespace=` proxy
@@ -183,6 +264,27 @@ with `proxy.enabled: false` the route is not registered at all, so it 404s like
 any unknown path rather than existing-but-refusing. `GET /api/v1/me` reports
 whether it is on under `features.proxy`, which is how the console knows not to
 offer the control.
+
+## Capabilities
+
+`GET /api/v1/capabilities` describes the read-only surface in the shape a
+program needs to call it: every read route, its query parameters, their types
+and defaults. Everything in it is also in this document, which is the right
+place for a person and the wrong place for a client — something generating
+tools from this API otherwise hard-codes a route table and quietly rots when a
+parameter is added.
+
+It describes the server actually answering: a build with `proxy.enabled: false`
+does not advertise the proxy, and one without OIDC does not advertise a login.
+Writes and `ws/exec` are deliberately absent, so a client handed this document
+cannot call them by accident. The table is hand-written and pinned by a test
+that walks the router, so a read route added without an entry fails the build
+rather than the caller who trusted it.
+
+It is deliberately not OpenAPI. A schema for these responses would be mostly
+`unstructured`, since the interesting half of every payload is a Kubernetes
+object whose shape comes from the cluster rather than from this server — and
+`explain` already serves that half from the cluster's own OpenAPI.
 
 ## Sessions
 
