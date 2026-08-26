@@ -8,6 +8,7 @@ import type {
   Me,
   MetricsResponse,
   Overview,
+  SearchResponse,
   ClusterSummary,
 } from './types'
 
@@ -235,6 +236,22 @@ export const api = {
   podEnv: (cluster: string, namespace: string, name: string, signal?: AbortSignal) =>
     request<{ containers: ContainerEnv[] }>(
       `/clusters/${cluster}/pods/${namespace}/${name}/env`,
+      {},
+      signal,
+    ),
+
+  /**
+   * Finds objects by name across every cluster at once — the question a name
+   * out of an alert poses, which every other read answers only once you
+   * already know which cluster to ask.
+   */
+  search: (
+    q: string,
+    params: { cluster?: string[]; resource?: string[]; namespace?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<SearchResponse>(
+      `/search` + qs({ q, ...params }),
       {},
       signal,
     ),
