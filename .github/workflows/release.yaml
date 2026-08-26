@@ -65,9 +65,13 @@ jobs:
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+          # metadata-action derives the licenses label from the repository's
+          # own license, which was unset until the LICENSE file landed. Stated
+          # outright so the image carries it regardless of what the API says.
           labels: |
             org.opencontainers.image.title=Orrery
             org.opencontainers.image.description=Multi-cluster Kubernetes dashboard with OIDC sign-in
+            org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push
         id: build

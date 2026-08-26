@@ -273,3 +273,9 @@ surface to keep stable, and `cmd/orrery` is the only binary.
 - [web/README.md](web/README.md) — working in the SPA: layout, conventions,
   and the gotchas specific to the frontend.
 - [BRAND.md](docs/BRAND.md) — the mark, the palette and the type.
+
+## License
+
+[Apache License 2.0](LICENSE) — permissive, with an explicit patent grant.
+The same license Kubernetes and its client libraries use, so there is nothing
+to reconcile if you vendor this alongside them.
