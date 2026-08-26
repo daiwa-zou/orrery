@@ -91,8 +91,7 @@ func redactSecretData(u *unstructured.Unstructured) {
 		for k, v := range data {
 			s, _ := v.(string)
 			if field == "data" {
-				// base64 expands by 4/3; report the decoded size.
-				sizes[k] = int64(len(s) * 3 / 4)
+				sizes[k] = base64DecodedLen(s)
 			} else {
 				// stringData is plaintext; its length is its size.
 				sizes[k] = int64(len(s))
@@ -101,6 +100,33 @@ func redactSecretData(u *unstructured.Unstructured) {
 		unstructured.RemoveNestedField(u.Object, field)
 		_ = unstructured.SetNestedMap(u.Object, sizes, "orrery.io/redacted", field)
 	}
+}
+
+// base64DecodedLen is how many bytes a base64 string decodes to.
+//
+// Three bytes encode as four characters, and the last group is padded out with
+// "=" — so the length alone overstates the value by however many pad
+// characters there are. That is up to two bytes on every secret, and it is
+// visible: the console labels each key with the size reported here, so a
+// nineteen-byte password was displayed as twenty-one.
+//
+// Computed rather than decoded. This runs inside the informer transform, on
+// every secret on every update, and allocating a buffer to measure something
+// arithmetic can answer would be a poor trade.
+func base64DecodedLen(s string) int64 {
+	n := len(s)
+	if n == 0 {
+		return 0
+	}
+	pad := 0
+	for pad < 2 && pad < n && s[n-1-pad] == '=' {
+		pad++
+	}
+	size := int64(n/4*3 - pad)
+	if size < 0 {
+		return 0
+	}
+	return size
 }
 
 // TrimForResponse strips fields that are noise in an API response. Unlike
