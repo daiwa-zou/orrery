@@ -22,7 +22,21 @@ type Config struct {
 	Clusters []ClusterConfig `yaml:"clusters"`
 	Cache    CacheConfig     `yaml:"cache"`
 	Authz    AuthzConfig     `yaml:"authz"`
+	Debug    DebugConfig     `yaml:"debug"`
 	Log      LogConfig       `yaml:"log"`
+}
+
+// DebugConfig governs the ephemeral debug container action.
+type DebugConfig struct {
+	// Image the debug container runs.
+	//
+	// Chosen by the operator rather than the caller on purpose. kubectl debug
+	// lets whoever runs it name any image, which is reasonable at a terminal
+	// but not from a web console: a dashboard that accepts an arbitrary image
+	// from the browser is a way to run arbitrary code inside another
+	// workload's namespaces. RBAC still gates the action; this bounds what it
+	// can start.
+	Image string `yaml:"image"`
 }
 
 type ServerConfig struct {
@@ -207,6 +221,9 @@ func Default() *Config {
 			DiscoveryTTL:           5 * time.Minute,
 			MaxInformersPerCluster: 64,
 			SyncTimeout:            15 * time.Second,
+		},
+		Debug: DebugConfig{
+			Image: "busybox:1.37",
 		},
 		Authz: AuthzConfig{
 			TTL:                30 * time.Second,

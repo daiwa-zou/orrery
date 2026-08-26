@@ -409,6 +409,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ namespace, pod }),
     }),
+
+  /**
+   * Attach an ephemeral debug container to a running pod and return its
+   * generated name. The image is chosen by the server, not here.
+   */
+  debug: (cluster: string, namespace: string, pod: string, targetContainer?: string) =>
+    request<{ pod: string; namespace: string; container: string; image: string }>(
+      `/clusters/${cluster}/actions/debug`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ namespace, pod, targetContainer: targetContainer ?? '' }),
+      },
+    ),
 }
 
 /** Builds an absolute ws:// or wss:// URL for a streaming endpoint. */
