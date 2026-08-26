@@ -88,6 +88,8 @@ export interface LiveListState {
   data?: ListResponse
   isLoading: boolean
   error: unknown
+  /** See stalledReason: a retry parked by the online manager. */
+  stalled?: unknown
   /** Live connection state, surfaced so the UI never lies about freshness. */
   live: 'connecting' | 'live' | 'polling' | 'off'
   refetch: () => void
@@ -103,6 +105,27 @@ export interface LiveListState {
  * spliced in locally — that keeps pagination and sorting honest rather than
  * approximately right.
  */
+/**
+ * A fetch that has failed at least once and is now parked.
+ *
+ * React Query pauses retries when its online manager says the browser is
+ * offline, and a paused retry does not resume on its own. The query is then
+ * neither loading (nothing is in flight) nor errored (the retries are not
+ * exhausted), which is a state with no data and no explanation — and a page
+ * that only handles "loading" and "error" renders either nothing at all or,
+ * worse, an empty list that reads as "there is nothing here".
+ *
+ * Surfacing it costs one field and turns a blank page into a sentence.
+ */
+export function stalledReason(query: {
+  isPaused: boolean
+  failureReason: unknown
+  data: unknown
+}): unknown {
+  if (!query.isPaused || query.data !== undefined) return undefined
+  return query.failureReason ?? new Error('the browser appears to be offline')
+}
+
 type LiveState = LiveListState['live']
 
 /**
@@ -297,6 +320,7 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
     data: query.data,
     isLoading: query.isLoading,
     error: query.error,
+    stalled: stalledReason(query),
     live,
     refetch: query.refetch,
   }
@@ -308,6 +332,8 @@ export interface LiveObjectState {
   error: unknown
   live: LiveState
   refetch: () => void
+  /** See stalledReason: a retry parked by the online manager. */
+  stalled?: unknown
 }
 
 /**
@@ -356,6 +382,7 @@ export function useLiveResource(ref: ResourceRef | null): LiveObjectState {
     data: query.data,
     isLoading: query.isLoading,
     error: query.error,
+    stalled: stalledReason(query),
     live,
     refetch: query.refetch,
   }
@@ -463,3 +490,28 @@ export function useRelated(ref: ResourceRef | null, enabled: boolean) {
     staleTime: 15_000,
   })
 }
+
+/**
+ * Cross-cluster object search, for the command palette.
+ *
+ * Deliberately gated on a caller-supplied `enabled` and on the query being
+ * long enough to mean something: each call walks a curated set of resources in
+ * every cluster, and firing that on the first keystroke would scan the fleet to
+ * find out what "c" matches.
+ */
+export function useObjectSearch(q: string, enabled: boolean) {
+  const trimmed = q.trim()
+  return useQuery({
+    queryKey: ['search', trimmed],
+    queryFn: ({ signal }) => api.search(trimmed, { limit: 20 }, signal),
+    enabled: enabled && trimmed.length >= MIN_SEARCH_LENGTH,
+    // The palette is re-opened constantly with the same recent queries.
+    staleTime: 10_000,
+    // A search that fails should quietly show nothing rather than retrying a
+    // fleet-wide scan behind a dropdown nobody is looking at any more.
+    retry: false,
+  })
+}
+
+/** Below this, a query matches too much to be worth a fleet-wide scan. */
+export const MIN_SEARCH_LENGTH = 2

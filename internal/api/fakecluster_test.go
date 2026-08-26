@@ -13,6 +13,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	authzv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
 
@@ -48,6 +50,10 @@ type hndFake struct {
 	discovery map[string]any          // "/api/v1" etc. -> APIResourceList
 	groups    any                     // /apis payload
 	evicted   []string                // "ns/name" of every eviction POST
+	// ephemeral records every ephemeral container added, as
+	// "ns/pod/name:image:target", so a test can assert what was actually sent
+	// rather than only that the call returned 200.
+	ephemeral []string
 	logText   string
 	// denyResource makes access reviews for one resource come back denied, so
 	// tests can walk the forbidden path end to end.
@@ -55,6 +61,13 @@ type hndFake struct {
 	// nsOnlyResource denies only the cluster-wide review for one resource,
 	// which forces the per-namespace fallback scan.
 	nsOnlyResource string
+	// trace, when set, records every path the fake is asked for, so a test can
+	// assert on where a request actually landed rather than only on its status.
+	trace func(string)
+	// hideResource drops one resource from the discovery document, so a
+	// lookup for it fails the way it would on a cluster that does not serve
+	// it — or on one whose discovery is not answering.
+	hideResource string
 }
 
 func hndKey(group, version, resource string) string {
@@ -448,6 +461,12 @@ func (f *hndFake) object(group, version, resource, ns, name string) map[string]a
 	return o
 }
 
+func (f *hndFake) ephemeralContainers() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.ephemeral...)
+}
+
 func (f *hndFake) evictions() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -456,6 +475,9 @@ func (f *hndFake) evictions() []string {
 
 func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSuffix(r.URL.Path, "/")
+	if fn := f.tracer(); fn != nil {
+		fn(r.URL.Path)
+	}
 
 	switch p {
 	case "/version":
@@ -487,7 +509,7 @@ func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if doc, ok := f.discovery[p]; ok {
-		hndWriteJSON(w, 200, doc)
+		hndWriteJSON(w, 200, f.filterDiscovery(doc))
 		return
 	}
 
@@ -509,8 +531,75 @@ func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.serveResource(w, r, group, version, rest)
 }
 
+// setTrace installs the path recorder. Informer goroutines are already serving
+// from this fake by the time a test sets one, so the field is guarded like
+// every other piece of mutable state here.
+func (f *hndFake) setTrace(fn func(string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = fn
+}
+
+func (f *hndFake) tracer() func(string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.trace
+}
+
+// filterDiscovery applies hideResource to an APIResourceList.
+func (f *hndFake) filterDiscovery(doc any) any {
+	f.mu.Lock()
+	hide := f.hideResource
+	f.mu.Unlock()
+	if hide == "" {
+		return doc
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return doc
+	}
+	list, ok := m["resources"].([]map[string]any)
+	if !ok {
+		return doc
+	}
+	kept := make([]map[string]any, 0, len(list))
+	for _, r := range list {
+		if name, _ := r["name"].(string); name == hide {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	out["resources"] = kept
+	return out
+}
+
 // hndProto decodes the "k8s" protobuf envelope typed clients send by default.
 var hndProto = protobuf.NewSerializer(clientscheme.Scheme, clientscheme.Scheme)
+
+// hndDecodePod reads a Pod from a request body in whichever encoding the
+// client chose.
+func hndDecodePod(r *http.Request, body []byte) (*corev1.Pod, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/vnd.kubernetes.protobuf") {
+		obj, _, err := hndProto.Decode(body, nil, &corev1.Pod{})
+		if err != nil {
+			return nil, err
+		}
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return nil, fmt.Errorf("decoded %T, not a Pod", obj)
+		}
+		return pod, nil
+	}
+	var pod corev1.Pod
+	if err := json.Unmarshal(body, &pod); err != nil {
+		return nil, err
+	}
+	return &pod, nil
+}
 
 // serveAccessReview grants everything except the configured denied resource.
 // Never returning an error keeps the authz layer on its happy path; denials
@@ -591,6 +680,25 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 		f.evicted = append(f.evicted, ns+"/"+name)
 		f.mu.Unlock()
 		hndWriteJSON(w, 201, map[string]any{"kind": "Status", "apiVersion": "v1", "status": "Success"})
+		return
+	case sub == "ephemeralcontainers":
+		// UpdateEphemeralContainers PUTs the whole pod back. The typed client
+		// speaks protobuf by default, so this decodes the same envelope the
+		// access-review handler does; the reply goes back as JSON, which
+		// client-go accepts whichever it asked for.
+		body, _ := io.ReadAll(r.Body)
+		pod, err := hndDecodePod(r, body)
+		if err != nil {
+			hndStatus(w, 400, "BadRequest", "undecodable pod: "+err.Error())
+			return
+		}
+		f.mu.Lock()
+		for _, c := range pod.Spec.EphemeralContainers {
+			f.ephemeral = append(f.ephemeral,
+				ns+"/"+name+"/"+c.Name+":"+c.Image+":"+c.TargetContainerName)
+		}
+		f.mu.Unlock()
+		hndWriteJSON(w, 200, pod)
 		return
 	case strings.HasPrefix(sub, "proxy"):
 		w.Header().Set("Content-Type", "text/html")

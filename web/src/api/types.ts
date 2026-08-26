@@ -160,6 +160,13 @@ export interface Overview {
     count: number
     lastSeen: string
   }[]
+  /**
+   * Why `warnings` is empty when it is. An empty feed is the one field a
+   * reader takes as reassurance, so it must not be shown as one unless the
+   * events were actually read.
+   */
+  warningsForbidden?: boolean
+  warningsUnavailable?: boolean
   capacity?: Usage
   requested?: Usage
 }
@@ -281,6 +288,34 @@ export interface RelatedResponse {
   events?: Row[]
   eventColumns?: Column[]
   /** Scans that were skipped and why: a short answer is not a complete one. */
+  warnings?: string[]
+  truncated?: boolean
+}
+
+/** One object found by the cross-cluster search. */
+export interface SearchHit {
+  cluster: string
+  group?: string
+  version: string
+  resource: string
+  kind: string
+  namespace?: string
+  name: string
+  /** The API route serving it, assembled server-side from resolved discovery. */
+  path: string
+  status?: string
+  /** Higher is a better match: exact name, then prefix, then label-only. */
+  score: number
+}
+
+export interface SearchResponse {
+  query: string
+  hits: SearchHit[]
+  total: number
+  limit: number
+  /** Which resources were actually scanned. */
+  scanned: string[]
+  /** Clusters and resources that could not be searched. */
   warnings?: string[]
   truncated?: boolean
 }

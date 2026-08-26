@@ -23,6 +23,11 @@ interface LogViewerProps {
   initialContainer?: string
   /** Last exit per container ("exit 137 (OOMKilled)"), for the Previous banner. */
   lastExits?: Record<string, string>
+  /**
+   * Names the subject in the download filename. A merged feed is nobody's pod,
+   * so "web-abc123-def.log" would be a lie about which twelve replicas it holds.
+   */
+  label?: string
 }
 
 /**
@@ -49,6 +54,7 @@ export function LogViewer({
   containers,
   initialContainer,
   lastExits,
+  label,
 }: LogViewerProps) {
   const [container, setContainer] = useState(
     initialContainer && containers.includes(initialContainer)
@@ -64,7 +70,14 @@ export function LogViewer({
       setContainer(initialContainer)
     }
   }, [initialContainer, containers])
-  const pods = useMemo(() => (Array.isArray(pod) ? pod : [pod]), [pod])
+  // Pod names are DNS labels, so a comma cannot occur in one: joining them
+  // yields a key that changes when the *set* changes and not when a caller
+  // happens to rebuild an array with the same contents. Depending on the array
+  // itself would tear down and reopen the socket on every render of the parent
+  // — losing the buffer each time — which is exactly what a workload page
+  // deriving its pod list from a live query does.
+  const podKey = useMemo(() => (Array.isArray(pod) ? pod : [pod]).join(','), [pod])
+  const pods = useMemo(() => podKey.split(','), [podKey])
   const aggregated = pods.length > 1
   const [status, setStatus] = useState<'connecting' | 'streaming' | 'ended' | 'error'>('connecting')
   const [error, setError] = useState<string>()
@@ -163,7 +176,7 @@ export function LogViewer({
       window.clearTimeout(flushTimer)
       socket.close()
     }
-  }, [cluster, namespace, pod, container, previous, timestamps])
+  }, [cluster, namespace, pods, container, previous, timestamps])
 
   // Autoscroll only while the reader is at the bottom; yanking the viewport
   // away from someone reading history is the classic log-viewer sin.
@@ -193,7 +206,7 @@ export function LogViewer({
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${pod}-${container}.log`
+    a.download = `${label ?? (aggregated ? `${pods.length}-pods` : pods[0])}-${container}.log`
     document.body.appendChild(a)
     a.click()
     a.remove()

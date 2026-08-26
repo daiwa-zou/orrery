@@ -9,6 +9,7 @@ import type {
   MetricsResponse,
   Overview,
   RelatedResponse,
+  SearchResponse,
   ClusterSummary,
 } from './types'
 
@@ -71,7 +72,14 @@ async function request<T>(
 
   if (!res.ok) {
     let kind = 'error'
-    let reason = `${res.status} ${res.statusText}`
+    // statusText is not worth showing anyone. Browsers synthesise it for codes
+    // they do not know, so a 499 arrives as "status code 499" and the fallback
+    // reads "499 status code 499" — which is how it looked on screen before
+    // this. The server almost always sends a reason; this is what to say when
+    // it does not.
+    let reason = res.status === 499
+      ? 'The request was interrupted before it finished.'
+      : `The server returned HTTP ${res.status}.`
     if (isJson) {
       try {
         const body = await res.json()
@@ -229,6 +237,22 @@ export const api = {
   podEnv: (cluster: string, namespace: string, name: string, signal?: AbortSignal) =>
     request<{ containers: ContainerEnv[] }>(
       `/clusters/${cluster}/pods/${namespace}/${name}/env`,
+      {},
+      signal,
+    ),
+
+  /**
+   * Finds objects by name across every cluster at once — the question a name
+   * out of an alert poses, which every other read answers only once you
+   * already know which cluster to ask.
+   */
+  search: (
+    q: string,
+    params: { cluster?: string[]; resource?: string[]; namespace?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<SearchResponse>(
+      `/search` + qs({ q, ...params }),
       {},
       signal,
     ),
