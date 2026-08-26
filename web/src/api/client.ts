@@ -70,7 +70,14 @@ async function request<T>(
 
   if (!res.ok) {
     let kind = 'error'
-    let reason = `${res.status} ${res.statusText}`
+    // statusText is not worth showing anyone. Browsers synthesise it for codes
+    // they do not know, so a 499 arrives as "status code 499" and the fallback
+    // reads "499 status code 499" — which is how it looked on screen before
+    // this. The server almost always sends a reason; this is what to say when
+    // it does not.
+    let reason = res.status === 499
+      ? 'The request was interrupted before it finished.'
+      : `The server returned HTTP ${res.status}.`
     if (isJson) {
       try {
         const body = await res.json()
