@@ -13,6 +13,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	authzv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
 
@@ -48,6 +50,10 @@ type hndFake struct {
 	discovery map[string]any          // "/api/v1" etc. -> APIResourceList
 	groups    any                     // /apis payload
 	evicted   []string                // "ns/name" of every eviction POST
+	// ephemeral records every ephemeral container added, as
+	// "ns/pod/name:image:target", so a test can assert what was actually sent
+	// rather than only that the call returned 200.
+	ephemeral []string
 	logText   string
 	// denyResource makes access reviews for one resource come back denied, so
 	// tests can walk the forbidden path end to end.
@@ -452,6 +458,12 @@ func (f *hndFake) object(group, version, resource, ns, name string) map[string]a
 	return o
 }
 
+func (f *hndFake) ephemeralContainers() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.ephemeral...)
+}
+
 func (f *hndFake) evictions() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -547,6 +559,27 @@ func (f *hndFake) filterDiscovery(doc any) any {
 // hndProto decodes the "k8s" protobuf envelope typed clients send by default.
 var hndProto = protobuf.NewSerializer(clientscheme.Scheme, clientscheme.Scheme)
 
+// hndDecodePod reads a Pod from a request body in whichever encoding the
+// client chose.
+func hndDecodePod(r *http.Request, body []byte) (*corev1.Pod, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/vnd.kubernetes.protobuf") {
+		obj, _, err := hndProto.Decode(body, nil, &corev1.Pod{})
+		if err != nil {
+			return nil, err
+		}
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return nil, fmt.Errorf("decoded %T, not a Pod", obj)
+		}
+		return pod, nil
+	}
+	var pod corev1.Pod
+	if err := json.Unmarshal(body, &pod); err != nil {
+		return nil, err
+	}
+	return &pod, nil
+}
+
 // serveAccessReview grants everything except the configured denied resource.
 // Never returning an error keeps the authz layer on its happy path; denials
 // still flow through the real SubjectAccessReview verdict.
@@ -626,6 +659,25 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 		f.evicted = append(f.evicted, ns+"/"+name)
 		f.mu.Unlock()
 		hndWriteJSON(w, 201, map[string]any{"kind": "Status", "apiVersion": "v1", "status": "Success"})
+		return
+	case sub == "ephemeralcontainers":
+		// UpdateEphemeralContainers PUTs the whole pod back. The typed client
+		// speaks protobuf by default, so this decodes the same envelope the
+		// access-review handler does; the reply goes back as JSON, which
+		// client-go accepts whichever it asked for.
+		body, _ := io.ReadAll(r.Body)
+		pod, err := hndDecodePod(r, body)
+		if err != nil {
+			hndStatus(w, 400, "BadRequest", "undecodable pod: "+err.Error())
+			return
+		}
+		f.mu.Lock()
+		for _, c := range pod.Spec.EphemeralContainers {
+			f.ephemeral = append(f.ephemeral,
+				ns+"/"+name+"/"+c.Name+":"+c.Image+":"+c.TargetContainerName)
+		}
+		f.mu.Unlock()
+		hndWriteJSON(w, 200, pod)
 		return
 	case strings.HasPrefix(sub, "proxy"):
 		w.Header().Set("Content-Type", "text/html")
