@@ -13,8 +13,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
+# Stamped by the release workflow so `orrery -version` inside the image
+# reports the tag it was built from. Source builds keep the "dev" default.
+ARG VERSION=dev
 # CGO off keeps the binary static so it runs on a distroless base.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/orrery ./cmd/orrery
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+      -o /out/orrery ./cmd/orrery
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/orrery /usr/local/bin/orrery

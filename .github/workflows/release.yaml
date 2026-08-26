@@ -27,6 +27,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # The chart is installed from a git checkout, so `image.tag` resolves to
+      # whatever Chart.yaml says. If that disagrees with the tag being
+      # released, the chart points at an image this release never published.
+      # Fail here, before anything is pushed, rather than shipping the
+      # mismatch.
+      - name: Chart version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          chart=$(awk '/^version:/ { print $2; exit }' deploy/helm/orrery/Chart.yaml)
+          app=$(awk '/^appVersion:/ { gsub(/"/, "", $2); print $2; exit }' deploy/helm/orrery/Chart.yaml)
+          echo "tag=${tag} chart version=${chart} appVersion=${app}"
+          if [ "$chart" != "$tag" ] || [ "$app" != "$tag" ]; then
+            echo "::error::deploy/helm/orrery/Chart.yaml says version=${chart} appVersion=${app}, but the tag is ${tag}. Bump Chart.yaml before tagging."
+            exit 1
+          fi
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -59,6 +77,10 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          # Stamps main.version, so `orrery -version` in the image reports
+          # 1.2.3 for a tag and the branch name for a main build.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
