@@ -21,6 +21,13 @@ on purpose — the proxied page renders inside the console's origin, and a
 state-changing proxy would let any site drive writes into cluster workloads
 with the viewer's session.
 
+It is switchable: `proxy.enabled` removes the route entirely, not just the
+console's control, so a disabled proxy cannot be reached by typing the URL. It
+defaults on, because it was already shipping and is already narrow — but a
+deployment whose workloads should not render inside the console's origin, or
+whose policy says a dashboard may read the API server and nothing behind it,
+can turn it off without giving up the rest.
+
 What it does not cover is the other half: pointing `psql` at a database or a
 gRPC client at a service. That needs a real TCP tunnel, which from a browser
 means a WebSocket-to-TCP relay plus a local client to terminate it — and that

@@ -22,8 +22,31 @@ type Config struct {
 	Clusters []ClusterConfig `yaml:"clusters"`
 	Cache    CacheConfig     `yaml:"cache"`
 	Authz    AuthzConfig     `yaml:"authz"`
+	Proxy    ProxyConfig     `yaml:"proxy"`
 	Debug    DebugConfig     `yaml:"debug"`
 	Log      LogConfig       `yaml:"log"`
+}
+
+// ProxyConfig governs the read-only HTTP proxy into pods and services.
+type ProxyConfig struct {
+	// Enabled exposes the proxy route and the console's Open button.
+	//
+	// On by default, because it is already narrow: GET and HEAD only, and
+	// every request is gated on the pods/proxy or services/proxy subresource
+	// under the caller's own identity.
+	//
+	// Worth turning off anyway when the workloads a cluster runs are not ones
+	// you want rendered inside the console's origin, or when policy says a
+	// dashboard may read the API server and nothing behind it. Disabling
+	// removes the route entirely — not just the button — so it cannot be
+	// reached by typing the URL.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// ProxyEnabled reports whether the HTTP proxy should be served. Absent means
+// enabled, so an existing config keeps working after the flag was introduced.
+func (c ProxyConfig) ProxyEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // DebugConfig governs the ephemeral debug container action.

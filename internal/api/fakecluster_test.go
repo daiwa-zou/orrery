@@ -848,6 +848,14 @@ type hndRig struct {
 // (anonymous mode), so no identity provider is needed.
 func hndNewRig(t *testing.T) *hndRig {
 	t.Helper()
+	return hndNewRigWith(t, nil)
+}
+
+// hndNewRigWith builds a rig whose configuration a test can adjust before the
+// API is constructed — for options that are read at wiring time, like whether
+// a route is registered at all.
+func hndNewRigWith(t *testing.T, tweak func(*config.Config)) *hndRig {
+	t.Helper()
 
 	fake := hndNewFake()
 	srv := httptest.NewServer(fake)
@@ -902,6 +910,10 @@ users:
 		QPS:         100,
 		Burst:       200,
 	}}
+
+	if tweak != nil {
+		tweak(cfg)
+	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	registry, err := cluster.NewRegistry(cfg, log)
