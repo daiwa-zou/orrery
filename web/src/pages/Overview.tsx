@@ -278,7 +278,13 @@ export function Overview() {
                 null, and this card must not take the whole page down over it. */}
             {(data.warnings ?? []).length === 0 ? (
               <p className="py-4 text-center text-[13px] text-ink-faint">
-                No warning events. That is a good sign.
+                {/* "A good sign" is a claim about the cluster, and it may only
+                    be made when the events were actually read. */}
+                {data.warningsForbidden
+                  ? 'You are not allowed to read events on this cluster, so there is nothing to show here.'
+                  : data.warningsUnavailable
+                    ? 'Events could not be read just now, so recent warnings are unknown.'
+                    : 'No warning events. That is a good sign.'}
               </p>
             ) : (
               <ul>
