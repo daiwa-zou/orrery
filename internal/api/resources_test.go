@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -335,45 +337,106 @@ func TestPathNamespacePlaceholder(t *testing.T) {
 	}
 }
 
-func TestSortProjectedKeepsObjectsAndRowsAligned(t *testing.T) {
-	// view=table and view=full must page through the same ordering. Before
-	// this was fixed, sorting by a projected column left the object slice
-	// untouched and the two views disagreed about what page 1 contained.
+// restartsColumns projects the one value these tests sort on.
+func restartsColumns(byName map[string]int64) columnSet {
+	return columnSet{row: func(u *unstructured.Unstructured) map[string]any {
+		return map[string]any{"name": u.GetName(), "restarts": byName[u.GetName()]}
+	}}
+}
+
+func TestSortByCellOrdersTheObjectsThemselves(t *testing.T) {
+	// view=table and view=full must page through the same ordering. Sorting
+	// used to reorder a parallel slice of rows and could leave the objects
+	// untouched, so the two views disagreed about what page 1 contained; rows
+	// are now projected from the sorted objects, so there is only one order.
 	objs := []*unstructured.Unstructured{
 		obj("a", "d", nil, nil),
 		obj("b", "d", nil, nil),
 		obj("c", "d", nil, nil),
 	}
-	rows := []map[string]any{
-		{"name": "a", "restarts": int64(5)},
-		{"name": "b", "restarts": int64(1)},
-		{"name": "c", "restarts": int64(3)},
-	}
+	set := restartsColumns(map[string]int64{"a": 5, "b": 1, "c": 3})
 
-	sortProjected(objs, rows, "restarts", false)
+	sortByCell(objs, set, "restarts", false)
 
 	wantOrder := []string{"b", "c", "a"}
+	for i, want := range wantOrder {
+		if objs[i].GetName() != want {
+			t.Fatalf("objs[%d] = %s, want %s", i, objs[i].GetName(), want)
+		}
+	}
+
+	// The rows a caller receives come out of these objects, so they cannot
+	// disagree with them.
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	rows := projectPage(objs, set, 1, 3, r)
 	for i, want := range wantOrder {
 		if rows[i]["name"] != want {
 			t.Fatalf("rows[%d] = %v, want %s", i, rows[i]["name"], want)
 		}
+	}
+}
+
+func TestSortByCellDescending(t *testing.T) {
+	objs := []*unstructured.Unstructured{obj("a", "d", nil, nil), obj("b", "d", nil, nil)}
+	set := restartsColumns(map[string]int64{"a": 1, "b": 9})
+
+	sortByCell(objs, set, "restarts", true)
+
+	if objs[0].GetName() != "b" {
+		t.Errorf("descending sort put %s first", objs[0].GetName())
+	}
+}
+
+// Equal cells must not leave the order to the map iteration that produced
+// them, or two requests for the same page return different objects.
+func TestSortByCellBreaksTiesOnName(t *testing.T) {
+	objs := []*unstructured.Unstructured{
+		obj("c", "d", nil, nil),
+		obj("a", "d", nil, nil),
+		obj("b", "d", nil, nil),
+	}
+	set := restartsColumns(map[string]int64{"a": 7, "b": 7, "c": 7})
+
+	sortByCell(objs, set, "restarts", false)
+
+	for i, want := range []string{"a", "b", "c"} {
 		if objs[i].GetName() != want {
-			t.Fatalf("objs[%d] = %s, want %s; the two views would disagree",
-				i, objs[i].GetName(), want)
+			t.Fatalf("tied objects ordered %s at %d, want %s", objs[i].GetName(), i, want)
 		}
 	}
 }
 
-func TestSortProjectedDescending(t *testing.T) {
-	objs := []*unstructured.Unstructured{obj("a", "d", nil, nil), obj("b", "d", nil, nil)}
-	rows := []map[string]any{
-		{"name": "a", "restarts": int64(1)},
-		{"name": "b", "restarts": int64(9)},
+// Sorting must not need to keep a row per object alive; only the page is
+// rendered. The allocation here is the sort's own bookkeeping, not a table.
+func TestSortByCellDoesNotRetainARowPerObject(t *testing.T) {
+	const n = 2000
+	objs := make([]*unstructured.Unstructured, n)
+	restarts := make(map[string]int64, n)
+	for i := range objs {
+		name := fmt.Sprintf("pod-%04d", i)
+		objs[i] = obj(name, "d", nil, nil)
+		restarts[name] = int64(n - i)
 	}
+	set := restartsColumns(restarts)
 
-	sortProjected(objs, rows, "restarts", true)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	sortByCell(objs, set, "restarts", false)
+	// Collect first: the rows the sort computed and dropped are garbage by
+	// now, and counting them would measure allocation rather than retention.
+	// Retention is the property under test — the old code kept every row.
+	runtime.GC()
+	runtime.ReadMemStats(&after)
 
-	if rows[0]["name"] != "b" || objs[0].GetName() != "b" {
-		t.Errorf("descending sort put %v / %s first", rows[0]["name"], objs[0].GetName())
+	// Live heap after the sort should hold the objects, the cell slice and the
+	// ordering — not n row maps. A row map per object would be several hundred
+	// bytes each; this bounds it well under that.
+	live := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	if live > int64(n)*200 {
+		t.Errorf("sort left %d bytes live for %d objects, which looks like a row per object", live, n)
+	}
+	if objs[0].GetName() != "pod-1999" {
+		t.Errorf("sort produced the wrong order: %s first", objs[0].GetName())
 	}
 }
