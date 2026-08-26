@@ -68,7 +68,7 @@ func (a *API) visibleObjects(ctx context.Context, res *resolved, group, version,
 		res.cluster.AuthzClient(res.clients),
 		res.cluster.AuthSubject(res.identity),
 		authz.Attributes{Verb: "list", Group: ar.Group, Version: ar.Version, Resource: ar.Name},
-		a.namespaceNames(ctx, res.cluster))
+		func() ([]string, error) { return a.namespaceNames(ctx, res.cluster) })
 
 	if all {
 		return res.cluster.Informers.List(ctx, ar, "")
