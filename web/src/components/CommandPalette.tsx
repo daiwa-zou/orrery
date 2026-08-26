@@ -5,7 +5,7 @@ import { groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useNamespaces } from '../api/hooks'
 import type { APIResource } from '../api/types'
 import { navLabel } from '../lib/format'
-import { readRecents } from '../lib/storage'
+import { readRecents, readSaved, savedKey, type SavedSearch } from '../lib/storage'
 import { isBrowsable, isCustomGroup, type NavItem } from './nav'
 
 /** The subset of a resource the ranker needs, so it can be tested on its own. */
@@ -152,6 +152,30 @@ export function CommandPalette({
       })
     }
 
+    const savedHref = (v: SavedSearch) => {
+      const qs = new URLSearchParams()
+      if (v.namespace) qs.set('namespace', v.namespace)
+      if (v.q) qs.set('q', v.q)
+      const tail = qs.toString()
+      return `/c/${v.cluster}/r/${v.group}/${v.version}/${v.resource}${tail ? `?${tail}` : ''}`
+    }
+
+    const pushSaved = (v: SavedSearch) => {
+      const id = `saved:${savedKey(v)}`
+      if (seen.has(id)) return
+      seen.add(id)
+      out.push({
+        id,
+        section: 'Saved',
+        label: navLabel(v.kind),
+        // The query is the point of a saved view, so it is the hint rather
+        // than the group — "Pods · status.phase=Running" reads as the thing
+        // that was actually starred.
+        hint: [v.namespace || 'all namespaces', v.q || 'no filter'].join(' · '),
+        run: () => navigate(savedHref(v)),
+      })
+    }
+
     const pages = [
       { id: 'page:overview', label: 'Overview', href: `/c/${cluster}` },
       {
@@ -170,7 +194,11 @@ export function CommandPalette({
       })
 
     if (!q) {
-      // Nothing typed: offer where you have been, then the everyday set.
+      // Nothing typed: offer what was starred, then where you have been, then
+      // the everyday set.
+      for (const v of readSaved(cluster).slice(0, 6)) {
+        pushSaved(v)
+      }
       for (const r of readRecents(cluster).slice(0, 5)) {
         pushResource('Recent', { ...r, name: r.resource })
       }
@@ -182,6 +210,17 @@ export function CommandPalette({
 
     for (const p of pages) {
       if (p.label.toLowerCase().includes(q.toLowerCase())) pushPage(p)
+    }
+
+    const needle = q.toLowerCase()
+    for (const v of readSaved(cluster)) {
+      if (
+        navLabel(v.kind).toLowerCase().includes(needle) ||
+        v.q.toLowerCase().includes(needle) ||
+        v.namespace.toLowerCase().includes(needle)
+      ) {
+        pushSaved(v)
+      }
     }
 
     for (const r of rankResources(resources, q).slice(0, MAX_PER_SECTION)) {

@@ -11,6 +11,7 @@ import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { RefreshIcon, TagIcon, TrashIcon } from '../components/icons'
 import { SearchBar } from '../components/SearchBar'
+import { addSaved, isSaved, removeSaved, type SavedSearch } from '../lib/storage'
 import { Badge, Button, ErrorState, GatedButton, Loading, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
@@ -171,6 +172,34 @@ export function ResourceList() {
   const [searchActive, setSearchActive] = useState(false)
   const activateSearch = useCallback(() => setSearchActive(true), [])
   const facets = useFacets(ref, namespace, searchActive)
+
+  // A starred view is the resource plus the narrowing that made it useful —
+  // "the failing pods in staging" rather than just "pods".
+  const savedView: SavedSearch | null = meta
+    ? {
+        cluster: cluster!,
+        group: group!,
+        version: version!,
+        resource: resource!,
+        kind: meta.kind,
+        namespaced: meta.namespaced,
+        namespace,
+        q,
+      }
+    : null
+  const [starred, setStarred] = useState(false)
+  useEffect(() => {
+    setStarred(savedView ? isSaved(savedView) : false)
+    // Re-read whenever the view itself changes; the star belongs to this
+    // resource-plus-query, not to the page.
+  }, [cluster, group, version, resource, namespace, q, meta])
+
+  const toggleStar = () => {
+    if (!savedView) return
+    if (starred) removeSaved(savedView)
+    else addSaved(savedView)
+    setStarred(!starred)
+  }
 
   const onLabelClick = useCallback(
     (k: string, v: string) =>
@@ -333,6 +362,25 @@ export function ResourceList() {
         </h1>
 
         <LiveIndicator state={live} />
+
+        {savedView && (
+          <button
+            onClick={toggleStar}
+            aria-pressed={starred}
+            title={
+              starred
+                ? 'Remove this view from the command palette'
+                : 'Save this view — resource, namespace and search — to the command palette'
+            }
+            aria-label={starred ? 'Unstar this view' : 'Star this view'}
+            className={
+              'grid size-6 place-items-center border border-border text-xs transition-colors ' +
+              (starred ? 'text-accent-text' : 'text-ink-faint hover:text-ink')
+            }
+          >
+            {starred ? '★' : '☆'}
+          </button>
+        )}
 
         {data && (
           <span className="text-xs text-ink-faint tabular-nums">

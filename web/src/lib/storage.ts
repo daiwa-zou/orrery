@@ -64,6 +64,59 @@ export function recordRecent(entry: RecentResource): void {
   writeJSON(RECENTS_KEY, next)
 }
 
+/* ---- saved searches ---------------------------------------------------- */
+
+/**
+ * A starred query: the resource that was being listed and the search text that
+ * narrowed it. Teams operate the same handful of views every day — "my team's
+ * failing pods", "everything in staging" — and re-typed them each time.
+ */
+const SAVED_KEY = 'orrery.saved'
+const MAX_SAVED = 24
+
+export interface SavedSearch {
+  cluster: string
+  group: string
+  version: string
+  resource: string
+  kind: string
+  namespaced: boolean
+  /** Namespace the view was scoped to, empty for all namespaces. */
+  namespace: string
+  /** The search-bar text. Empty means "the unfiltered list". */
+  q: string
+}
+
+/** Identity of a saved view: same resource, namespace and query is the same star. */
+export function savedKey(v: SavedSearch): string {
+  return [v.cluster, v.group, v.version, v.resource, v.namespace, v.q].join('|')
+}
+
+export function readSaved(cluster: string): SavedSearch[] {
+  return readJSON<SavedSearch[]>(SAVED_KEY, []).filter(
+    (v) => v && typeof v === 'object' && v.cluster === cluster && typeof v.q === 'string',
+  )
+}
+
+/** Stars a view, newest first. Re-starring an identical view is a no-op. */
+export function addSaved(view: SavedSearch): void {
+  const all = readJSON<SavedSearch[]>(SAVED_KEY, [])
+  if (all.some((v) => savedKey(v) === savedKey(view))) return
+  writeJSON(SAVED_KEY, [view, ...all].slice(0, MAX_SAVED))
+}
+
+export function removeSaved(view: SavedSearch): void {
+  const all = readJSON<SavedSearch[]>(SAVED_KEY, [])
+  writeJSON(
+    SAVED_KEY,
+    all.filter((v) => savedKey(v) !== savedKey(view)),
+  )
+}
+
+export function isSaved(view: SavedSearch): boolean {
+  return readJSON<SavedSearch[]>(SAVED_KEY, []).some((v) => savedKey(v) === savedKey(view))
+}
+
 /* ---- theme ------------------------------------------------------------- */
 
 export type Theme = 'dark' | 'light'

@@ -1,5 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { navStateKey, readJSON, readRecents, recordRecent, writeJSON } from './storage'
+import {
+  addSaved,
+  isSaved,
+  navStateKey,
+  readJSON,
+  readRecents,
+  readSaved,
+  recordRecent,
+  removeSaved,
+  savedKey,
+  writeJSON,
+  type SavedSearch,
+} from './storage'
 import type { RecentResource } from './storage'
 
 /**
@@ -98,5 +110,58 @@ describe('recents', () => {
     for (let i = 0; i < 10; i++) recordRecent(entry('prod', `r${i}`))
     expect(readRecents('prod')).toHaveLength(8)
     expect(readRecents('prod')[0].resource).toBe('r9')
+  })
+})
+
+describe('saved searches', () => {
+  const view = (over: Partial<SavedSearch> = {}): SavedSearch => ({
+    cluster: 'prod',
+    group: 'core',
+    version: 'v1',
+    resource: 'pods',
+    kind: 'Pod',
+    namespaced: true,
+    namespace: '',
+    q: 'status.phase=Running',
+    ...over,
+  })
+
+  beforeEach(() => {
+    stubStorage()
+  })
+
+  it('stars a view and reads it back for that cluster only', () => {
+    addSaved(view())
+    addSaved(view({ cluster: 'staging' }))
+
+    expect(readSaved('prod')).toHaveLength(1)
+    expect(readSaved('staging')).toHaveLength(1)
+    expect(readSaved('other')).toEqual([])
+  })
+
+  it('treats an identical view as already starred rather than duplicating it', () => {
+    addSaved(view())
+    addSaved(view())
+
+    expect(readSaved('prod')).toHaveLength(1)
+    expect(isSaved(view())).toBe(true)
+  })
+
+  it('separates views that differ only by query or namespace', () => {
+    addSaved(view({ q: 'a' }))
+    addSaved(view({ q: 'b' }))
+    addSaved(view({ q: 'a', namespace: 'demo' }))
+
+    expect(readSaved('prod')).toHaveLength(3)
+    expect(savedKey(view({ q: 'a' }))).not.toBe(savedKey(view({ q: 'b' })))
+  })
+
+  it('unstars only the matching view', () => {
+    addSaved(view({ q: 'a' }))
+    addSaved(view({ q: 'b' }))
+    removeSaved(view({ q: 'a' }))
+
+    expect(readSaved('prod').map((v) => v.q)).toEqual(['b'])
+    expect(isSaved(view({ q: 'a' }))).toBe(false)
   })
 })
