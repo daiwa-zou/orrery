@@ -206,7 +206,7 @@ func (a *API) namespaceAccess(w http.ResponseWriter, r *http.Request) {
 		authz.Attributes{
 			Verb: verb, Group: ar.Group, Version: ar.Version, Resource: ar.Name,
 		},
-		a.namespaceNames(ctx, res.cluster))
+		func() ([]string, error) { return a.namespaceNames(ctx, res.cluster) })
 	if scanErr != nil {
 		if !all && len(allowed) == 0 {
 			a.writeErr(w, r, scanErr)
