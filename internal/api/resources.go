@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,23 +89,43 @@ func (a *API) authorize(ctx context.Context, res *resolved, verb, namespace, nam
 	return nil
 }
 
+// errNoNamespaceScan reports that the candidate list for the per-namespace
+// fallback scan could not be built.
+//
+// It matters because of what an empty list does downstream. VisibleNamespaces
+// scans the candidates it is given; given none it finds none allowed, returns
+// that as a perfectly successful answer, and caches it for the checker's TTL.
+// Every caller then reads "allowed in no namespace" as "forbidden" and tells
+// the user they may not list something they may in fact list — for the next
+// thirty seconds, out of one transient hiccup.
+//
+// The dashboard's own service account not being permitted to list namespaces
+// makes it permanent rather than transient, and every narrowly bound user on
+// that deployment sees a standing RBAC error that no RBAC change will fix.
+//
+// So the two cases are kept apart: "there are no namespaces" is a list, and
+// "the namespaces could not be read" is this error. Callers surface it as the
+// unavailability it is, which is the same distinction countSummary already
+// draws between "you may not" and "we could not".
+var errNoNamespaceScan = errors.New("the cluster's namespaces could not be listed, so it is not possible to determine where you may read")
+
 // namespaceNames lists namespaces from the cache, used for the fallback scan
 // that finds where a narrowly bound user is allowed to read.
-func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) []string {
+func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) ([]string, error) {
 	nsRes, err := c.Discovery.Resolve(ctx, "", "v1", "namespaces")
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%w: %w", errNoNamespaceScan, err)
 	}
 	objs, err := c.Informers.List(ctx, nsRes, "")
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("%w: %w", errNoNamespaceScan, err)
 	}
 	out := make([]string, 0, len(objs))
 	for _, o := range objs {
 		out = append(out, o.GetName())
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // visibleScope collects the objects the caller is allowed to list, together
@@ -134,7 +155,7 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespace string)
 			Verb: "list", Group: res.resource.Group, Version: res.resource.Version,
 			Resource: res.resource.Name,
 		},
-		a.namespaceNames(ctx, res.cluster),
+		func() ([]string, error) { return a.namespaceNames(ctx, res.cluster) },
 	)
 	if scanErr != nil && !all && len(allowed) == 0 {
 		return nil, scope, nil, scanErr

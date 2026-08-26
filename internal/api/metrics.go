@@ -191,7 +191,7 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 			res.cluster.AuthzClient(res.clients),
 			res.cluster.AuthSubject(res.identity),
 			authz.Attributes{Verb: "list", Group: "", Version: "v1", Resource: "pods"},
-			a.namespaceNames(ctx, res.cluster))
+			func() ([]string, error) { return a.namespaceNames(ctx, res.cluster) })
 		// A truncated scan is reported, like every other VisibleNamespaces
 		// caller: a partial answer that looks complete is worse than an error.
 		if scanErr != nil && !all && len(allowed) == 0 {

@@ -256,7 +256,7 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		res.cluster.AuthzClient(res.clients),
 		res.cluster.AuthSubject(res.identity),
 		attrs,
-		a.namespaceNames(ctx, res.cluster),
+		func() ([]string, error) { return a.namespaceNames(ctx, res.cluster) },
 	)
 	if all {
 		vis.all = true
