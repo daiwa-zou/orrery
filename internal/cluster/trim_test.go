@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -77,6 +78,52 @@ func TestTrimForCacheRedactsSecretValues(t *testing.T) {
 	}
 	if _, ok := sizes["token"]; !ok {
 		t.Error("key names should survive so list views can show them")
+	}
+	// The size is what the console labels each key with, so it has to be the
+	// decoded length. "c3VwZXItc2VjcmV0" is twelve bytes and "eA==" is one;
+	// counting the padding as data reported them as twelve and three.
+	if sizes["token"] != int64(len("super-secret")) {
+		t.Errorf("token size = %v, want %d", sizes["token"], len("super-secret"))
+	}
+	if sizes["other"] != int64(1) {
+		t.Errorf("other size = %v, want 1", sizes["other"])
+	}
+}
+
+// base64 encodes three bytes as four characters and pads the final group with
+// "=", so the encoded length overstates the value by however many pad
+// characters there are — up to two bytes on every secret in the cluster.
+func TestBase64DecodedLen(t *testing.T) {
+	cases := []struct {
+		plain string
+		b64   string
+	}{
+		{"", ""},
+		{"x", "eA=="},   // two pad characters
+		{"xy", "eHk="},  // one
+		{"xyz", "eHl6"}, // none
+		{"super-secret", "c3VwZXItc2VjcmV0"},
+		{"SUPERSECRETVALUE123", "U1VQRVJTRUNSRVRWQUxVRTEyMw=="},
+		{"abcdefghijklmnop", "YWJjZGVmZ2hpamtsbW5vcA=="},
+	}
+	for _, tc := range cases {
+		// The fixture itself has to be right, or the test proves nothing.
+		if got := base64.StdEncoding.EncodeToString([]byte(tc.plain)); got != tc.b64 {
+			t.Fatalf("fixture wrong: %q encodes to %q, not %q", tc.plain, got, tc.b64)
+		}
+		if got := base64DecodedLen(tc.b64); got != int64(len(tc.plain)) {
+			t.Errorf("base64DecodedLen(%q) = %d, want %d", tc.b64, got, len(tc.plain))
+		}
+	}
+}
+
+// The transform runs on whatever the API server sent, which is not always what
+// this expects. Nothing here may panic or report a negative size.
+func TestBase64DecodedLenSurvivesMalformedInput(t *testing.T) {
+	for _, in := range []string{"=", "==", "===", "a", "ab", "abc", "!!!!", "a===b"} {
+		if got := base64DecodedLen(in); got < 0 {
+			t.Errorf("base64DecodedLen(%q) = %d, want a non-negative size", in, got)
+		}
 	}
 }
 
