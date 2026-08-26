@@ -8,6 +8,8 @@ import type {
   Me,
   MetricsResponse,
   Overview,
+  RelatedResponse,
+  SearchResponse,
   ClusterSummary,
 } from './types'
 
@@ -239,6 +241,22 @@ export const api = {
       signal,
     ),
 
+  /**
+   * Finds objects by name across every cluster at once — the question a name
+   * out of an alert poses, which every other read answers only once you
+   * already know which cluster to ask.
+   */
+  search: (
+    q: string,
+    params: { cluster?: string[]; resource?: string[]; namespace?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<SearchResponse>(
+      `/search` + qs({ q, ...params }),
+      {},
+      signal,
+    ),
+
   cacheStats: (cluster: string, signal?: AbortSignal) =>
     request<{ cluster: string; informers: unknown[]; totalObjects: number }>(
       `/clusters/${cluster}/stats`,
@@ -266,6 +284,22 @@ export const api = {
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      {},
+      signal,
+    ),
+
+  /**
+   * One object's neighbourhood: owners, children, the node or services it is
+   * tied to, and the objects its spec names.
+   *
+   * Events are asked for separately by the detail page's own tab, so they are
+   * declined here rather than fetched twice.
+   */
+  related: (ref: ResourceRef, signal?: AbortSignal) =>
+    request<RelatedResponse>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
+        `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}/related` +
+        qs({ events: false }),
       {},
       signal,
     ),

@@ -60,8 +60,12 @@ the referenced objects under your own RBAC.
 
 **Made for the "why is it broken?" walk.** Warning event → object → container
 row → that container's logs (`previous` included) → terminal, all without
-leaving the page's context. Workloads link to the pods their selector owns;
-nodes link to the pods scheduled on them; owner references link upward.
+leaving the page's context. Every object carries a Related panel holding its
+whole neighbourhood: the owners above it all the way up, the objects it owns
+all the way down, the node it runs on, the services that select it, and the
+ConfigMaps and Secrets its spec names — each with the health you came to check
+and a link resolved through the cluster's own discovery rather than guessed
+from the kind.
 
 **When `exec` cannot reach it.** A crash-looping container has no process to
 attach to, and a distroless image has no shell to attach with. Attach an

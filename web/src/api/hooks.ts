@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api, wsURL, groupSegment, type ListParams, type ResourceRef } from './client'
 import type { KubeObject, ListResponse, Row, WatchMessage } from './types'
 
@@ -471,3 +471,66 @@ export function useAccess(
     staleTime: 30_000,
   })
 }
+
+/**
+ * One object's neighbourhood.
+ *
+ * Enabled only when the caller says so, because the answer costs a walk: the
+ * server scans the resources a kind's children live in, each behind its own
+ * access review. A detail page asks when its overview is on screen, not on
+ * every navigation.
+ */
+export function useRelated(ref: ResourceRef | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['related', ref?.cluster, ref?.group, ref?.version, ref?.resource, ref?.namespace, ref?.name],
+    queryFn: ({ signal }) => api.related(ref!, signal),
+    enabled: enabled && !!ref?.name,
+    // The neighbourhood moves when pods come and go, which is often during the
+    // incident someone is looking at — but a walk per second helps nobody.
+    staleTime: 15_000,
+  })
+}
+
+/**
+ * The overview of every cluster at once, for the fleet page.
+ *
+ * One query per cluster rather than a new aggregate endpoint: each is already
+ * cached and shared server-side, they are independent so a slow or unreachable
+ * cluster does not hold up the others, and a cluster the caller may not read
+ * fails on its own instead of taking the page with it. The number of clusters
+ * is configuration, not user input, so the fan-out is bounded by deployment.
+ */
+export function useFleetOverviews(clusters: string[]) {
+  return useQueries({
+    queries: clusters.map((cluster) => ({
+      queryKey: ['overview', cluster],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.overview(cluster, signal),
+      refetchInterval: 30_000,
+    })),
+  })
+}
+
+/**
+ * Cross-cluster object search, for the command palette.
+ *
+ * Deliberately gated on a caller-supplied `enabled` and on the query being
+ * long enough to mean something: each call walks a curated set of resources in
+ * every cluster, and firing that on the first keystroke would scan the fleet to
+ * find out what "c" matches.
+ */
+export function useObjectSearch(q: string, enabled: boolean) {
+  const trimmed = q.trim()
+  return useQuery({
+    queryKey: ['search', trimmed],
+    queryFn: ({ signal }) => api.search(trimmed, { limit: 20 }, signal),
+    enabled: enabled && trimmed.length >= MIN_SEARCH_LENGTH,
+    // The palette is re-opened constantly with the same recent queries.
+    staleTime: 10_000,
+    // A search that fails should quietly show nothing rather than retrying a
+    // fleet-wide scan behind a dropdown nobody is looking at any more.
+    retry: false,
+  })
+}
+
+/** Below this, a query matches too much to be worth a fleet-wide scan. */
+export const MIN_SEARCH_LENGTH = 2

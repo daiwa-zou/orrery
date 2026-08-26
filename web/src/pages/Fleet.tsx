@@ -1,8 +1,12 @@
+import clsx from 'clsx'
+import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { ClusterSummary, HealthStatus } from '../api/types'
+import { useFleetOverviews } from '../api/hooks'
+import type { ClusterSummary, HealthStatus, Overview } from '../api/types'
 import { UserMenu } from '../components/AppShell'
 import { LogoMark, Wordmark } from '../components/Logo'
 import { Badge, Corners } from '../components/primitives'
+import { fleetHealth, fleetHealthLabel, needsAttention } from '../lib/fleetHealth'
 import { HEALTH_TONE } from '../lib/format'
 
 const DOT_COLOR: Record<HealthStatus, string> = {
@@ -134,7 +138,8 @@ function FleetOrbit({ clusters }: { clusters: ClusterSummary[] }) {
   )
 }
 
-function ClusterCard({ cluster }: { cluster: ClusterSummary }) {
+function ClusterCard({ cluster, overview }: { cluster: ClusterSummary; overview?: Overview }) {
+  const workloads = fleetHealth(overview)
   return (
     <Link
       to={`/c/${cluster.name}`}
@@ -169,6 +174,20 @@ function ClusterCard({ cluster }: { cluster: ClusterSummary }) {
         )}
       </dl>
 
+      {/* The badge above is the probe: whether the API server answered. This
+          is what is running on the other side of it, which is the question the
+          page looks like it is answering. */}
+      {cluster.available && (
+        <p
+          className={clsx(
+            'mt-2.5 border-t border-border pt-2 text-xs',
+            needsAttention(workloads) ? 'text-warn' : 'text-ink-faint',
+          )}
+        >
+          {fleetHealthLabel(workloads)}
+        </p>
+      )}
+
       {cluster.labels && Object.keys(cluster.labels).length > 0 && (
         <div className="mt-2.5 flex flex-wrap gap-1">
           {Object.entries(cluster.labels).map(([k, v]) => (
@@ -188,10 +207,29 @@ function ClusterCard({ cluster }: { cluster: ClusterSummary }) {
 /** Side-by-side health for every registered cluster — the "is everything up?"
  *  page a multi-cluster console owes its user. */
 export function Fleet({ clusters }: { clusters: ClusterSummary[] }) {
+  // Only reachable clusters are asked; an unreachable one already says so on
+  // its own card and a request to it would only time out.
+  const reachable = useMemo(
+    () => clusters.filter((c) => c.available).map((c) => c.name),
+    [clusters],
+  )
+  const results = useFleetOverviews(reachable)
+  const overviews = useMemo(() => {
+    const byName: Record<string, Overview | undefined> = {}
+    reachable.forEach((name, i) => {
+      byName[name] = results[i]?.data
+    })
+    return byName
+  }, [reachable, results])
+
   const healthy = clusters.filter((c) => c.health.status === 'healthy').length
   const degraded = clusters.filter((c) => c.health.status === 'degraded').length
   const unreachable = clusters.filter((c) => c.health.status === 'unreachable').length
   const unhealthy = clusters.length - healthy
+  // "all healthy" is a claim about the probe, and it is the first thing anyone
+  // reads on this page. Saying it over a cluster whose pods are crash-looping
+  // is the difference between a summary and a reassurance.
+  const needingAttention = reachable.filter((name) => needsAttention(fleetHealth(overviews[name]))).length
 
   return (
     <div className="flex h-full flex-col">
@@ -213,9 +251,13 @@ export function Fleet({ clusters }: { clusters: ClusterSummary[] }) {
               <p className="mt-1 text-[13.5px] text-ink-muted">
                 {clusters.length} registered ·{' '}
                 {unhealthy > 0 ? (
-                  <span className="text-warn">{unhealthy} not healthy</span>
+                  <span className="text-warn">{unhealthy} not reachable</span>
+                ) : needingAttention > 0 ? (
+                  <span className="text-warn">
+                    {needingAttention} needing attention
+                  </span>
                 ) : (
-                  'all healthy'
+                  'all reachable, workloads healthy'
                 )}
               </p>
             </div>
@@ -238,7 +280,7 @@ export function Fleet({ clusters }: { clusters: ClusterSummary[] }) {
 
           <div className="mt-[26px] grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-x-[18px] gap-y-[22px]">
             {clusters.map((c) => (
-              <ClusterCard key={c.name} cluster={c} />
+              <ClusterCard key={c.name} cluster={c} overview={overviews[c.name]} />
             ))}
           </div>
         </div>

@@ -250,3 +250,72 @@ export type LogMessage =
   /** One pod of a merged feed could not be read; the others continue. */
   | { type: 'STREAM_ERROR'; pod: string; reason: string }
   | { type: 'ERROR'; message: string }
+
+/**
+ * One object in another's neighbourhood, as the related endpoint returns it.
+ *
+ * `path` is the API route that serves this object, already assembled by the
+ * server from resolved discovery. That is the point of reading it rather than
+ * rebuilding one: a link built here has to guess the plural of a kind, and a
+ * CRD may spell its plural however it likes.
+ */
+export interface ObjectRef {
+  /**
+   * Why this object is here: owner, child, descendant, node, hosts, selects,
+   * selected-by, reference. Treated as an open set — an unknown relation is
+   * grouped under its own heading rather than dropped.
+   */
+  relation: string
+  /** Ownership hops from the subject; absent for non-ownership edges. */
+  depth?: number
+  group?: string
+  version?: string
+  resource?: string
+  kind: string
+  namespace?: string
+  name: string
+  uid?: string
+  path?: string
+  /** One-word health, for the kinds that have one. Absent is not "healthy". */
+  status?: string
+  /** Why a link could not be followed, when it could not be. */
+  note?: string
+}
+
+export interface RelatedResponse {
+  object: ObjectRef
+  related: ObjectRef[]
+  events?: Row[]
+  eventColumns?: Column[]
+  /** Scans that were skipped and why: a short answer is not a complete one. */
+  warnings?: string[]
+  truncated?: boolean
+}
+
+/** One object found by the cross-cluster search. */
+export interface SearchHit {
+  cluster: string
+  group?: string
+  version: string
+  resource: string
+  kind: string
+  namespace?: string
+  name: string
+  /** The API route serving it, assembled server-side from resolved discovery. */
+  path: string
+  status?: string
+  /** Higher is a better match: exact name, then prefix, then label-only. */
+  score: number
+}
+
+export interface SearchResponse {
+  query: string
+  hits: SearchHit[]
+  total: number
+  limit: number
+  /** Which resources were actually scanned. */
+  scanned: string[]
+  /** Clusters and resources that could not be searched. */
+  warnings?: string[]
+  truncated?: boolean
+}
