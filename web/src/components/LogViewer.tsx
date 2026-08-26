@@ -209,8 +209,20 @@ export function LogViewer({
         )}
 
         <Badge tone={status === 'streaming' ? 'ok' : status === 'error' ? 'danger' : 'idle'}>
-          {status}
+          <span aria-hidden="true">{status}</span>
         </Badge>
+        {/* Deliberately announces the stream's state and not its contents:
+            reading out every log line as it arrives would make the page
+            unusable with a screen reader. */}
+        <span role="status" aria-live="polite" className="sr-only">
+          {status === 'streaming'
+            ? `Streaming logs from ${container || pod}.`
+            : status === 'connecting'
+              ? 'Connecting to the log stream.'
+              : status === 'ended'
+                ? 'Log stream ended.'
+                : 'Log stream failed.'}
+        </span>
 
         <input
           value={filter}

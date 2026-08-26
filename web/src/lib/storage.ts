@@ -63,3 +63,30 @@ export function recordRecent(entry: RecentResource): void {
   const next = [entry, ...all.filter((r) => key(r) !== key(entry))].slice(0, MAX_RECENTS)
   writeJSON(RECENTS_KEY, next)
 }
+
+/* ---- theme ------------------------------------------------------------- */
+
+export type Theme = 'dark' | 'light'
+
+const THEME_KEY = 'orrery.theme'
+
+/**
+ * The theme currently applied to the document.
+ *
+ * Read from the attribute rather than from storage, because index.html has
+ * already resolved "no stored preference" against the system setting before
+ * first paint. Storage alone cannot answer what is on screen.
+ */
+export function currentTheme(): Theme {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
+}
+
+/** Applies a theme and remembers it, overriding the system preference. */
+export function setTheme(theme: Theme): void {
+  document.documentElement.setAttribute('data-theme', theme)
+  try {
+    window.localStorage.setItem(THEME_KEY, theme)
+  } catch {
+    // Preference does not stick; the page is still themed for this session.
+  }
+}

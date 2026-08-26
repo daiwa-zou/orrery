@@ -42,10 +42,24 @@ function LiveIndicator({ state }: { state: 'connecting' | 'live' | 'polling' | '
         : undefined
 
   return (
-    <Badge tone={tone} title={title}>
-      {state === 'live' && <span className="size-1.5 animate-pulse rounded-full bg-ok" />}
-      {label}
-    </Badge>
+    <>
+      <Badge tone={tone} title={title}>
+        {state === 'live' && <span className="size-1.5 animate-pulse rounded-full bg-ok" />}
+        <span aria-hidden="true">{label}</span>
+      </Badge>
+      {/* A reader who cannot see the badge change colour still needs to know
+          the page stopped being live. Announced politely, and only when the
+          connection state actually moves — never per row. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {state === 'live'
+          ? 'Live: updates are streaming from the cluster.'
+          : state === 'polling'
+            ? 'Live stream unavailable. Refreshing every 15 seconds instead.'
+            : state === 'connecting'
+              ? 'Connecting to the live stream.'
+              : 'Static list. Not receiving live updates.'}
+      </span>
+    </>
   )
 }
 
