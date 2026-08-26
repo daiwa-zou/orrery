@@ -55,6 +55,9 @@ type hndFake struct {
 	// nsOnlyResource denies only the cluster-wide review for one resource,
 	// which forces the per-namespace fallback scan.
 	nsOnlyResource string
+	// trace, when set, records every path the fake is asked for, so a test can
+	// assert on where a request actually landed rather than only on its status.
+	trace func(string)
 	// hideResource drops one resource from the discovery document, so a
 	// lookup for it fails the way it would on a cluster that does not serve
 	// it — or on one whose discovery is not answering.
@@ -460,6 +463,9 @@ func (f *hndFake) evictions() []string {
 
 func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSuffix(r.URL.Path, "/")
+	if fn := f.tracer(); fn != nil {
+		fn(r.URL.Path)
+	}
 
 	switch p {
 	case "/version":
@@ -511,6 +517,21 @@ func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.serveResource(w, r, group, version, rest)
+}
+
+// setTrace installs the path recorder. Informer goroutines are already serving
+// from this fake by the time a test sets one, so the field is guarded like
+// every other piece of mutable state here.
+func (f *hndFake) setTrace(fn func(string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = fn
+}
+
+func (f *hndFake) tracer() func(string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.trace
 }
 
 // filterDiscovery applies hideResource to an APIResourceList.

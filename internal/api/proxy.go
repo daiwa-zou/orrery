@@ -38,6 +38,31 @@ func (a *API) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")   // may carry ":port"
 	rest_ := chi.URLParam(r, "*")
 
+	// The suffix is joined onto the proxy subresource path by client-go, and
+	// that join runs path.Clean. A ".." segment therefore does not stay inside
+	// the proxied workload — it walks back up the API server's own path space.
+	// "a/../../../../secrets" resolves to /api/v1/namespaces/<ns>/secrets, and
+	// the request that reaches the API server is a plain collection read, not a
+	// proxy call at all.
+	//
+	// What makes that a privilege escalation rather than an oddity is the
+	// credential it travels under. In serviceaccount mode ClientsFor hands back
+	// the dashboard's own client, so the API server sees the dashboard's
+	// service account and the only thing that ever gated the request was our
+	// own review of "get pods/proxy" on one named pod. A caller allowed to read
+	// one pod's HTTP port could read anything the dashboard can read.
+	//
+	// Rejecting the segments outright is the fix; the prefix assertion further
+	// down is the guard against some future join deciding to clean differently.
+	suffix := strings.Split(rest_, "/")
+	for _, seg := range suffix {
+		if seg == ".." || seg == "." {
+			a.writeErr(w, r, badRequest(
+				"the proxy path may not contain %q segments", seg))
+			return
+		}
+	}
+
 	if ptype != "pods" && ptype != "services" {
 		a.writeErr(w, r, badRequest("proxy target must be pods or services"))
 		return
@@ -59,12 +84,27 @@ func (a *API) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	base := res.clients.Kube.CoreV1().RESTClient().Get().
+		Namespace(namespace).
+		Resource(ptype).
+		Name(name).
+		SubResource("proxy")
 	req := res.clients.Kube.CoreV1().RESTClient().Get().
 		Namespace(namespace).
 		Resource(ptype).
 		Name(name).
 		SubResource("proxy").
-		Suffix(strings.Split(rest_, "/")...)
+		Suffix(suffix...)
+
+	// Belt and braces. The segment check above is what stops the known escape;
+	// this refuses to send anything that has left the subresource whatever the
+	// reason, so a change in how paths are joined cannot quietly turn the proxy
+	// into an arbitrary read again.
+	if !strings.HasPrefix(req.URL().Path, base.URL().Path) {
+		a.writeErr(w, r, badRequest("the proxy path escapes the proxy subresource"))
+		return
+	}
+
 	for k, vs := range r.URL.Query() {
 		for _, v := range vs {
 			req.Param(k, v)
