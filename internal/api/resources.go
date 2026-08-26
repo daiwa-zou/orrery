@@ -392,14 +392,93 @@ func (f listFilter) empty() bool {
 	return f.q == "" && f.labelSel == nil && f.fieldSel == nil
 }
 
+// unstructuredLabels adapts an object's raw label map to labels.Labels without
+// copying it.
+//
+// GetLabels allocates a fresh map[string]string on every call, so filtering a
+// fifty-thousand-object list by label selector cost fifty thousand map
+// allocations for what is only ever a read-only membership test. Selector
+// matching needs Has and Get, not ownership, so the raw map serves directly.
+type unstructuredLabels map[string]any
+
+func (l unstructuredLabels) Has(key string) bool {
+	_, ok := l[key]
+	return ok
+}
+
+func (l unstructuredLabels) Get(key string) string {
+	s, _ := l[key].(string)
+	return s
+}
+
+func (l unstructuredLabels) Lookup(key string) (string, bool) {
+	v, ok := l[key]
+	if !ok {
+		return "", false
+	}
+	s, _ := v.(string)
+	return s, true
+}
+
+// labelsOf returns a no-copy view of an object's labels.
+func labelsOf(o *unstructured.Unstructured) unstructuredLabels {
+	raw, found, err := unstructured.NestedFieldNoCopy(o.Object, "metadata", "labels")
+	if !found || err != nil {
+		return nil
+	}
+	m, _ := raw.(map[string]any)
+	return unstructuredLabels(m)
+}
+
+// objectFields is the same trick for field selectors: fieldSetFor builds a
+// map per object, which the matcher then only reads. This computes each value
+// on demand instead, and mirrors fieldSetFor's key set exactly — name and
+// namespace are always present, the rest only when non-empty.
+type objectFields struct{ o *unstructured.Unstructured }
+
+func (f objectFields) Get(field string) string {
+	switch field {
+	case "metadata.name":
+		return f.o.GetName()
+	case "metadata.namespace":
+		return f.o.GetNamespace()
+	case "status.phase":
+		return str(f.o, "status", "phase")
+	case "spec.nodeName":
+		return str(f.o, "spec", "nodeName")
+	case "type":
+		return str(f.o, "type")
+	case "involvedObject.name":
+		return str(f.o, "involvedObject", "name")
+	case "involvedObject.kind":
+		return str(f.o, "involvedObject", "kind")
+	case "involvedObject.namespace":
+		return str(f.o, "involvedObject", "namespace")
+	case "involvedObject.uid":
+		return str(f.o, "involvedObject", "uid")
+	default:
+		return ""
+	}
+}
+
+func (f objectFields) Has(field string) bool {
+	switch field {
+	case "metadata.name", "metadata.namespace":
+		// fieldSetFor sets both unconditionally, empty or not.
+		return true
+	default:
+		return f.Get(field) != ""
+	}
+}
+
 func (f listFilter) matches(o *unstructured.Unstructured) bool {
 	if f.q != "" && !matchesQuery(o, f.q) {
 		return false
 	}
-	if f.labelSel != nil && !f.labelSel.Matches(labels.Set(o.GetLabels())) {
+	if f.labelSel != nil && !f.labelSel.Matches(labelsOf(o)) {
 		return false
 	}
-	if f.fieldSel != nil && !f.fieldSel.Matches(fieldSetFor(o)) {
+	if f.fieldSel != nil && !f.fieldSel.Matches(objectFields{o}) {
 		return false
 	}
 	return true

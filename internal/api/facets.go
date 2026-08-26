@@ -3,7 +3,11 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strings"
+	"sync"
+	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -36,6 +40,83 @@ type facetsResponse struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+
+// facetsCacheTTL bounds how stale an autocomplete vocabulary may be. Facets
+// are explicitly a hint rather than an inventory, and the set of distinct
+// label keys on a resource moves far slower than it is queried, so a short
+// window trades imperceptible staleness for not rescanning every object on
+// every keystroke.
+const facetsCacheTTL = 15 * time.Second
+
+// facetsCacheSize caps how many (resource, scope) combinations are remembered.
+const facetsCacheSize = 512
+
+type facetsEntry struct {
+	resp     facetsResponse
+	computed time.Time
+}
+
+// facetCache memoises the search vocabulary.
+//
+// Computing it walks every object the caller may see and builds a map of every
+// label key and value on them — the most expensive read in the system, and the
+// one triggered by typing in the search bar.
+//
+// The key carries the caller's *visible scope*, never their identity. Two
+// users whose RBAC grants the same reach are looking at the same objects and
+// may share an entry; a user who may see less can never be handed a vocabulary
+// harvested from a wider scope, because that scope hashes to a different key.
+type facetCache struct {
+	mu      sync.Mutex
+	entries *lru.Cache[string, facetsEntry]
+}
+
+func newFacetCache() *facetCache {
+	c, err := lru.New[string, facetsEntry](facetsCacheSize)
+	if err != nil {
+		// Only returned for a non-positive size, which is a constant here.
+		panic(err)
+	}
+	return &facetCache{entries: c}
+}
+
+// scopeKey renders a visible scope as a cache key. The namespace list is
+// sorted so two callers with the same reach in a different order agree.
+func scopeKey(s scopeInfo) string {
+	switch {
+	case s.AllNamespaces:
+		return "all"
+	case s.Namespace != "":
+		return "ns=" + s.Namespace
+	default:
+		ns := append([]string(nil), s.Namespaces...)
+		sort.Strings(ns)
+		return "set=" + strings.Join(ns, ",")
+	}
+}
+
+func (c *facetCache) get(key string) (facetsResponse, bool) {
+	if c == nil {
+		return facetsResponse{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries.Get(key)
+	if !ok || time.Since(e.computed) > facetsCacheTTL {
+		return facetsResponse{}, false
+	}
+	return e.resp, true
+}
+
+func (c *facetCache) put(key string, resp facetsResponse) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries.Add(key, facetsEntry{resp: resp, computed: time.Now()})
+}
+
 // listFacets serves the search vocabulary for one resource. It runs the exact
 // authorization walk the list endpoint runs, so a user can never autocomplete
 // values harvested from objects they may not list.
@@ -56,13 +137,22 @@ func (a *API) listFacets(w http.ResponseWriter, r *http.Request) {
 		namespace = ""
 	}
 
-	objs, _, _, err := a.visibleScope(ctx, res, namespace)
+	objs, scope, _, err := a.visibleScope(ctx, res, namespace)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, computeFacets(objs))
+	// The authorization walk above has already run; what is memoised is the
+	// scan over the objects it returned.
+	key := res.cluster.Cfg.Name + "|" + res.resource.GVR().String() + "|" + scopeKey(scope)
+	if resp, ok := a.facets.get(key); ok {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	resp := computeFacets(objs)
+	a.facets.put(key, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func computeFacets(objs []*unstructured.Unstructured) facetsResponse {
