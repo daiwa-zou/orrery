@@ -63,6 +63,12 @@ interface YamlEditorProps {
   value: string
   readOnly?: boolean
   onSave?: (next: string) => Promise<void>
+  /**
+   * Sends the draft to the API server as a dry run and resolves with the YAML
+   * the server would actually store. Rejecting means the edit is invalid, and
+   * the reason is the server's own. When supplied, Apply runs this first.
+   */
+  onCheck?: (next: string) => Promise<string>
   /** Shown above the editor when the object cannot be edited. */
   notice?: string
   /** Lets the parent guard against discarding unsaved edits. */
@@ -77,12 +83,23 @@ interface YamlEditorProps {
  * never quietly discard something the reader typed, and an unedited pane
  * always shows the truth.
  */
-export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: YamlEditorProps) {
+export function YamlEditor({
+  value,
+  readOnly,
+  onSave,
+  onCheck,
+  notice,
+  onDirtyChange,
+}: YamlEditorProps) {
   const [draft, setDraft] = useState(value)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [dirty, setDirty] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
+  const [checking, setChecking] = useState(false)
+  // What the last dry run reported: the server accepted it, and whether it
+  // would change anything beyond what the author typed.
+  const [checked, setChecked] = useState<{ serverEdits: number } | undefined>()
   // The value that was on screen when a save succeeded. Until the refetch
   // lands, the prop still holds this pre-save text; adopting it would make the
   // editor visibly revert the change that was just applied.
@@ -100,6 +117,11 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
 
+  // A verdict only describes the text it was run against.
+  useEffect(() => {
+    setChecked(undefined)
+  }, [draft])
+
   // Losing a half-written manifest to a stray ⌘W is not acceptable.
   useEffect(() => {
     if (!dirty) return
@@ -108,14 +130,46 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
+  /**
+   * Ask the server what this edit would do. Returns the would-be YAML, or
+   * undefined when the server rejected it (the reason is put on screen).
+   */
+  const check = async (): Promise<string | undefined> => {
+    if (!onCheck) return undefined
+    setChecking(true)
+    setError(undefined)
+    try {
+      const serverYaml = await onCheck(draft)
+      setChecked({ serverEdits: presentableDiff(draft, serverYaml).length })
+      return serverYaml
+    } catch (e) {
+      setChecked(undefined)
+      setError((e as Error).message)
+      return undefined
+    } finally {
+      setChecking(false)
+    }
+  }
+
   const save = async () => {
     if (!onSave) return
+    // Validate against the cluster before writing to it. A rejecting webhook
+    // or an immutable field fails here, with the object untouched, instead of
+    // half-applying and leaving the reader to work out what happened.
+    if (onCheck && !checked) {
+      setSaving(true)
+      const ok = await check()
+      setSaving(false)
+      if (ok === undefined) return
+      return
+    }
     setSaving(true)
     setError(undefined)
     try {
       await onSave(draft)
       staleAfterSave.current = value
       setDirty(false)
+      setChecked(undefined)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -127,6 +181,7 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
     setDraft(value)
     setDirty(false)
     setError(undefined)
+    setChecked(undefined)
   }
 
   // One line diff feeds both the "n staged changes" chip and the gutter dots.
@@ -161,6 +216,13 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
               {hunks} staged change{hunks === 1 ? '' : 's'}
             </Badge>
           )}
+          {checked && (
+            <Badge tone={checked.serverEdits > 0 ? 'warn' : 'ok'}>
+              {checked.serverEdits > 0
+                ? `server accepts, and would set ${checked.serverEdits} more`
+                : 'server accepts as written'}
+            </Badge>
+          )}
           {notice && <span className="text-xs text-ink-faint">{notice}</span>}
           <div className="flex-1" />
           {onSave && !readOnly && (
@@ -173,12 +235,23 @@ export function YamlEditor({ value, readOnly, onSave, notice, onDirtyChange }: Y
               >
                 {showDiff ? 'Hide diff' : 'Diff'}
               </Button>
+              {onCheck && (
+                <Button
+                  size="sm"
+                  onClick={check}
+                  disabled={!dirty || saving || checking}
+                  title="Send this to the API server as a dry run: admission, webhooks and defaulting run, nothing is written"
+                >
+                  {checking && <Spinner className="mr-1.5" />}
+                  Check
+                </Button>
+              )}
               <Button size="sm" onClick={revert} disabled={!dirty || saving}>
                 Discard
               </Button>
               <Button size="sm" variant="primary" onClick={save} disabled={!dirty || saving}>
                 {saving ? <Spinner className="size-3" /> : null}
-                Apply
+                {onCheck && !checked ? 'Check & apply' : 'Apply'}
               </Button>
             </>
           )}

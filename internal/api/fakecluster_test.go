@@ -668,6 +668,11 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 		if _, ok := meta["uid"]; !ok {
 			meta["uid"] = "uid-created"
 		}
+		if fakeDryRun(r) {
+			// A real API server runs admission and defaulting, then discards.
+			hndWriteJSON(w, 201, o)
+			return
+		}
 		res.items = append(res.items, o)
 		hndWriteJSON(w, 201, o)
 
@@ -681,6 +686,10 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 		i, old := f.getLocked(key, ns, name)
 		if old == nil {
 			hndStatus(w, 404, "NotFound", resource+" \""+name+"\" not found")
+			return
+		}
+		if fakeDryRun(r) {
+			hndWriteJSON(w, 200, o)
 			return
 		}
 		res.items[i] = o
@@ -952,4 +961,15 @@ func hndWantStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
 	if rec.Code != want {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, want, rec.Body.String())
 	}
+}
+
+// fakeDryRun mirrors the API server's dryRun=All handling: do the work, return
+// what would have been stored, persist nothing.
+func fakeDryRun(r *http.Request) bool {
+	for _, v := range r.URL.Query()["dryRun"] {
+		if v == "All" {
+			return true
+		}
+	}
+	return false
 }

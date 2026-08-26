@@ -547,15 +547,7 @@ func (a *API) getResource(w http.ResponseWriter, r *http.Request) {
 		obj = cluster.TrimForResponse(obj)
 	}
 
-	if r.URL.Query().Get("format") == "yaml" {
-		raw, err := yaml.Marshal(obj.Object)
-		if err != nil {
-			a.writeErr(w, r, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(raw)
+	if a.writeObjectYAML(w, r, obj) {
 		return
 	}
 	writeJSON(w, http.StatusOK, obj)
@@ -619,12 +611,14 @@ func (a *API) createResource(w http.ResponseWriter, r *http.Request) {
 
 	created, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(namespace).
-		Create(ctx, obj, metav1.CreateOptions{})
+		Create(ctx, obj, metav1.CreateOptions{DryRun: dryRunList(r)})
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
 	writeJSON(w, http.StatusCreated, cluster.TrimForResponse(created))
 }
 
@@ -658,13 +652,19 @@ func (a *API) updateResource(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(namespace).
-		Update(ctx, obj, metav1.UpdateOptions{})
+		Update(ctx, obj, metav1.UpdateOptions{DryRun: dryRunList(r)})
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
-	writeJSON(w, http.StatusOK, cluster.TrimForResponse(updated))
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
+	trimmed := cluster.TrimForResponse(updated)
+	if a.writeObjectYAML(w, r, trimmed) {
+		return
+	}
+	writeJSON(w, http.StatusOK, trimmed)
 }
 
 // patchTypeFor maps the request's content type onto a Kubernetes patch type.
@@ -709,7 +709,7 @@ func (a *API) patchResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := metav1.PatchOptions{}
+	opts := metav1.PatchOptions{DryRun: dryRunList(r)}
 	if pt == types.ApplyPatchType {
 		opts.FieldManager = "orrery"
 		// Force is opt-in: silently stealing fields from another manager is
@@ -764,8 +764,52 @@ func (a *API) deleteResource(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "name": name, "namespace": namespace})
+}
+
+// writeObjectYAML serves an object as YAML when the caller asked for
+// format=yaml, and reports whether it did. Shared by the read path and by
+// dry-run writes, which the editor diffs as text.
+func (a *API) writeObjectYAML(w http.ResponseWriter, r *http.Request, obj *unstructured.Unstructured) bool {
+	if r.URL.Query().Get("format") != "yaml" {
+		return false
+	}
+	raw, err := yaml.Marshal(obj.Object)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return true
+	}
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(raw)
+	return true
+}
+
+// dryRunRequested reports whether the caller asked for a dry run. A dry-run
+// write is sent to the API server with DryRun=All: it runs admission, mutating
+// webhooks, validation and defaulting, then discards the result instead of
+// persisting it. That is what makes a truthful diff possible — the object it
+// returns is what would actually be stored, defaults and webhook edits
+// included, not what the client guessed would be.
+//
+// Permission is unchanged: a dry run still needs the same verb on the same
+// object, so this cannot be used to probe what a write would do without being
+// allowed to do it.
+func dryRunRequested(r *http.Request) bool {
+	v := r.URL.Query().Get("dryRun")
+	return v == "true" || v == "All" || v == "1"
+}
+
+// dryRunList is the DryRun field value for a write, empty when the caller did
+// not ask for one.
+func dryRunList(r *http.Request) []string {
+	if dryRunRequested(r) {
+		return []string{metav1.DryRunAll}
+	}
+	return nil
 }
 
 // invalidateIfCRD drops cached discovery after a CRD changes, so a new custom

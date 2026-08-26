@@ -906,6 +906,7 @@ function ResourceDetailInner() {
                   value={yamlQuery.data ?? ''}
                   readOnly={!mayUpdate}
                   onSave={mayUpdate ? saveYaml : undefined}
+                  onCheck={mayUpdate ? (next) => api.replaceDryRun(ref, next) : undefined}
                   onDirtyChange={setYamlDirty}
                   notice={
                     mayUpdate

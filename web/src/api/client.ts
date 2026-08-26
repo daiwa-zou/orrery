@@ -262,10 +262,32 @@ export const api = {
       signal,
     ),
 
+  /**
+   * Replace an object. With `dryRun`, the API server runs admission, webhooks
+   * and defaulting and returns what *would* be stored without persisting it —
+   * which is what makes an honest preview possible.
+   */
   replace: (ref: ResourceRef, body: string) =>
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      { method: 'PUT', body, headers: { 'Content-Type': 'application/yaml' } },
+    ),
+
+  /**
+   * Send an edit to the API server with dryRun=All and get back, as YAML, the
+   * object that *would* be stored — after admission, mutating webhooks,
+   * validation and defaulting. Nothing is persisted.
+   *
+   * This is what turns Apply from a leap of faith into a check: a rejecting
+   * webhook, an immutable field or a malformed selector fails here, before the
+   * cluster is touched, and the returned text shows the fields the server sets
+   * that the author never typed.
+   */
+  replaceDryRun: (ref: ResourceRef, body: string) =>
+    request<string>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
+        `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}?dryRun=true&format=yaml`,
       { method: 'PUT', body, headers: { 'Content-Type': 'application/yaml' } },
     ),
 
