@@ -250,3 +250,31 @@ export type LogMessage =
   /** One pod of a merged feed could not be read; the others continue. */
   | { type: 'STREAM_ERROR'; pod: string; reason: string }
   | { type: 'ERROR'; message: string }
+
+/** One object found by the cross-cluster search. */
+export interface SearchHit {
+  cluster: string
+  group?: string
+  version: string
+  resource: string
+  kind: string
+  namespace?: string
+  name: string
+  /** The API route serving it, assembled server-side from resolved discovery. */
+  path: string
+  status?: string
+  /** Higher is a better match: exact name, then prefix, then label-only. */
+  score: number
+}
+
+export interface SearchResponse {
+  query: string
+  hits: SearchHit[]
+  total: number
+  limit: number
+  /** Which resources were actually scanned. */
+  scanned: string[]
+  /** Clusters and resources that could not be searched. */
+  warnings?: string[]
+  truncated?: boolean
+}

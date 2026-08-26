@@ -471,3 +471,28 @@ export function useAccess(
     staleTime: 30_000,
   })
 }
+
+/**
+ * Cross-cluster object search, for the command palette.
+ *
+ * Deliberately gated on a caller-supplied `enabled` and on the query being
+ * long enough to mean something: each call walks a curated set of resources in
+ * every cluster, and firing that on the first keystroke would scan the fleet to
+ * find out what "c" matches.
+ */
+export function useObjectSearch(q: string, enabled: boolean) {
+  const trimmed = q.trim()
+  return useQuery({
+    queryKey: ['search', trimmed],
+    queryFn: ({ signal }) => api.search(trimmed, { limit: 20 }, signal),
+    enabled: enabled && trimmed.length >= MIN_SEARCH_LENGTH,
+    // The palette is re-opened constantly with the same recent queries.
+    staleTime: 10_000,
+    // A search that fails should quietly show nothing rather than retrying a
+    // fleet-wide scan behind a dropdown nobody is looking at any more.
+    retry: false,
+  })
+}
+
+/** Below this, a query matches too much to be worth a fleet-wide scan. */
+export const MIN_SEARCH_LENGTH = 2
