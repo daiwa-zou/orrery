@@ -50,17 +50,35 @@ immediately — with the same columns `kubectl get` would show.
 **Live by default.** Lists stream changes over a WebSocket. A pod flipping to
 `CrashLoopBackOff` updates the row you are looking at, without a refresh.
 
-**The things you open a dashboard for.** Log streaming, a terminal into any
-container, YAML view and edit, scale, rolling restart, cordon, drain with dry
-run, evict, delete, event feeds, and node/pod metrics from metrics-server.
-Pod pages resolve each container's environment — ConfigMap and Secret
-references, downward-API fields — reading the referenced objects under your
-own RBAC.
+**The things you open a dashboard for.** Log streaming — one container, or a
+whole workload's pods merged into a single feed — a terminal into any
+container, YAML view and edit, scale, rolling restart, rollout undo, cordon,
+drain with dry run, evict, delete, CronJob trigger and suspend, event feeds,
+and node/pod metrics from metrics-server. Pod pages resolve each container's
+environment — ConfigMap and Secret references, downward-API fields — reading
+the referenced objects under your own RBAC.
 
 **Made for the "why is it broken?" walk.** Warning event → object → container
 row → that container's logs (`previous` included) → terminal, all without
 leaving the page's context. Workloads link to the pods their selector owns;
 nodes link to the pods scheduled on them; owner references link upward.
+
+**When `exec` cannot reach it.** A crash-looping container has no process to
+attach to, and a distroless image has no shell to attach with. Attach an
+ephemeral debug container instead, optionally sharing the target's process
+namespace — the same thing `kubectl debug` does, gated on the same permission,
+with the image chosen by the operator rather than the browser.
+
+**Edits are checked against the cluster first.** Applying YAML sends it with
+`dryRun=All` before anything is written, so admission and validating webhooks
+run and you see the mutated object — or the rejection — while you can still
+change your mind. Field documentation comes from the cluster's own OpenAPI, so
+it matches that server's version and covers CRDs that publish a schema.
+
+**Reach the workload, not just its object.** GET and HEAD can be relayed to a
+pod or service through the API server's proxy subresource under your own
+identity — a health page or an internal dashboard, without a port-forward. It
+is read-only, and it can be switched off entirely.
 
 **Multi-cluster that is actually multi-cluster.** Clusters are registered
 independently, probed for health, and shown side by side. One unreachable
@@ -70,7 +88,9 @@ working.
 **One search bar does everything.** Bare words are free text; `app=web`,
 `tier!=cache`, `!deprecated` and `key in (a,b)` are label terms; dotted keys
 like `status.phase=Running` are field terms. `⌘K` opens it from anywhere, `?`
-lists every shortcut.
+lists every shortcut. A view worth returning to can be starred and reopened
+from the palette, a label you keep squinting at can be promoted to its own
+column, and there is a light theme for people who work in daylight.
 
 ## How permission works
 
@@ -116,13 +136,32 @@ To hack on it instead you need Go 1.26+, Node 22+ and a cluster:
 
 ```bash
 kind create cluster --name lens-a
+kind create cluster --name lens-b
 make run        # backend on :8080, against configs/orrery.dev.yaml
 make web-dev    # SPA on :5173, proxying /api to the backend
 ```
 
-The dev config registers `kind-lens-a` in `serviceaccount` mode with OIDC off,
-which is the fastest way to see something. Set `context: '*'` to turn every
-context in your kubeconfig into a registered cluster.
+`configs/orrery.dev.yaml` has OIDC off and registers both kind contexts from
+`${HOME}/.kube/config`, deliberately in different modes so both code paths get
+exercised: `lens-a` as `serviceaccount` (the dashboard's own credential, full
+access) and `lens-b` as `impersonation`. One cluster is enough to see
+something — the other is simply listed as unreachable — so skip `lens-b` if
+you only want the fast path.
+
+With OIDC off every request runs as `orrery:anonymous` in group
+`system:authenticated`, and the server says so at startup. That identity is
+what `lens-b` impersonates, so until you grant it something, `lens-a` shows
+everything and `lens-b` shows nothing:
+
+```bash
+kubectl --context kind-lens-b create clusterrolebinding orrery-view \
+  --clusterrole=view --user='orrery:anonymous'
+```
+
+Point it at your own clusters by editing the `clusters:` list. `context: '*'`
+turns every context in a kubeconfig into a registered cluster.
+`deploy/dev/teardown.sh` removes the whole local setup — both kind clusters
+and the supporting containers.
 
 <details>
 <summary>Trying the OIDC flow locally</summary>
@@ -179,13 +218,19 @@ make check      # everything CI gates on, in one command
 make bundle     # self-contained binary with the UI embedded
 ```
 
-Two things that catch people out:
+Three things that catch people out:
 
 - **`tsc -b`, not `tsc --noEmit`.** `tsconfig.json` uses project references
   with an empty `files` list, so the latter typechecks nothing and passes on
   anything.
 - **The Redis session tests skip** unless you point them at an instance:
   `ORRERY_TEST_REDIS_URL=redis://127.0.0.1:6379/1 go test ./internal/auth/ -race`.
+- **The dev server proxies `/api` to `127.0.0.1:8080`.** Set `ORRERY_API` to
+  point it at a backend on another port when 8080 is already taken.
+
+`./orrery -print-config` prints the fully resolved configuration with secrets
+masked, which settles most "is it actually reading my file?" questions.
+[web/README.md](web/README.md) covers the frontend's own conventions.
 
 CI runs all of it on every pull request, plus a Helm lint, a container build,
 and security scans (`govulncheck`, `npm audit`, Trivy over the image and for
@@ -225,4 +270,6 @@ surface to keep stable, and `cmd/orrery` is the only binary.
   thing to bump before cutting one.
 - [deploy/remote-cluster](deploy/remote-cluster/) — registering a remote
   cluster: RBAC manifests for both auth modes, and a preflight check.
+- [web/README.md](web/README.md) — working in the SPA: layout, conventions,
+  and the gotchas specific to the frontend.
 - [BRAND.md](docs/BRAND.md) — the mark, the palette and the type.
