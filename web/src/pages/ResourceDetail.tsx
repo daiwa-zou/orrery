@@ -16,6 +16,7 @@ import {
   Badge,
   Button,
   Corners,
+  EmptyState,
   ErrorState,
   Field,
   GatedButton,
@@ -457,7 +458,7 @@ function ResourceDetailInner() {
     setTab(next)
   }
 
-  const { data: obj, isLoading, error, refetch } = useLiveResource(ref)
+  const { data: obj, isLoading, error, stalled, refetch } = useLiveResource(ref)
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name],
@@ -681,7 +682,20 @@ function ResourceDetailInner() {
     )
   }
   if (error) return <ErrorState error={error} retry={refetch} />
-  if (!obj) return null
+  // A parked retry does not resume on its own, so waiting shows nothing for
+  // as long as anyone is willing to wait.
+  if (stalled) return <ErrorState error={stalled} retry={refetch} />
+  // Nothing loading, nothing failed, nothing here. Rendering an empty page
+  // leaves the reader to guess which of those it was; a stale bookmark and a
+  // deleted pod both land here and both deserve a sentence.
+  if (!obj) {
+    return (
+      <EmptyState
+        title={`${name} was not found`}
+        description="It may have been deleted, or this link may name a namespace it does not live in."
+      />
+    )
+  }
 
   const status = obj.status as Record<string, unknown> | undefined
   // For pods, mirror what the list column computes server-side: a container
