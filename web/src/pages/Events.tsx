@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { groupSegment } from '../api/client'
-import { useDiscovery, useEvents } from '../api/hooks'
+import { stalledReason, useDiscovery, useEvents } from '../api/hooks'
 import type { APIResource, Row } from '../api/types'
 import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
@@ -36,12 +36,13 @@ export function Events() {
   )
   const [qInput, setQInput] = useDebouncedInput(q, commitQ)
 
-  const { data, isLoading, error, refetch, isFetching } = useEvents(cluster, {
+  const events = useEvents(cluster, {
     namespace: namespace || undefined,
     q: q || undefined,
     warningsOnly,
     limit: 500,
   })
+  const { data, isLoading, error, refetch, isFetching } = events
   const { data: discovery } = useDiscovery(cluster)
 
   // Maps an involvedObject kind to the resource that serves it, so a row click
@@ -94,6 +95,11 @@ export function Events() {
   }
 
   if (error) return <ErrorState error={error} retry={refetch} />
+  // A parked retry would otherwise fall through to the table's empty state and
+  // report "No recent events" — which reads as a quiet cluster rather than as a
+  // question that was never answered.
+  const stalled = stalledReason(events)
+  if (stalled) return <ErrorState error={stalled} retry={refetch} />
 
   return (
     <div className="flex h-full flex-col">
