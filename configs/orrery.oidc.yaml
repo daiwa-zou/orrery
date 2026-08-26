@@ -40,14 +40,14 @@ log:
 clusters:
   - name: lens-a
     displayName: 'Lens A — primary'
-    kubeconfig: /Users/daiwazou/.kube/config
+    kubeconfig: ${HOME}/.kube/config
     context: kind-lens-a
     authMode: impersonation
     labels: {env: dev, region: local}
 
   - name: lens-b
     displayName: 'Lens B — staging'
-    kubeconfig: /Users/daiwazou/.kube/config
+    kubeconfig: ${HOME}/.kube/config
     context: kind-lens-b
     authMode: impersonation
     labels: {env: staging, region: local}

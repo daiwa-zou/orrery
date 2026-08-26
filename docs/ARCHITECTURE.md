@@ -113,8 +113,17 @@ be.
 
 Actions use the right mechanism rather than the easy one: scaling goes through
 the `scale` subresource (so it works for any CRD that declares one), restart
-stamps the same annotation `kubectl rollout restart` uses, and drain goes
-through the **eviction API** so PodDisruptionBudgets are respected.
+stamps the same annotation `kubectl rollout restart` uses, drain goes through
+the **eviction API** so PodDisruptionBudgets are respected, and an ephemeral
+debug container is a `patch` of `pods/ephemeralcontainers` — the same call,
+and the same permission, `kubectl debug` uses.
+
+A write can also be asked for with `dryRun=All`, which the editor issues before
+offering to apply. The API server then runs admission, mutating webhooks and
+validation and returns the object it *would* have written, without writing it.
+That puts the cluster's own opinion of an edit in front of the user while they
+can still change it, and it is the cluster's opinion rather than a schema check
+the dashboard invented and would eventually get wrong.
 
 ## Streaming
 
@@ -127,6 +136,15 @@ publisher. Stalling the shared cache for everyone because one browser tab is
 wedged would be the worse failure, and a client that has missed changes cannot
 be trusted to know it — so it is told explicitly (`OVERFLOW`) instead of
 quietly drifting out of date.
+
+Log follows are the one stream that is not fed by a cache — they are held open
+against the API server directly. A merged feed over a workload's pods is
+therefore capped at 20, since each pod is a separate upstream stream held by
+one browser tab, and **every pod is authorized before the socket opens**. A
+caller who may read some of a workload's pods but not others is refused
+outright rather than shown a partial feed, because a partial feed and a
+complete one look identical, and during an incident the difference is the
+whole answer.
 
 The frontend applies `MODIFIED` events directly to visible rows, so a status
 change is instant. `ADDED` and `DELETED` change which objects belong on the

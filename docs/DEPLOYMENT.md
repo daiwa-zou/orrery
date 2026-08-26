@@ -143,10 +143,15 @@ copies of the cache in memory. Adding replicas therefore:
   with replica count).
 
 Keep the replica count modest (2–4) and scale **up** (memory) rather than out
-when the driver is cluster size. If you enable the HPA, note it scales on CPU
-utilization; the memory-dominated failure mode (huge cluster, many CRDs) is
-better handled by raising limits and `cache.maxInformersPerCluster` than by
-autoscaling.
+when the driver is cluster size. The HPA is off by default for that reason. If
+you do enable it, the chart targets memory as well as CPU
+(`autoscaling.targetMemoryUtilizationPercentage`, set either to `null` to drop
+that metric) and defaults `scaleDown` to a ten-minute stabilisation window,
+because a replica that goes away takes warm caches with it and its replacement
+refills them from the API server on first use — without the window a busy
+period becomes a sawtooth of cache rebuilds. Even so, the memory-dominated
+failure mode (huge cluster, many CRDs) is better handled by raising limits and
+`cache.maxInformersPerCluster` than by adding pods.
 
 ## The proxy in front
 
@@ -222,6 +227,8 @@ resolved, with secrets masked.
 | `authz.namespaceScanLimit` | `200` | Bounds the per-namespace probe used for users without cluster-wide read. Truncation is reported to the UI, never hidden. |
 | `session.ttl` / `idleTimeout` | `12h` / `2h` | Your org's session policy. |
 | `clusters[].qps` / `burst` | `50` / `100` | Bound what one dashboard may put on one API server. |
+| `proxy.enabled` | `true` | The read-only HTTP proxy into pods and services. `false` removes the route entirely — see [above](#turning-the-http-proxy-off). |
+| `debug.image` | `busybox:1.37` | The image an ephemeral debug container runs. Deliberately the operator's choice, not the caller's: a console that took an image name from the browser would be a way to run arbitrary code inside another workload's namespaces. **Not exposed by the chart** — see [Known limitations](#known-limitations-of-the-current-setup). |
 
 ## Upgrades
 
@@ -238,10 +245,18 @@ An honest list, so you can decide whether any of them matter for your install:
 - **Redis is a hard external dependency of the chart's defaults.** Install it
   or flip to the single-replica memory profile; the chart will not do it for
   you.
-- **The HPA keys on CPU** while the binding resource is usually memory.
-  Autoscaling is off by default for that reason.
+- **Autoscaling cannot fix the resource that binds.** The chart can now scale
+  on memory as well as CPU, but adding replicas does not divide memory here —
+  each one holds its own caches. It stays off by default; raising limits is
+  still the first move. [DECISIONS.md](DECISIONS.md#autoscaling-on-cpu) has the
+  longer version.
 - **Per-replica caches multiply watch load.** Inherent to the
   shared-nothing design; keep replica counts small.
+- **`debug.image` is not a chart value.** The ephemeral-container image is a
+  config-file field the ConfigMap template does not render, so a Helm install
+  gets the `busybox:1.37` default. Overriding it today means editing
+  `templates/configmap.yaml` (or mounting your own config). Fine if busybox is
+  what you want; a blocker if your registry policy forbids Docker Hub.
 - **No NetworkPolicy template in the chart** — bring your own, allowing
   ingress from the ingress controller and egress to API servers, Redis and
   the OIDC issuer only.
