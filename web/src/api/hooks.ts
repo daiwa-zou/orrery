@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api, wsURL, groupSegment, type ListParams, type ResourceRef } from './client'
-import type { ListResponse, Row, WatchMessage } from './types'
+import type { KubeObject, ListResponse, Row, WatchMessage } from './types'
 
 export function useMe() {
   return useQuery({
@@ -103,30 +103,28 @@ export interface LiveListState {
  * spliced in locally — that keeps pagination and sorting honest rather than
  * approximately right.
  */
-export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveListState {
-  const qc = useQueryClient()
-  const [live, setLive] = useState<LiveListState['live']>('off')
+type LiveState = LiveListState['live']
 
-  const key = ref
-    ? ['list', ref.cluster, ref.group, ref.version, ref.resource, params]
-    : ['list', 'none']
-
-  const query = useQuery({
-    queryKey: key,
-    queryFn: ({ signal }) => api.list(ref!, params, signal),
-    enabled: !!ref,
-    placeholderData: keepPreviousData,
-    // The watch is the freshness mechanism; this is a safety net for a socket
-    // that silently dies behind a proxy.
-    refetchInterval: live === 'live' ? false : 15_000,
-  })
-
-  const refetchTimer = useRef<number | undefined>(undefined)
-  const keyRef = useRef(key)
-  keyRef.current = key
+/**
+ * The reconnecting watch socket, shared by the live list and the live object.
+ *
+ * It owns the connection lifecycle and the protocol messages that mean "your
+ * view is no longer trustworthy" — OVERFLOW, ERROR, and returning from a drop.
+ * Callers handle only the data events and are told when to resync.
+ */
+function useWatchSocket(
+  url: string | null,
+  onEvent: (msg: WatchMessage) => void,
+  onResync: () => void,
+): LiveState {
+  const [live, setLive] = useState<LiveState>('off')
+  const eventRef = useRef(onEvent)
+  eventRef.current = onEvent
+  const resyncRef = useRef(onResync)
+  resyncRef.current = onResync
 
   useEffect(() => {
-    if (!ref) {
+    if (!url) {
       setLive('off')
       return
     }
@@ -137,23 +135,6 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
     let attempts = 0
     let dropped = false
     setLive('connecting')
-
-    const url = wsURL(
-      `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
-      {
-        namespace: params.namespace,
-        q: params.q,
-        labelSelector: params.labelSelector,
-        fieldSelector: params.fieldSelector,
-      },
-    )
-
-    const scheduleRefetch = () => {
-      window.clearTimeout(refetchTimer.current)
-      refetchTimer.current = window.setTimeout(() => {
-        qc.invalidateQueries({ queryKey: keyRef.current })
-      }, 700)
-    }
 
     // A dropped socket (proxy idle timeout, rolling restart of the backend)
     // should heal itself. Polling covers the gap, so the backoff can be lazy.
@@ -180,14 +161,14 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
         if (dropped) {
           // Anything could have changed while the socket was down.
           dropped = false
-          qc.invalidateQueries({ queryKey: keyRef.current })
+          resyncRef.current()
         }
       }
 
       socket.onmessage = (event) => {
-        // A message task can already be queued when cleanup runs; keyRef and
-        // setLive belong to the next list by then, so acting on it would poke
-        // the wrong query.
+        // A message task can already be queued when cleanup runs; the caller's
+        // keys belong to the next view by then, so acting on it would poke the
+        // wrong query.
         if (closed) return
         let msg: WatchMessage
         try {
@@ -197,32 +178,16 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
         }
 
         switch (msg.type) {
-          case 'MODIFIED': {
-            const incoming = msg.item
-            qc.setQueryData<ListResponse>(keyRef.current, (prev) => {
-              if (!prev?.items) return prev
-              let touched = false
-              const items = prev.items.map((row: Row) => {
-                if (row.uid !== incoming.uid) return row
-                touched = true
-                return { ...row, ...incoming }
-              })
-              return touched ? { ...prev, items } : prev
-            })
-            break
-          }
-          case 'ADDED':
-          case 'DELETED':
-            scheduleRefetch()
-            break
           case 'OVERFLOW':
             // We fell behind the cluster; the only honest recovery is a reload.
             setLive('polling')
-            qc.invalidateQueries({ queryKey: keyRef.current })
+            resyncRef.current()
             break
           case 'ERROR':
             setLive('polling')
             break
+          default:
+            eventRef.current(msg)
         }
       }
 
@@ -242,30 +207,150 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
 
     return () => {
       closed = true
-      window.clearTimeout(refetchTimer.current)
       window.clearTimeout(retryTimer)
       if (socket) {
         // Detach before closing so the close event does not schedule a retry
-        // and an already-queued message cannot touch the next list's state.
+        // and an already-queued message cannot touch the next view's state.
         socket.onclose = null
         socket.onmessage = null
         socket.onerror = null
         socket.close()
       }
     }
-    // The watch carries the narrowing filters so a filtered page is not woken
-    // by every change elsewhere in scope; sort and paging stay REST-only.
-  }, [
-    ref?.cluster,
-    ref?.group,
-    ref?.version,
-    ref?.resource,
-    params.namespace,
-    params.q,
-    params.labelSelector,
-    params.fieldSelector,
-    qc,
-  ])
+  }, [url])
+
+  return live
+}
+
+export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveListState {
+  const qc = useQueryClient()
+
+  const key = ref
+    ? ['list', ref.cluster, ref.group, ref.version, ref.resource, params]
+    : ['list', 'none']
+  const keyRef = useRef(key)
+  keyRef.current = key
+  const refetchTimer = useRef<number | undefined>(undefined)
+
+  // The watch carries the narrowing filters so a filtered page is not woken by
+  // every change elsewhere in scope; sort and paging stay REST-only.
+  const url = ref
+    ? wsURL(
+        `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
+        {
+          namespace: params.namespace,
+          q: params.q,
+          labelSelector: params.labelSelector,
+          fieldSelector: params.fieldSelector,
+        },
+      )
+    : null
+
+  const resync = useCallback(() => {
+    qc.invalidateQueries({ queryKey: keyRef.current })
+  }, [qc])
+
+  const onEvent = useCallback(
+    (msg: WatchMessage) => {
+      switch (msg.type) {
+        case 'MODIFIED': {
+          const incoming = msg.item
+          qc.setQueryData<ListResponse>(keyRef.current, (prev) => {
+            if (!prev?.items) return prev
+            let touched = false
+            const items = prev.items.map((row: Row) => {
+              if (row.uid !== incoming.uid) return row
+              touched = true
+              return { ...row, ...incoming }
+            })
+            return touched ? { ...prev, items } : prev
+          })
+          break
+        }
+        case 'ADDED':
+        case 'DELETED':
+          window.clearTimeout(refetchTimer.current)
+          refetchTimer.current = window.setTimeout(() => {
+            qc.invalidateQueries({ queryKey: keyRef.current })
+          }, 700)
+          break
+      }
+    },
+    [qc],
+  )
+
+  const live = useWatchSocket(url, onEvent, resync)
+
+  const query = useQuery({
+    queryKey: key,
+    queryFn: ({ signal }) => api.list(ref!, params, signal),
+    enabled: !!ref,
+    placeholderData: keepPreviousData,
+    // The watch is the freshness mechanism; this is a safety net for a socket
+    // that silently dies behind a proxy.
+    refetchInterval: live === 'live' ? false : 15_000,
+  })
+
+  useEffect(() => () => window.clearTimeout(refetchTimer.current), [])
+
+  return {
+    data: query.data,
+    isLoading: query.isLoading,
+    error: query.error,
+    live,
+    refetch: query.refetch,
+  }
+}
+
+export interface LiveObjectState {
+  data?: KubeObject
+  isLoading: boolean
+  error: unknown
+  live: LiveState
+  refetch: () => void
+}
+
+/**
+ * One object, kept current by the same watch the lists use.
+ *
+ * The watch streams projected rows rather than whole objects, so it is used
+ * here as a change signal: any event for this object refetches the
+ * authoritative copy. That costs one request per actual change instead of one
+ * every ten seconds regardless, and the page updates in the same breath the
+ * list does.
+ */
+export function useLiveResource(ref: ResourceRef | null): LiveObjectState {
+  const qc = useQueryClient()
+
+  const key = ref
+    ? ['object', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name]
+    : ['object', 'none']
+  const keyRef = useRef(key)
+  keyRef.current = key
+
+  const url = ref?.name
+    ? wsURL(
+        `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
+        { namespace: ref.namespace, fieldSelector: `metadata.name=${ref.name}` },
+      )
+    : null
+
+  const resync = useCallback(() => {
+    qc.invalidateQueries({ queryKey: keyRef.current })
+  }, [qc])
+
+  // Every event for a single object — added, modified or deleted — means the
+  // copy on screen is stale, so they all resolve to the same refetch.
+  const live = useWatchSocket(url, resync, resync)
+
+  const query = useQuery({
+    queryKey: key,
+    queryFn: ({ signal }) => api.get(ref!, signal),
+    enabled: !!ref?.name,
+    // Safety net for a socket that silently dies behind a proxy; the watch is
+    // what actually keeps this current.
+    refetchInterval: live === 'live' ? false : 15_000,
+  })
 
   return {
     data: query.data,
@@ -291,16 +376,6 @@ export function useFacets(ref: ResourceRef | null, namespace: string, enabled: b
   })
 }
 
-export function useResource(ref: ResourceRef | null) {
-  return useQuery({
-    queryKey: ref
-      ? ['object', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name]
-      : ['object', 'none'],
-    queryFn: ({ signal }) => api.get(ref!, signal),
-    enabled: !!ref?.name,
-    refetchInterval: 10_000,
-  })
-}
 
 export function useEvents(
   cluster: string | undefined,

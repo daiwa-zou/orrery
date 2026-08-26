@@ -21,16 +21,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    // Split the heavy, rarely-changing editor and terminal out of the main
-    // bundle so a normal page load does not pay for them.
-    rollupOptions: {
-      output: {
-        manualChunks(id: string) {
-          if (id.includes('codemirror')) return 'editor'
-          if (id.includes('@xterm')) return 'terminal'
-          return undefined
-        },
-      },
-    },
+    // No manualChunks: the editor and terminal are reached through dynamic
+    // imports (see ResourceDetail and the create route), so the bundler splits
+    // them out on those boundaries by itself. Forcing them into named chunks
+    // by module id used to sweep shared modules in alongside them, which made
+    // the entry import the editor chunk statically and preload ~450K nobody
+    // had asked for.
   },
 })

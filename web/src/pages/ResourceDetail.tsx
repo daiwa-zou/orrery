@@ -1,15 +1,13 @@
 import clsx from 'clsx'
-import { useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiGroup, groupSegment, proxyURL, type ResourceRef } from '../api/client'
-import { useAccess, useEvents, useResource } from '../api/hooks'
+import { useAccess, useEvents, useLiveResource } from '../api/hooks'
 import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
 import { MetadataEditor } from '../components/MetadataEditor'
-import { Terminal } from '../components/Terminal'
-import { YamlEditor } from '../components/YamlEditor'
 import {
   Age,
   Badge,
@@ -26,6 +24,16 @@ import {
 import { useToast } from '../components/Toast'
 import { kindToResource, RESTARTABLE_KINDS, splitApiVersion } from '../lib/format'
 import { decodeSecretValue } from '../lib/secrets'
+
+// CodeMirror and xterm.js are ~770K of the bundle between them and are only
+// reachable from these two tabs. Loading them lazily keeps them out of the
+// initial download for the majority of sessions that never open either.
+const Terminal = lazy(() =>
+  import('../components/Terminal').then((m) => ({ default: m.Terminal })),
+)
+const YamlEditor = lazy(() =>
+  import('../components/YamlEditor').then((m) => ({ default: m.YamlEditor })),
+)
 
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
@@ -445,7 +453,7 @@ function ResourceDetailInner() {
     setTab(next)
   }
 
-  const { data: obj, isLoading, error, refetch } = useResource(ref)
+  const { data: obj, isLoading, error, refetch } = useLiveResource(ref)
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name],
@@ -893,17 +901,19 @@ function ResourceDetailInner() {
             ) : yamlQuery.error ? (
               <ErrorState error={yamlQuery.error} retry={yamlQuery.refetch} />
             ) : (
-              <YamlEditor
-                value={yamlQuery.data ?? ''}
-                readOnly={!mayUpdate}
-                onSave={mayUpdate ? saveYaml : undefined}
-                onDirtyChange={setYamlDirty}
-                notice={
-                  mayUpdate
-                    ? 'Applying replaces the object. Server-managed fields are stripped from this view.'
-                    : 'You do not have permission to update this object.'
-                }
-              />
+              <Suspense fallback={<Loading label="Loading editor" />}>
+                <YamlEditor
+                  value={yamlQuery.data ?? ''}
+                  readOnly={!mayUpdate}
+                  onSave={mayUpdate ? saveYaml : undefined}
+                  onDirtyChange={setYamlDirty}
+                  notice={
+                    mayUpdate
+                      ? 'Applying replaces the object. Server-managed fields are stripped from this view.'
+                      : 'You do not have permission to update this object.'
+                  }
+                />
+              </Suspense>
             )}
           </div>
         )}
@@ -942,12 +952,14 @@ function ResourceDetailInner() {
         )}
 
         {tab === 'terminal' && isPod && (
-          <Terminal
-            cluster={cluster!}
-            namespace={ns!}
-            pod={name!}
-            container={defaultContainer(obj)}
-          />
+          <Suspense fallback={<Loading label="Loading terminal" />}>
+            <Terminal
+              cluster={cluster!}
+              namespace={ns!}
+              pod={name!}
+              container={defaultContainer(obj)}
+            />
+          </Suspense>
         )}
       </div>
 
