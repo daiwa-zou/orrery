@@ -420,9 +420,33 @@ func (a *Authenticator) fail(w http.ResponseWriter, r *http.Request, reason stri
 // "/\evil.example.com" counts as protocol-relative too: browsers normalise the
 // backslash to a slash in the authority position.
 func safeReturnTo(v string) string {
-	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") ||
-		strings.HasPrefix(v, "/\\") {
-		return "/"
+	const home = "/"
+	if v == "" || !strings.HasPrefix(v, "/") {
+		return home
+	}
+	// A backslash is a slash to a browser, so "/\\evil.example" is read as
+	// "//evil.example" — a protocol-relative URL pointing off-site. Nothing
+	// this console links to contains one.
+	if strings.Contains(v, "\\") {
+		return home
+	}
+	// Browsers strip ASCII tab, CR and LF out of a URL before parsing it, so a
+	// value that looks like a path to this function can be something else
+	// entirely by the time it is followed: "/\t/evil.example" arrives at the
+	// browser as "//evil.example". Go's header writer turns CR and LF into
+	// spaces on the way out, but not tab, so the check has to happen here.
+	// Every other control character is equally unwelcome in a path.
+	for _, c := range v {
+		if c < 0x20 || c == 0x7f {
+			return home
+		}
+	}
+	// With those gone, anything that still parses to a bare path — no scheme,
+	// no host — is same-origin by construction. This also catches "//host",
+	// which url.Parse reads as a host rather than a path.
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "" || u.Host != "" || !strings.HasPrefix(u.Path, "/") {
+		return home
 	}
 	return v
 }
