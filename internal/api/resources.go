@@ -392,14 +392,93 @@ func (f listFilter) empty() bool {
 	return f.q == "" && f.labelSel == nil && f.fieldSel == nil
 }
 
+// unstructuredLabels adapts an object's raw label map to labels.Labels without
+// copying it.
+//
+// GetLabels allocates a fresh map[string]string on every call, so filtering a
+// fifty-thousand-object list by label selector cost fifty thousand map
+// allocations for what is only ever a read-only membership test. Selector
+// matching needs Has and Get, not ownership, so the raw map serves directly.
+type unstructuredLabels map[string]any
+
+func (l unstructuredLabels) Has(key string) bool {
+	_, ok := l[key]
+	return ok
+}
+
+func (l unstructuredLabels) Get(key string) string {
+	s, _ := l[key].(string)
+	return s
+}
+
+func (l unstructuredLabels) Lookup(key string) (string, bool) {
+	v, ok := l[key]
+	if !ok {
+		return "", false
+	}
+	s, _ := v.(string)
+	return s, true
+}
+
+// labelsOf returns a no-copy view of an object's labels.
+func labelsOf(o *unstructured.Unstructured) unstructuredLabels {
+	raw, found, err := unstructured.NestedFieldNoCopy(o.Object, "metadata", "labels")
+	if !found || err != nil {
+		return nil
+	}
+	m, _ := raw.(map[string]any)
+	return unstructuredLabels(m)
+}
+
+// objectFields is the same trick for field selectors: fieldSetFor builds a
+// map per object, which the matcher then only reads. This computes each value
+// on demand instead, and mirrors fieldSetFor's key set exactly — name and
+// namespace are always present, the rest only when non-empty.
+type objectFields struct{ o *unstructured.Unstructured }
+
+func (f objectFields) Get(field string) string {
+	switch field {
+	case "metadata.name":
+		return f.o.GetName()
+	case "metadata.namespace":
+		return f.o.GetNamespace()
+	case "status.phase":
+		return str(f.o, "status", "phase")
+	case "spec.nodeName":
+		return str(f.o, "spec", "nodeName")
+	case "type":
+		return str(f.o, "type")
+	case "involvedObject.name":
+		return str(f.o, "involvedObject", "name")
+	case "involvedObject.kind":
+		return str(f.o, "involvedObject", "kind")
+	case "involvedObject.namespace":
+		return str(f.o, "involvedObject", "namespace")
+	case "involvedObject.uid":
+		return str(f.o, "involvedObject", "uid")
+	default:
+		return ""
+	}
+}
+
+func (f objectFields) Has(field string) bool {
+	switch field {
+	case "metadata.name", "metadata.namespace":
+		// fieldSetFor sets both unconditionally, empty or not.
+		return true
+	default:
+		return f.Get(field) != ""
+	}
+}
+
 func (f listFilter) matches(o *unstructured.Unstructured) bool {
 	if f.q != "" && !matchesQuery(o, f.q) {
 		return false
 	}
-	if f.labelSel != nil && !f.labelSel.Matches(labels.Set(o.GetLabels())) {
+	if f.labelSel != nil && !f.labelSel.Matches(labelsOf(o)) {
 		return false
 	}
-	if f.fieldSel != nil && !f.fieldSel.Matches(fieldSetFor(o)) {
+	if f.fieldSel != nil && !f.fieldSel.Matches(objectFields{o}) {
 		return false
 	}
 	return true
@@ -547,15 +626,7 @@ func (a *API) getResource(w http.ResponseWriter, r *http.Request) {
 		obj = cluster.TrimForResponse(obj)
 	}
 
-	if r.URL.Query().Get("format") == "yaml" {
-		raw, err := yaml.Marshal(obj.Object)
-		if err != nil {
-			a.writeErr(w, r, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(raw)
+	if a.writeObjectYAML(w, r, obj) {
 		return
 	}
 	writeJSON(w, http.StatusOK, obj)
@@ -619,12 +690,14 @@ func (a *API) createResource(w http.ResponseWriter, r *http.Request) {
 
 	created, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(namespace).
-		Create(ctx, obj, metav1.CreateOptions{})
+		Create(ctx, obj, metav1.CreateOptions{DryRun: dryRunList(r)})
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
 	writeJSON(w, http.StatusCreated, cluster.TrimForResponse(created))
 }
 
@@ -658,13 +731,19 @@ func (a *API) updateResource(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(namespace).
-		Update(ctx, obj, metav1.UpdateOptions{})
+		Update(ctx, obj, metav1.UpdateOptions{DryRun: dryRunList(r)})
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
-	writeJSON(w, http.StatusOK, cluster.TrimForResponse(updated))
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
+	trimmed := cluster.TrimForResponse(updated)
+	if a.writeObjectYAML(w, r, trimmed) {
+		return
+	}
+	writeJSON(w, http.StatusOK, trimmed)
 }
 
 // patchTypeFor maps the request's content type onto a Kubernetes patch type.
@@ -709,7 +788,7 @@ func (a *API) patchResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := metav1.PatchOptions{}
+	opts := metav1.PatchOptions{DryRun: dryRunList(r)}
 	if pt == types.ApplyPatchType {
 		opts.FieldManager = "orrery"
 		// Force is opt-in: silently stealing fields from another manager is
@@ -764,8 +843,52 @@ func (a *API) deleteResource(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	a.invalidateIfCRD(res)
+	if !dryRunRequested(r) {
+		a.invalidateIfCRD(res)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "name": name, "namespace": namespace})
+}
+
+// writeObjectYAML serves an object as YAML when the caller asked for
+// format=yaml, and reports whether it did. Shared by the read path and by
+// dry-run writes, which the editor diffs as text.
+func (a *API) writeObjectYAML(w http.ResponseWriter, r *http.Request, obj *unstructured.Unstructured) bool {
+	if r.URL.Query().Get("format") != "yaml" {
+		return false
+	}
+	raw, err := yaml.Marshal(obj.Object)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return true
+	}
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(raw)
+	return true
+}
+
+// dryRunRequested reports whether the caller asked for a dry run. A dry-run
+// write is sent to the API server with DryRun=All: it runs admission, mutating
+// webhooks, validation and defaulting, then discards the result instead of
+// persisting it. That is what makes a truthful diff possible — the object it
+// returns is what would actually be stored, defaults and webhook edits
+// included, not what the client guessed would be.
+//
+// Permission is unchanged: a dry run still needs the same verb on the same
+// object, so this cannot be used to probe what a write would do without being
+// allowed to do it.
+func dryRunRequested(r *http.Request) bool {
+	v := r.URL.Query().Get("dryRun")
+	return v == "true" || v == "All" || v == "1"
+}
+
+// dryRunList is the DryRun field value for a write, empty when the caller did
+// not ask for one.
+func dryRunList(r *http.Request) []string {
+	if dryRunRequested(r) {
+		return []string{metav1.DryRunAll}
+	}
+	return nil
 }
 
 // invalidateIfCRD drops cached discovery after a CRD changes, so a new custom

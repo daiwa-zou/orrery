@@ -12,7 +12,12 @@ const MAX_LINES = 5000
 interface LogViewerProps {
   cluster: string
   namespace: string
-  pod: string
+  /**
+   * One pod, or several to merge into one feed. Merged lines are prefixed with
+   * the pod they came from, which is the only way a combined view stays
+   * readable when twelve replicas are all talking.
+   */
+  pod: string | string[]
   containers: string[]
   /** Pre-selects a container, e.g. the row clicked in the containers table. */
   initialContainer?: string
@@ -59,6 +64,8 @@ export function LogViewer({
       setContainer(initialContainer)
     }
   }, [initialContainer, containers])
+  const pods = useMemo(() => (Array.isArray(pod) ? pod : [pod]), [pod])
+  const aggregated = pods.length > 1
   const [status, setStatus] = useState<'connecting' | 'streaming' | 'ended' | 'error'>('connecting')
   const [error, setError] = useState<string>()
   const [follow, setFollow] = useState(true)
@@ -109,7 +116,7 @@ export function LogViewer({
     const socket = new WebSocket(
       wsURL(`/clusters/${cluster}/ws/logs`, {
         namespace,
-        pod,
+        pod: pods,
         container,
         previous,
         timestamps,
@@ -130,10 +137,14 @@ export function LogViewer({
         return
       }
       if (msg.type === 'LOG') {
-        pending.push(...msg.lines)
+        // The server batches per pod, so one prefix covers the whole frame.
+        pending.push(...(msg.pod ? msg.lines.map((l) => `[${msg.pod}] ${l}`) : msg.lines))
         if (flushTimer === undefined) flushTimer = window.setTimeout(flush, FLUSH_MS)
       } else if (msg.type === 'EOF') {
         setStatus('ended')
+      } else if (msg.type === 'STREAM_ERROR') {
+        // One pod of a merged feed failed; the rest keep streaming.
+        pending.push(`[${msg.pod}] --- log stream unavailable: ${msg.reason} ---`)
       } else if (msg.type === 'ERROR') {
         setError(msg.message)
         setStatus('error')
@@ -209,8 +220,26 @@ export function LogViewer({
         )}
 
         <Badge tone={status === 'streaming' ? 'ok' : status === 'error' ? 'danger' : 'idle'}>
-          {status}
+          <span aria-hidden="true">{status}</span>
         </Badge>
+
+        {aggregated && (
+          <Badge tone="info" title={pods.join('\n')}>
+            {pods.length} pods merged
+          </Badge>
+        )}
+        {/* Deliberately announces the stream's state and not its contents:
+            reading out every log line as it arrives would make the page
+            unusable with a screen reader. */}
+        <span role="status" aria-live="polite" className="sr-only">
+          {status === 'streaming'
+            ? `Streaming logs from ${aggregated ? `${pods.length} pods` : container || pods[0]}.`
+            : status === 'connecting'
+              ? 'Connecting to the log stream.'
+              : status === 'ended'
+                ? 'Log stream ended.'
+                : 'Log stream failed.'}
+        </span>
 
         <input
           value={filter}

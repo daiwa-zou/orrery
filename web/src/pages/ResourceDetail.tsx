@@ -1,15 +1,13 @@
 import clsx from 'clsx'
-import { useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiGroup, groupSegment, proxyURL, type ResourceRef } from '../api/client'
-import { useAccess, useEvents, useResource } from '../api/hooks'
+import { useAccess, useEvents, useLiveResource } from '../api/hooks'
 import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
 import { MetadataEditor } from '../components/MetadataEditor'
-import { Terminal } from '../components/Terminal'
-import { YamlEditor } from '../components/YamlEditor'
 import {
   Age,
   Badge,
@@ -26,6 +24,16 @@ import {
 import { useToast } from '../components/Toast'
 import { kindToResource, RESTARTABLE_KINDS, splitApiVersion } from '../lib/format'
 import { decodeSecretValue } from '../lib/secrets'
+
+// CodeMirror and xterm.js are ~770K of the bundle between them and are only
+// reachable from these two tabs. Loading them lazily keeps them out of the
+// initial download for the majority of sessions that never open either.
+const Terminal = lazy(() =>
+  import('../components/Terminal').then((m) => ({ default: m.Terminal })),
+)
+const YamlEditor = lazy(() =>
+  import('../components/YamlEditor').then((m) => ({ default: m.YamlEditor })),
+)
 
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
@@ -105,9 +113,15 @@ function containerRows(obj?: KubeObject): ContainerRow[] {
 function ContainerSection({
   rows,
   onLogs,
+  onDebug,
+  debugAllowed,
+  debugPending,
 }: {
   rows: ContainerRow[]
   onLogs: (container: string) => void
+  onDebug: (container: string) => void
+  debugAllowed: boolean
+  debugPending: boolean
 }) {
   if (rows.length === 0) return null
 
@@ -160,7 +174,20 @@ function ContainerSection({
                 <td className="max-w-[18rem] truncate py-1.5 pr-3 font-mono text-[11.5px] text-ink-muted" title={c.image}>
                   {c.image}
                 </td>
-                <td className="py-1.5 text-right">
+                <td className="py-1.5 text-right whitespace-nowrap">
+                  {!c.init && (
+                    <GatedButton
+                      size="sm"
+                      variant="ghost"
+                      allowed={debugAllowed}
+                      disabled={debugPending}
+                      deniedTitle="Requires patch on pods/ephemeralcontainers"
+                      title={`Start a debug container sharing ${c.name}'s process namespace`}
+                      onClick={() => onDebug(c.name)}
+                    >
+                      Debug
+                    </GatedButton>
+                  )}
                   <Button size="sm" variant="ghost" onClick={() => onLogs(c.name)}>
                     Logs
                   </Button>
@@ -432,6 +459,11 @@ function ResourceDetailInner() {
   const [replicas, setReplicas] = useState(0)
   const [yamlDirty, setYamlDirty] = useState(false)
   const [logContainer, setLogContainer] = useState<string>()
+  // Which container the terminal attaches to. Set when a debug container is
+  // started, so the new shell opens where it was created rather than in the
+  // pod's first container.
+  const [termContainer, setTermContainer] = useState<string>()
+  const [debugPending, setDebugPending] = useState(false)
 
   const switchTab = (next: Tab) => {
     if (
@@ -445,7 +477,7 @@ function ResourceDetailInner() {
     setTab(next)
   }
 
-  const { data: obj, isLoading, error, refetch } = useResource(ref)
+  const { data: obj, isLoading, error, refetch } = useLiveResource(ref)
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', ref.cluster, ref.group, ref.version, ref.resource, ref.namespace, ref.name],
@@ -487,6 +519,10 @@ function ResourceDetailInner() {
         { key: 'logs', check: { ...pods, verb: 'get', subresource: 'log' } },
         { key: 'evict', check: { ...pods, verb: 'create', subresource: 'eviction' } },
         { key: 'proxy', check: { ...pods, verb: 'get', subresource: 'proxy' } },
+        {
+          key: 'debug',
+          check: { ...pods, verb: 'patch', subresource: 'ephemeralcontainers' },
+        },
       )
     }
     if (kind === 'Service') {
@@ -591,6 +627,46 @@ function ResourceDetailInner() {
     } catch (e) {
       toast.push({ tone: 'danger', title: 'Update failed', description: (e as Error).message })
       throw e // Keeps the editor open with the draft intact.
+    }
+  }
+
+  /**
+   * Attach an ephemeral debug container and drop straight into it.
+   *
+   * Confirmed first because it cannot be undone: Kubernetes has no API for
+   * removing an ephemeral container, so it stays on the pod until the pod is
+   * replaced. That is a surprise worth spending a dialog on.
+   */
+  const startDebug = async (target: string) => {
+    if (!cluster || !ns || !name) return
+    const ok = window.confirm(
+      `Start a debug container alongside "${target}"?\n\n` +
+        'It shares that container\'s process namespace, so you can inspect its ' +
+        'processes and filesystem even if it has no shell of its own.\n\n' +
+        'Ephemeral containers cannot be removed — it will stay on this pod until ' +
+        'the pod is replaced.',
+    )
+    if (!ok) return
+
+    setDebugPending(true)
+    try {
+      const res = await api.debug(cluster, ns, name, target)
+      setTermContainer(res.container)
+      setTab('terminal')
+      toast.push({
+        tone: 'ok',
+        title: `Debug container started`,
+        description: `${res.container} (${res.image}) — it may take a moment to pull and start.`,
+      })
+      refetch()
+    } catch (e) {
+      toast.push({
+        tone: 'danger',
+        title: 'Could not start a debug container',
+        description: (e as Error).message,
+      })
+    } finally {
+      setDebugPending(false)
     }
   }
 
@@ -866,10 +942,13 @@ function ResourceDetailInner() {
             {isPod && (
               <ContainerSection
                 rows={containerRows(obj)}
+                debugAllowed={may('debug')}
+                debugPending={debugPending}
                 onLogs={(container) => {
                   setLogContainer(container)
                   setTab('logs')
                 }}
+                onDebug={startDebug}
               />
             )}
 
@@ -893,17 +972,20 @@ function ResourceDetailInner() {
             ) : yamlQuery.error ? (
               <ErrorState error={yamlQuery.error} retry={yamlQuery.refetch} />
             ) : (
-              <YamlEditor
-                value={yamlQuery.data ?? ''}
-                readOnly={!mayUpdate}
-                onSave={mayUpdate ? saveYaml : undefined}
-                onDirtyChange={setYamlDirty}
-                notice={
-                  mayUpdate
-                    ? 'Applying replaces the object. Server-managed fields are stripped from this view.'
-                    : 'You do not have permission to update this object.'
-                }
-              />
+              <Suspense fallback={<Loading label="Loading editor" />}>
+                <YamlEditor
+                  value={yamlQuery.data ?? ''}
+                  readOnly={!mayUpdate}
+                  onSave={mayUpdate ? saveYaml : undefined}
+                  onCheck={mayUpdate ? (next) => api.replaceDryRun(ref, next) : undefined}
+                  onDirtyChange={setYamlDirty}
+                  notice={
+                    mayUpdate
+                      ? 'Applying replaces the object. Server-managed fields are stripped from this view.'
+                      : 'You do not have permission to update this object.'
+                  }
+                />
+              </Suspense>
             )}
           </div>
         )}
@@ -942,12 +1024,14 @@ function ResourceDetailInner() {
         )}
 
         {tab === 'terminal' && isPod && (
-          <Terminal
-            cluster={cluster!}
-            namespace={ns!}
-            pod={name!}
-            container={defaultContainer(obj)}
-          />
+          <Suspense fallback={<Loading label="Loading terminal" />}>
+            <Terminal
+              cluster={cluster!}
+              namespace={ns!}
+              pod={name!}
+              container={termContainer ?? defaultContainer(obj)}
+            />
+          </Suspense>
         )}
       </div>
 

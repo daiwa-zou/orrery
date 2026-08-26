@@ -190,6 +190,10 @@ affinity at the load balancer.
 
 ## Things deliberately not done
 
+The ones that needed a longer argument — TCP forwarding, sharing informer
+caches between replicas — live in [DECISIONS.md](DECISIONS.md) with the
+conditions that would change the answer.
+
 - **No custom RBAC model.** Tempting, and it would make some screens faster.
   It would also mean the dashboard could disagree with the cluster about who
   may do what, and the dashboard would be wrong.

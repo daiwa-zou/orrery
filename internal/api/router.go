@@ -108,6 +108,7 @@ func (a *API) Router() http.Handler {
 					r.Post("/actions/cordon", a.cordonNode)
 					r.Post("/actions/drain", a.drainNode)
 					r.Post("/actions/evict", a.evictPod)
+					r.Post("/actions/debug", a.debugPod)
 				})
 			})
 		})

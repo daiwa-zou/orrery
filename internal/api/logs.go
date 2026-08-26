@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -90,6 +91,24 @@ func (a *API) getPodLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamPodLogs follows a container's logs over a WebSocket.
+// taggedLine is one log line and the pod it came from. Aggregating several
+// pods into one stream means the pod name has to travel with the text.
+type taggedLine struct {
+	pod  string
+	text string
+}
+
+// streamPodLogs streams one pod's logs, or several merged into one feed.
+//
+// Repeating the pod parameter aggregates: "what are all twelve replicas of
+// this deployment saying right now?" is the question during an incident, and
+// answering it by opening twelve tabs is not answering it. Each pod is
+// authorized on its own — aggregation is a convenience over the same
+// per-object checks, never a way around them — and lines carry the pod they
+// came from so the merged view stays readable.
+//
+// The single-pod wire format is unchanged, so an aggregated stream is the only
+// one that pays for the extra field.
 func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 	res, err := a.clusterOnly(r)
 	if err != nil {
@@ -97,14 +116,29 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	namespace := r.URL.Query().Get("namespace")
-	pod := r.URL.Query().Get("pod")
-	if namespace == "" || pod == "" {
-		a.writeErr(w, r, badRequest("namespace and pod are required"))
+	pods := r.URL.Query()["pod"]
+	if namespace == "" || len(pods) == 0 {
+		a.writeErr(w, r, badRequest("namespace and at least one pod are required"))
 		return
 	}
-	if err := a.authorizeLogs(r.Context(), res, namespace, pod); err != nil {
-		a.writeErr(w, r, err)
+	// A merged view of a hundred pods is a hundred streams held open against
+	// the API server by one browser tab.
+	const maxAggregatedPods = 20
+	if len(pods) > maxAggregatedPods {
+		a.writeErr(w, r, badRequest(
+			"cannot follow more than %d pods at once (asked for %d)", maxAggregatedPods, len(pods)))
 		return
+	}
+	aggregated := len(pods) > 1
+
+	// Authorize every pod before opening the socket, so a caller who may read
+	// some of a workload's pods but not others is refused outright rather than
+	// shown a partial feed they would read as complete.
+	for _, pod := range pods {
+		if err := a.authorizeLogs(r.Context(), res, namespace, pod); err != nil {
+			a.writeErr(w, r, err)
+			return
+		}
 	}
 
 	conn, err := a.upgrader().Upgrade(w, r, nil)
@@ -119,15 +153,6 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 	go ws.ping(ctx)
 	go func() { ws.drain(); cancel() }()
 
-	stream, err := res.clients.Kube.CoreV1().
-		Pods(namespace).GetLogs(pod, podLogOptions(r, true)).
-		Stream(ctx)
-	if err != nil {
-		ws.wsError(err.Error())
-		return
-	}
-	defer stream.Close()
-
 	// Batch lines briefly before sending. A pod logging ten thousand lines a
 	// second would otherwise become ten thousand WebSocket frames a second,
 	// and the browser, not the cluster, becomes the bottleneck.
@@ -136,18 +161,47 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 		maxBatchLines = 500
 	)
 
-	lines := make(chan string, 4096)
-	go func() {
-		defer close(lines)
-		scanner := bufio.NewScanner(stream)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for scanner.Scan() {
-			select {
-			case lines <- scanner.Text():
-			case <-ctx.Done():
+	lines := make(chan taggedLine, 4096)
+	var readers sync.WaitGroup
+
+	for _, pod := range pods {
+		stream, err := res.clients.Kube.CoreV1().
+			Pods(namespace).GetLogs(pod, podLogOptions(r, true)).
+			Stream(ctx)
+		if err != nil {
+			// One unreadable pod should not sink a merged feed — a replica can
+			// be terminating while its siblings are healthy. Alone, it is fatal.
+			if !aggregated {
+				ws.wsError(err.Error())
 				return
 			}
+			_ = ws.WriteJSON(map[string]any{
+				"type": "STREAM_ERROR", "pod": pod, "reason": err.Error(),
+			})
+			continue
 		}
+
+		readers.Add(1)
+		go func(pod string, stream io.ReadCloser) {
+			defer readers.Done()
+			defer stream.Close()
+			scanner := bufio.NewScanner(stream)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+			for scanner.Scan() {
+				select {
+				case lines <- taggedLine{pod: pod, text: scanner.Text()}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(pod, stream)
+	}
+
+	// Closes the channel once every pod's reader has finished, which is what
+	// turns "all streams ended" into a single EOF for the client.
+	go func() {
+		readers.Wait()
+		close(lines)
 	}()
 
 	ticker := time.NewTicker(flushInterval)
@@ -158,12 +212,19 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 	reauth := time.NewTicker(reauthorizeInterval)
 	defer reauth.Stop()
 
+	// Batched per pod: a frame carries lines from one pod, so the client never
+	// has to guess which of a merged batch came from where.
 	batch := make([]string, 0, maxBatchLines)
+	batchPod := ""
 	flush := func() bool {
 		if len(batch) == 0 {
 			return true
 		}
-		err := ws.WriteJSON(map[string]any{"type": "LOG", "lines": batch})
+		msg := map[string]any{"type": "LOG", "lines": batch}
+		if aggregated {
+			msg["pod"] = batchPod
+		}
+		err := ws.WriteJSON(msg)
 		batch = batch[:0]
 		return err == nil
 	}
@@ -181,10 +242,12 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 				ws.wsError("session expired; sign in again")
 				return
 			}
-			if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
-				flush()
-				ws.wsError("access to this pod's logs was revoked")
-				return
+			for _, pod := range pods {
+				if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
+					flush()
+					ws.wsError("access to this pod's logs was revoked")
+					return
+				}
 			}
 		case <-ticker.C:
 			if !flush() {
@@ -197,7 +260,14 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 				ws.closeWith(1000, "log stream ended")
 				return
 			}
-			batch = append(batch, line)
+			// A batch belongs to one pod; a line from another closes it first.
+			if line.pod != batchPod {
+				if !flush() {
+					return
+				}
+				batchPod = line.pod
+			}
+			batch = append(batch, line.text)
 			if len(batch) >= maxBatchLines && !flush() {
 				return
 			}

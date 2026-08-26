@@ -6,6 +6,7 @@ package api
 // resources).
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -224,6 +225,33 @@ func TestResourceHandlersHTTP(t *testing.T) {
 		}
 		if data, _ := o["data"].(map[string]any); data["k"] != "v2" {
 			t.Errorf("update did not land: %v", o["data"])
+		}
+	})
+
+	t.Run("dryRunUpdateDoesNotPersist", func(t *testing.T) {
+		before := rig.fake.object("", "v1", "configmaps", "demo", "cm-1")
+		beforeData, _ := before["data"].(map[string]any)
+		was := beforeData["k"]
+
+		manifest := `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"cm-1"},"data":{"k":"dry"}}`
+		rec := rig.do(t, http.MethodPut,
+			"/api/v1/clusters/fake/resources/_/v1/configmaps/demo/cm-1?dryRun=true", manifest, nil)
+		hndWantStatus(t, rec, 200)
+
+		// The response shows what would be stored...
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if data, _ := body["data"].(map[string]any); data["k"] != "dry" {
+			t.Errorf("dry run did not return the would-be object: %v", body["data"])
+		}
+
+		// ...but nothing was written.
+		after := rig.fake.object("", "v1", "configmaps", "demo", "cm-1")
+		afterData, _ := after["data"].(map[string]any)
+		if afterData["k"] != was {
+			t.Errorf("dry run persisted: data.k = %v, want %v", afterData["k"], was)
 		}
 	})
 

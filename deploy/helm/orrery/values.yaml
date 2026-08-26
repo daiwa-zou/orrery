@@ -84,11 +84,29 @@ resources:
   limits:
     memory: 2Gi
 
+# Autoscaling is off by default, and that is a considered position rather than
+# an omission. Adding replicas does not divide the work here: every replica
+# keeps its own informer caches, so a new pod means another full set of watches
+# against the API server and another copy of the data in memory. Scaling out
+# relieves request throughput and WebSocket fan-out; it does not relieve the
+# resource that actually binds, which is memory.
+#
+# If you do enable it, scale on memory rather than CPU alone — CPU is mostly
+# JSON serialization and is rarely what runs out first. Both targets are
+# honoured, and setting either to null drops that metric.
 autoscaling:
   enabled: false
   minReplicas: 2
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # Scaling down promptly is wrong for this workload: a replica that goes away
+  # takes warm caches with it, and the replacement refills them from the API
+  # server on first use. A long stabilisation window keeps a busy period from
+  # becoming a sawtooth of cache rebuilds.
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
 
 podDisruptionBudget:
   enabled: true

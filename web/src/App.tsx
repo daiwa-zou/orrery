@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import {
   Navigate,
   Route,
@@ -15,13 +15,18 @@ import { AppShell } from './components/AppShell'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { EmptyState, ErrorState, Loading } from './components/primitives'
 import { ToastProvider } from './components/Toast'
-import { CreateResource } from './pages/CreateResource'
 import { Events } from './pages/Events'
 import { Fleet } from './pages/Fleet'
 import { Login } from './pages/Login'
 import { Overview } from './pages/Overview'
 import { ResourceDetail } from './pages/ResourceDetail'
 import { ResourceList } from './pages/ResourceList'
+
+// CreateResource embeds CodeMirror; lazy so the editor stays out of the
+// initial bundle for sessions that never create a resource by hand.
+const CreateResource = lazy(() =>
+  import('./pages/CreateResource').then((m) => ({ default: m.CreateResource })),
+)
 
 /**
  * A 401 anywhere means the session is gone. Handling it once at the query
@@ -139,7 +144,14 @@ function ClusterRoutes() {
         <Route index element={<Overview />} />
         <Route path="events" element={<Events />} />
         <Route path="r/:group/:version/:resource" element={<ResourceList />} />
-        <Route path="r/:group/:version/:resource/create" element={<CreateResource />} />
+        <Route
+          path="r/:group/:version/:resource/create"
+          element={
+            <Suspense fallback={<Loading label="Loading editor" />}>
+              <CreateResource />
+            </Suspense>
+          }
+        />
         <Route
           path="r/:group/:version/:resource/:namespace/:name"
           element={<ResourceDetail />}

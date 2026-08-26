@@ -32,6 +32,16 @@ export function RefreshIcon({ className }: { className?: string }) {
   )
 }
 
+export function ColumnsIcon({ className }: { className?: string }) {
+  return (
+    <Icon
+      className={className}
+      d="M3.75 4.5h16.5v15H3.75v-15Z"
+      extra="M9.25 4.5v15M14.75 4.5v15"
+    />
+  )
+}
+
 export function TagIcon({ className }: { className?: string }) {
   return (
     <Icon

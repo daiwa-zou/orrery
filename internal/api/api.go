@@ -33,6 +33,10 @@ type API struct {
 	// tables memoises resolved column sets, including the JSONPath programs
 	// compiled from CRD printer columns.
 	tables *tableCache
+
+	// facets memoises the search-autocomplete vocabulary per resource and
+	// visible scope, so typing does not rescan every object each time.
+	facets *facetCache
 }
 
 // New builds the API.
@@ -47,6 +51,7 @@ func New(
 		cfg: cfg, registry: registry,
 		authn: authn, mw: mw, log: log,
 		tables: newTableCache(cfg.Cache.DiscoveryTTL),
+		facets: newFacetCache(),
 	}
 }
 

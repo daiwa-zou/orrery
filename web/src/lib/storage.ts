@@ -63,3 +63,133 @@ export function recordRecent(entry: RecentResource): void {
   const next = [entry, ...all.filter((r) => key(r) !== key(entry))].slice(0, MAX_RECENTS)
   writeJSON(RECENTS_KEY, next)
 }
+
+/* ---- saved searches ---------------------------------------------------- */
+
+/**
+ * A starred query: the resource that was being listed and the search text that
+ * narrowed it. Teams operate the same handful of views every day — "my team's
+ * failing pods", "everything in staging" — and re-typed them each time.
+ */
+const SAVED_KEY = 'orrery.saved'
+const MAX_SAVED = 24
+
+export interface SavedSearch {
+  cluster: string
+  group: string
+  version: string
+  resource: string
+  kind: string
+  namespaced: boolean
+  /** Namespace the view was scoped to, empty for all namespaces. */
+  namespace: string
+  /** The search-bar text. Empty means "the unfiltered list". */
+  q: string
+}
+
+/** Identity of a saved view: same resource, namespace and query is the same star. */
+export function savedKey(v: SavedSearch): string {
+  return [v.cluster, v.group, v.version, v.resource, v.namespace, v.q].join('|')
+}
+
+export function readSaved(cluster: string): SavedSearch[] {
+  return readJSON<SavedSearch[]>(SAVED_KEY, []).filter(
+    (v) => v && typeof v === 'object' && v.cluster === cluster && typeof v.q === 'string',
+  )
+}
+
+/** Stars a view, newest first. Re-starring an identical view is a no-op. */
+export function addSaved(view: SavedSearch): void {
+  const all = readJSON<SavedSearch[]>(SAVED_KEY, [])
+  if (all.some((v) => savedKey(v) === savedKey(view))) return
+  writeJSON(SAVED_KEY, [view, ...all].slice(0, MAX_SAVED))
+}
+
+export function removeSaved(view: SavedSearch): void {
+  const all = readJSON<SavedSearch[]>(SAVED_KEY, [])
+  writeJSON(
+    SAVED_KEY,
+    all.filter((v) => savedKey(v) !== savedKey(view)),
+  )
+}
+
+export function isSaved(view: SavedSearch): boolean {
+  return readJSON<SavedSearch[]>(SAVED_KEY, []).some((v) => savedKey(v) === savedKey(view))
+}
+
+/* ---- custom columns ---------------------------------------------------- */
+
+/**
+ * Extra label columns, per cluster and resource.
+ *
+ * Well-known kinds get hand-tuned tables and CRDs get their own
+ * additionalPrinterColumns, which matches what kubectl shows. What was missing
+ * is the escape hatch: the label a team actually navigates by — owner,
+ * version, the ticket that caused the rollout — lives in their own labels and
+ * had nowhere to appear except the catch-all Labels column.
+ *
+ * Labels only, not annotations: list rows already carry labels, so a label
+ * column costs nothing extra on the wire, while annotations would need the
+ * server to project them.
+ */
+const COLUMNS_KEY = 'orrery.columns'
+const MAX_COLUMNS_PER_RESOURCE = 6
+
+function columnsKeyFor(cluster: string, resource: string): string {
+  return `${cluster}/${resource}`
+}
+
+type ColumnMap = Record<string, string[]>
+
+export function readColumns(cluster: string, resource: string): string[] {
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const keys = all?.[columnsKeyFor(cluster, resource)]
+  return Array.isArray(keys) ? keys.filter((k) => typeof k === 'string') : []
+}
+
+export function addColumn(cluster: string, resource: string, label: string): void {
+  const trimmed = label.trim()
+  if (!trimmed) return
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const k = columnsKeyFor(cluster, resource)
+  const current = Array.isArray(all?.[k]) ? all[k] : []
+  if (current.includes(trimmed)) return
+  writeJSON(COLUMNS_KEY, {
+    ...all,
+    [k]: [...current, trimmed].slice(0, MAX_COLUMNS_PER_RESOURCE),
+  })
+}
+
+export function removeColumn(cluster: string, resource: string, label: string): void {
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const k = columnsKeyFor(cluster, resource)
+  const current = Array.isArray(all?.[k]) ? all[k] : []
+  writeJSON(COLUMNS_KEY, { ...all, [k]: current.filter((c) => c !== label) })
+}
+
+/* ---- theme ------------------------------------------------------------- */
+
+export type Theme = 'dark' | 'light'
+
+const THEME_KEY = 'orrery.theme'
+
+/**
+ * The theme currently applied to the document.
+ *
+ * Read from the attribute rather than from storage, because index.html has
+ * already resolved "no stored preference" against the system setting before
+ * first paint. Storage alone cannot answer what is on screen.
+ */
+export function currentTheme(): Theme {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
+}
+
+/** Applies a theme and remembers it, overriding the system preference. */
+export function setTheme(theme: Theme): void {
+  document.documentElement.setAttribute('data-theme', theme)
+  try {
+    window.localStorage.setItem(THEME_KEY, theme)
+  } catch {
+    // Preference does not stick; the page is still themed for this session.
+  }
+}

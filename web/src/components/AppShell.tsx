@@ -12,7 +12,15 @@ import { api, groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useListAccess, useMe, useNamespaces } from '../api/hooks'
 import type { ClusterSummary, HealthStatus } from '../api/types'
 import { HEALTH_TONE, navLabel } from '../lib/format'
-import { navStateKey, readJSON, recordRecent, writeJSON } from '../lib/storage'
+import {
+  currentTheme,
+  navStateKey,
+  readJSON,
+  recordRecent,
+  setTheme,
+  writeJSON,
+  type Theme,
+} from '../lib/storage'
 import { SearchIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
@@ -350,6 +358,35 @@ function NavGroup({
   )
 }
 
+/**
+ * Switches the palette and remembers the choice.
+ *
+ * The initial value is read from the document, not from storage, because
+ * index.html has already resolved an absent preference against the system
+ * setting — so a reader on a light desktop starts light without ever having
+ * picked anything.
+ */
+function ThemeToggle() {
+  const [theme, setLocal] = useState<Theme>(() => currentTheme())
+
+  const flip = () => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    setLocal(next)
+  }
+
+  return (
+    <button
+      onClick={flip}
+      title={theme === 'dark' ? 'Switch to the light palette' : 'Switch to the dark palette'}
+      aria-label={theme === 'dark' ? 'Switch to the light palette' : 'Switch to the dark palette'}
+      className="grid size-6 place-items-center border border-border text-xs text-ink-faint transition-colors hover:text-ink"
+    >
+      {theme === 'dark' ? '☾' : '☀'}
+    </button>
+  )
+}
+
 export function UserMenu() {
   const { data } = useMe()
   const [open, setOpen] = useState(false)
@@ -670,6 +707,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               ?
             </button>
+            <ThemeToggle />
             <UserMenu />
           </div>
         </header>

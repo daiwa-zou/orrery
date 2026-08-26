@@ -123,6 +123,15 @@ function qs(params: Record<string, unknown>): string {
   const sp = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === '') continue
+    // An array repeats the key rather than joining, which is how the log
+    // stream takes several pods.
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (item === undefined || item === null || item === '') continue
+        sp.append(k, String(item))
+      }
+      continue
+    }
     sp.set(k, String(v))
   }
   const s = sp.toString()
@@ -262,10 +271,32 @@ export const api = {
       signal,
     ),
 
+  /**
+   * Replace an object. With `dryRun`, the API server runs admission, webhooks
+   * and defaulting and returns what *would* be stored without persisting it —
+   * which is what makes an honest preview possible.
+   */
   replace: (ref: ResourceRef, body: string) =>
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      { method: 'PUT', body, headers: { 'Content-Type': 'application/yaml' } },
+    ),
+
+  /**
+   * Send an edit to the API server with dryRun=All and get back, as YAML, the
+   * object that *would* be stored — after admission, mutating webhooks,
+   * validation and defaulting. Nothing is persisted.
+   *
+   * This is what turns Apply from a leap of faith into a check: a rejecting
+   * webhook, an immutable field or a malformed selector fails here, before the
+   * cluster is touched, and the returned text shows the fields the server sets
+   * that the author never typed.
+   */
+  replaceDryRun: (ref: ResourceRef, body: string) =>
+    request<string>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
+        `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}?dryRun=true&format=yaml`,
       { method: 'PUT', body, headers: { 'Content-Type': 'application/yaml' } },
     ),
 
@@ -387,6 +418,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ namespace, pod }),
     }),
+
+  /**
+   * Attach an ephemeral debug container to a running pod and return its
+   * generated name. The image is chosen by the server, not here.
+   */
+  debug: (cluster: string, namespace: string, pod: string, targetContainer?: string) =>
+    request<{ pod: string; namespace: string; container: string; image: string }>(
+      `/clusters/${cluster}/actions/debug`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ namespace, pod, targetContainer: targetContainer ?? '' }),
+      },
+    ),
 }
 
 /** Builds an absolute ws:// or wss:// URL for a streaming endpoint. */
