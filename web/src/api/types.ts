@@ -227,6 +227,9 @@ export type WatchMessage =
   | { type: 'ERROR'; message: string }
 
 export type LogMessage =
-  | { type: 'LOG'; lines: string[] }
+  /** `pod` is present only on an aggregated stream; a batch is one pod's lines. */
+  | { type: 'LOG'; lines: string[]; pod?: string }
   | { type: 'EOF' }
+  /** One pod of a merged feed could not be read; the others continue. */
+  | { type: 'STREAM_ERROR'; pod: string; reason: string }
   | { type: 'ERROR'; message: string }

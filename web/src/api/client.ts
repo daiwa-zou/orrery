@@ -123,6 +123,15 @@ function qs(params: Record<string, unknown>): string {
   const sp = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === '') continue
+    // An array repeats the key rather than joining, which is how the log
+    // stream takes several pods.
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (item === undefined || item === null || item === '') continue
+        sp.append(k, String(item))
+      }
+      continue
+    }
     sp.set(k, String(v))
   }
   const s = sp.toString()
