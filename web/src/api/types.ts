@@ -160,6 +160,13 @@ export interface Overview {
     count: number
     lastSeen: string
   }[]
+  /**
+   * Why `warnings` is empty when it is. An empty feed is the one field a
+   * reader takes as reassurance, so it must not be shown as one unless the
+   * events were actually read.
+   */
+  warningsForbidden?: boolean
+  warningsUnavailable?: boolean
   capacity?: Usage
   requested?: Usage
 }

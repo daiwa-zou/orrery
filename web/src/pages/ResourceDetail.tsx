@@ -7,6 +7,9 @@ import { useAccess, useEvents, useLiveResource, useMe } from '../api/hooks'
 import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
+import { WorkloadLogs } from '../components/WorkloadLogs'
+import { containerNamesOf, defaultContainerOf } from '../lib/podTemplate'
+import { podSelectorOf } from '../lib/selector'
 import { MetadataEditor } from '../components/MetadataEditor'
 import {
   Age,
@@ -39,15 +42,6 @@ const YamlEditor = lazy(() =>
 type Tab = 'overview' | 'yaml' | 'events' | 'logs' | 'terminal'
 
 const SCALABLE = new Set(['Deployment', 'StatefulSet', 'ReplicaSet', 'ReplicationController'])
-/** Kinds whose spec.selector selects pods, enabling a "view pods" jump. */
-const POD_OWNERS = new Set([
-  'Deployment',
-  'StatefulSet',
-  'DaemonSet',
-  'ReplicaSet',
-  'ReplicationController',
-  'Job',
-])
 
 interface ContainerRow {
   name: string
@@ -365,25 +359,6 @@ function DataSection({ obj }: { obj: KubeObject }) {
   )
 }
 
-function containerNames(obj?: KubeObject): string[] {
-  if (!obj) return []
-  const spec = obj.spec as { containers?: { name: string }[]; initContainers?: { name: string }[] }
-  return [...(spec?.initContainers ?? []), ...(spec?.containers ?? [])].map((c) => c.name)
-}
-
-// The container a fresh Logs or Terminal tab opens in: the
-// kubectl.kubernetes.io/default-container annotation when it names a real
-// container, else the first app container — never an init container (whose
-// stream is usually long-finished silence) and never a trailing sidecar.
-function defaultContainer(obj?: KubeObject): string {
-  if (!obj) return ''
-  const spec = obj.spec as { containers?: { name: string }[] }
-  const names = (spec?.containers ?? []).map((c) => c.name)
-  const annotated = obj.metadata.annotations?.['kubectl.kubernetes.io/default-container']
-  if (annotated && names.includes(annotated)) return annotated
-  return names[0] ?? ''
-}
-
 function TabButton({
   active,
   onClick,
@@ -503,7 +478,11 @@ function ResourceDetailInner() {
   const isNode = kind === 'Node'
   const isDeployment = kind === 'Deployment'
   const isCronJob = kind === 'CronJob'
-  const containers = containerNames(obj)
+  const containers = containerNamesOf(obj)
+  // The label selector this workload uses to own its pods. Computed here
+  // rather than beside its first use because the access checks below need to
+  // know whether there is a pod set to ask about.
+  const podSelector = useMemo(() => podSelectorOf(kind, obj?.spec), [obj, kind])
 
   // Every action asks about the exact verb and resource the backend will
   // check, so a button never appears that the server would refuse. Keyed, not
@@ -531,6 +510,16 @@ function ResourceDetailInner() {
         },
       )
     }
+    if (!isPod && podSelector) {
+      // A merged feed reads many pods, so the question is namespace-wide
+      // rather than about one name — which is exactly what the server checks
+      // before it opens the stream, since it refuses a caller who may read
+      // some of a workload's pods but not others.
+      list.push({
+        key: 'logs',
+        check: { verb: 'get', group: '', version: 'v1', resource: 'pods', subresource: 'log', namespace: ns },
+      })
+    }
     if (kind === 'Service') {
       list.push({
         key: 'proxy',
@@ -550,7 +539,7 @@ function ResourceDetailInner() {
       })
     }
     return list
-  }, [obj, ref.group, ref.version, ref.resource, ns, name, isPod, isCronJob, isDeployment, kind])
+  }, [obj, ref.group, ref.version, ref.resource, ns, name, isPod, isCronJob, isDeployment, kind, podSelector])
 
   const access = useAccess(cluster, checkList.map((c) => c.check))
   const may = useCallback(
@@ -686,19 +675,6 @@ function ResourceDetailInner() {
     const spec = obj?.spec as { replicas?: number } | undefined
     return spec?.replicas ?? 0
   }, [obj])
-
-  // The label selector this workload uses to own its pods, as query syntax.
-  // ReplicationControllers predate LabelSelector and use a bare map.
-  const podSelector = useMemo(() => {
-    if (!POD_OWNERS.has(kind)) return ''
-    const sel = (obj?.spec as { selector?: Record<string, unknown> } | undefined)?.selector
-    if (!sel || typeof sel !== 'object') return ''
-    const labels = (sel.matchLabels as Record<string, unknown> | undefined) ?? sel
-    return Object.entries(labels)
-      .filter(([, v]) => typeof v === 'string')
-      .map(([k, v]) => `${k}=${v}`)
-      .join(',')
-  }, [obj, kind])
 
   if (isLoading) {
     return (
@@ -883,7 +859,7 @@ function ResourceDetailInner() {
               <span className="ml-1.5 text-xs text-ink-faint">{events.data.total}</span>
             )}
           </TabButton>
-          {isPod && (
+          {(isPod || podSelector) && (
             <TabButton
               active={tab === 'logs'}
               disabled={!may('logs')}
@@ -1028,18 +1004,27 @@ function ResourceDetailInner() {
           </div>
         )}
 
-        {tab === 'logs' && isPod && may('logs') && (
+        {tab === 'logs' && may('logs') && isPod && (
           <LogViewer
             cluster={cluster!}
             namespace={ns!}
             pod={name!}
             containers={containers}
-            initialContainer={logContainer ?? defaultContainer(obj)}
+            initialContainer={logContainer ?? defaultContainerOf(obj)}
             lastExits={Object.fromEntries(
               containerRows(obj)
                 .filter((c) => c.lastExit)
                 .map((c) => [c.name, c.lastExit!]),
             )}
+          />
+        )}
+
+        {tab === 'logs' && may('logs') && !isPod && podSelector && ns && (
+          <WorkloadLogs
+            cluster={cluster!}
+            namespace={ns}
+            workload={obj}
+            selector={podSelector}
           />
         )}
 
@@ -1049,7 +1034,7 @@ function ResourceDetailInner() {
               cluster={cluster!}
               namespace={ns!}
               pod={name!}
-              container={termContainer ?? defaultContainer(obj)}
+              container={termContainer ?? defaultContainerOf(obj)}
             />
           </Suspense>
         )}

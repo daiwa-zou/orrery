@@ -55,6 +55,10 @@ type hndFake struct {
 	// nsOnlyResource denies only the cluster-wide review for one resource,
 	// which forces the per-namespace fallback scan.
 	nsOnlyResource string
+	// hideResource drops one resource from the discovery document, so a
+	// lookup for it fails the way it would on a cluster that does not serve
+	// it — or on one whose discovery is not answering.
+	hideResource string
 }
 
 func hndKey(group, version, resource string) string {
@@ -487,7 +491,7 @@ func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if doc, ok := f.discovery[p]; ok {
-		hndWriteJSON(w, 200, doc)
+		hndWriteJSON(w, 200, f.filterDiscovery(doc))
 		return
 	}
 
@@ -507,6 +511,37 @@ func (f *hndFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.serveResource(w, r, group, version, rest)
+}
+
+// filterDiscovery applies hideResource to an APIResourceList.
+func (f *hndFake) filterDiscovery(doc any) any {
+	f.mu.Lock()
+	hide := f.hideResource
+	f.mu.Unlock()
+	if hide == "" {
+		return doc
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return doc
+	}
+	list, ok := m["resources"].([]map[string]any)
+	if !ok {
+		return doc
+	}
+	kept := make([]map[string]any, 0, len(list))
+	for _, r := range list {
+		if name, _ := r["name"].(string); name == hide {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	out["resources"] = kept
+	return out
 }
 
 // hndProto decodes the "k8s" protobuf envelope typed clients send by default.
