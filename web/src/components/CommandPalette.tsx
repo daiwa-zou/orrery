@@ -2,8 +2,9 @@ import clsx from 'clsx'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { groupSegment } from '../api/client'
-import { useClusters, useDiscovery, useNamespaces } from '../api/hooks'
+import { useClusters, useDiscovery, useNamespaces, useObjectSearch } from '../api/hooks'
 import type { APIResource } from '../api/types'
+import { consoleHref } from '../lib/consoleHref'
 import { navLabel } from '../lib/format'
 import { readRecents, readSaved, savedKey, type SavedSearch } from '../lib/storage'
 import { isBrowsable, isCustomGroup, type NavItem } from './nav'
@@ -86,6 +87,9 @@ interface CommandPaletteProps {
   primary: NavItem[]
 }
 
+/** How long typing must settle before the fleet is searched. */
+const SEARCH_DEBOUNCE_MS = 220
+
 const MAX_PER_SECTION = 8
 
 export function CommandPalette({
@@ -104,6 +108,15 @@ export function CommandPalette({
   const { names: namespaceNames } = useNamespaces(open ? cluster : undefined)
 
   const listRef = useRef<HTMLUListElement>(null)
+
+  // The palette's own filtering is local and instant; object search crosses
+  // every cluster, so it waits for typing to settle.
+  const [settled, setSettled] = useState('')
+  useEffect(() => {
+    const t = window.setTimeout(() => setSettled(query.trim()), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(t)
+  }, [query])
+  const objects = useObjectSearch(settled, open)
 
   // Reset on each open so the palette never reopens mid-search. Focus is
   // handled by autoFocus below rather than here: the input mounts fresh every
@@ -257,10 +270,24 @@ export function CommandPalette({
       }
     }
 
+    // Objects found across the fleet. Last, because everything above is a
+    // local match on something the user already has open, and this is the one
+    // section that had to go and ask.
+    for (const hit of objects.data?.hits ?? []) {
+      const where = hit.namespace ? `${hit.cluster}/${hit.namespace}` : hit.cluster
+      out.push({
+        id: `object:${hit.cluster}:${hit.resource}:${hit.namespace ?? ''}:${hit.name}`,
+        section: 'Objects',
+        label: `${hit.kind}/${hit.name}`,
+        hint: hit.status ? `${where} · ${hit.status}` : where,
+        run: () => navigate(consoleHref(hit)),
+      })
+    }
+
     return out
     // `open` is a real input: the Recents list is read from localStorage, so it
     // must be recomputed on every open, not only when the query changes.
-  }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate, resourceHref])
+  }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate, resourceHref, objects.data])
 
   // Clamp the cursor when the result set shrinks under it.
   useEffect(() => {
@@ -326,7 +353,7 @@ export function CommandPalette({
               setQuery(e.target.value)
               setSelected(0)
             }}
-            placeholder="Search resources, namespaces and clusters"
+            placeholder="Search objects across every cluster, or jump to a resource"
             aria-label="Search"
             role="combobox"
             aria-expanded="true"
