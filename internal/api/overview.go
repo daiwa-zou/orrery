@@ -40,8 +40,16 @@ type overviewResponse struct {
 	Pods       countSummary            `json:"pods"`
 	Workloads  map[string]countSummary `json:"workloads"`
 	Warnings   []map[string]any        `json:"warnings"`
-	Capacity   *usage                  `json:"capacity,omitempty"`
-	Requested  *usage                  `json:"requested,omitempty"`
+	// WarningsForbidden and WarningsUnavailable say why Warnings is empty when
+	// it is empty. Every count on this response already distinguishes "you may
+	// not" from "we could not"; the warnings feed did not, and an empty feed is
+	// the one field a reader takes as reassurance — the console renders it as
+	// "No warning events. That is a good sign." Saying that because an access
+	// review came back no is worse than saying nothing.
+	WarningsForbidden   bool   `json:"warningsForbidden,omitempty"`
+	WarningsUnavailable bool   `json:"warningsUnavailable,omitempty"`
+	Capacity            *usage `json:"capacity,omitempty"`
+	Requested           *usage `json:"requested,omitempty"`
 }
 
 // visibleObjects reads a resource from cache within the caller's permitted
@@ -174,7 +182,15 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		out.Workloads[wl.key] = summary
 	}
 
-	out.Warnings = a.recentWarnings(ctx, res, 20)
+	warnings, err := a.recentWarnings(ctx, res, 20)
+	out.Warnings = warnings
+	if err != nil {
+		if isForbidden(err) {
+			out.WarningsForbidden = true
+		} else {
+			out.WarningsUnavailable = true
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -231,12 +247,14 @@ func workloadHealth(o *unstructured.Unstructured) string {
 
 // recentWarnings surfaces the newest Warning events, the single most useful
 // thing to put on a cluster landing page.
-func (a *API) recentWarnings(ctx context.Context, res *resolved, limit int) []map[string]any {
+func (a *API) recentWarnings(ctx context.Context, res *resolved, limit int) ([]map[string]any, error) {
 	// Never nil: a nil slice marshals to JSON null, and "no warnings we can
-	// show" must reach the browser as an empty list, not a missing field.
+	// show" must reach the browser as an empty list, not a missing field. The
+	// error travels alongside it so the caller can say which kind of empty
+	// this is.
 	events, err := a.visibleObjects(ctx, res, "", "v1", "events")
 	if err != nil {
-		return []map[string]any{}
+		return []map[string]any{}, err
 	}
 	warnings := make([]*unstructured.Unstructured, 0, 32)
 	for _, e := range events {
@@ -261,7 +279,7 @@ func (a *API) recentWarnings(ctx context.Context, res *resolved, limit int) []ma
 			"lastSeen":  eventTime(e),
 		})
 	}
-	return out
+	return out, nil
 }
 
 func eventTime(e *unstructured.Unstructured) string {
