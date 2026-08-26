@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { Link, useParams } from 'react-router-dom'
 import { useCacheStats, useNodeMetrics, useOverview, usePodMetrics } from '../api/hooks'
+import { metricsState, type MetricsState } from '../lib/metricsState'
 import type { CountSummary } from '../api/types'
 import {
   Age,
@@ -187,6 +188,10 @@ export function Overview() {
   const { data, isLoading, error, refetch } = useOverview(cluster)
   const metrics = useNodeMetrics(cluster)
   const podMetrics = usePodMetrics(cluster)
+  // "The cluster serves no metrics" and "I never got an answer" look identical
+  // from `!data?.available`, and only one of them is a fact about the cluster.
+  const nodeMetrics = metricsState(metrics)
+  const podUsage = metricsState(podMetrics)
   const stats = useCacheStats(cluster)
 
   if (isLoading) {
@@ -278,7 +283,13 @@ export function Overview() {
                 null, and this card must not take the whole page down over it. */}
             {(data.warnings ?? []).length === 0 ? (
               <p className="py-4 text-center text-[13px] text-ink-faint">
-                No warning events. That is a good sign.
+                {/* "A good sign" is a claim about the cluster, and it may only
+                    be made when the events were actually read. */}
+                {data.warningsForbidden
+                  ? 'You are not allowed to read events on this cluster, so there is nothing to show here.'
+                  : data.warningsUnavailable
+                    ? 'Events could not be read just now, so recent warnings are unknown.'
+                    : 'No warning events. That is a good sign.'}
               </p>
             ) : (
               <ul>
@@ -306,10 +317,10 @@ export function Overview() {
           </Card>
 
           <Card title="Top pods by usage" flush>
-            {!podMetrics.data?.available ? (
-              <p className="py-4 text-center text-[13px] text-ink-faint">
-                {podMetrics.data?.reason ?? 'Metrics are unavailable.'}
-              </p>
+            {podUsage.kind !== 'ready' ? (
+              <div className="py-4 text-center">
+                <MetricsNotice state={podUsage} retry={podMetrics.refetch} />
+              </div>
             ) : topPods.length === 0 ? (
               <p className="py-4 text-center text-[13px] text-ink-faint">No pod metrics yet.</p>
             ) : (
@@ -365,17 +376,15 @@ export function Overview() {
           </Card>
 
           <Card title="Live utilisation">
-            {metrics.isLoading ? (
+            {nodeMetrics.kind === 'loading' ? (
               <div className="flex items-center gap-2 text-[13px] text-ink-faint">
                 <Spinner className="size-3.5" /> Reading metrics
               </div>
-            ) : !metrics.data?.available ? (
-              <p className="text-[13px] text-ink-faint">
-                {metrics.data?.reason ?? 'Metrics are unavailable.'}
-              </p>
+            ) : nodeMetrics.kind !== 'ready' ? (
+              <MetricsNotice state={nodeMetrics} retry={metrics.refetch} />
             ) : (
               <div className="space-y-3">
-                {(metrics.data.nodes ?? []).map((n) => (
+                {(metrics.data?.nodes ?? []).map((n) => (
                   <div key={n.name}>
                     <p className="mb-1 truncate font-mono text-[11px] text-ink-muted">{n.name}</p>
                     <div className="space-y-1.5">
@@ -422,5 +431,30 @@ export function Overview() {
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * Says why a metrics panel is empty.
+ *
+ * An absent metrics-server is a fact about the cluster and there is nothing to
+ * retry. A request that failed or parked is a fact about this browser, and the
+ * useful thing to offer is another go.
+ */
+function MetricsNotice({ state, retry }: { state: MetricsState; retry?: () => void }) {
+  if (state.kind === 'ready' || state.kind === 'loading') return null
+  return (
+    <p className="text-[13px] text-ink-faint">
+      {state.reason}
+      {state.kind === 'unreachable' && retry && ' '}
+      {state.kind === 'unreachable' && retry && (
+        <button
+          onClick={() => retry()}
+          className="ml-2 text-accent-text underline hover:text-accent-text-hover"
+        >
+          Try again
+        </button>
+      )}
+    </p>
   )
 }

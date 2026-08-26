@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -216,13 +217,18 @@ func TestConcurrentIdenticalChecksCollapse(t *testing.T) {
 	}
 }
 
+// nsList adapts a fixed candidate list to the provider VisibleNamespaces takes.
+func nsList(names []string) func() ([]string, error) {
+	return func() ([]string, error) { return names, nil }
+}
+
 func TestVisibleNamespacesShortCircuitsOnClusterWideAccess(t *testing.T) {
 	client, calls := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
 	c, _ := NewChecker(128, time.Minute, 50)
 
 	all, namespaces, err := c.VisibleNamespaces(context.Background(), client,
 		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
-		[]string{"a", "b", "c", "d"})
+		nsList([]string{"a", "b", "c", "d"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +253,7 @@ func TestVisibleNamespacesFallsBackToScan(t *testing.T) {
 
 	all, namespaces, err := c.VisibleNamespaces(context.Background(), client,
 		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
-		[]string{"team-a", "team-b", "team-c", "kube-system"})
+		nsList([]string{"team-a", "team-b", "team-c", "kube-system"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +271,7 @@ func TestVisibleNamespacesReportsTruncation(t *testing.T) {
 
 	_, namespaces, err := c.VisibleNamespaces(context.Background(), client,
 		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
-		[]string{"a", "b", "c", "d", "e"})
+		nsList([]string{"a", "b", "c", "d", "e"}))
 
 	// Silently showing three of five namespaces would look like the other two
 	// are empty, so truncation has to be reported.
@@ -344,5 +350,76 @@ func TestSelfVerdictsAreCachedPerIdentity(t *testing.T) {
 	}
 	if d.Allowed {
 		t.Error("bob received alice's cached verdict: Self subjects must be cached per identity")
+	}
+}
+
+// The candidate list is a real cost — a cache read at best, an API round trip
+// at worst — and the subject who never needs it is the common one.
+func TestVisibleNamespacesNeverAsksForCandidatesItDoesNotNeed(t *testing.T) {
+	client, _ := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	asked := 0
+	all, _, err := c.VisibleNamespaces(context.Background(), client,
+		Subject{User: "alice"}, Attributes{Verb: "list", Resource: "pods"},
+		func() ([]string, error) { asked++; return []string{"a", "b"}, nil })
+	if err != nil || !all {
+		t.Fatalf("cluster-wide reader: all=%v err=%v", all, err)
+	}
+	if asked != 0 {
+		t.Errorf("candidates were requested %d times for a cluster-wide subject", asked)
+	}
+
+	// Nor on a cache hit: the second narrow answer comes from the entry the
+	// first one stored.
+	client2, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool { return ra.Namespace == "team-a" })
+	c2, _ := NewChecker(128, time.Minute, 50)
+	asked = 0
+	provider := func() ([]string, error) { asked++; return []string{"team-a", "team-b"}, nil }
+	subj := Subject{User: "bob"}
+	attrs := Attributes{Verb: "list", Resource: "pods"}
+	if _, _, err := c2.VisibleNamespaces(context.Background(), client2, subj, attrs, provider); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c2.VisibleNamespaces(context.Background(), client2, subj, attrs, provider); err != nil {
+		t.Fatal(err)
+	}
+	if asked != 1 {
+		t.Errorf("candidates were requested %d times across two calls, want 1", asked)
+	}
+}
+
+// The failure this whole shape exists to prevent. Scanning an empty candidate
+// list finds nothing allowed and is indistinguishable from a subject permitted
+// nowhere — and that verdict would be cached and served for the rest of the
+// TTL, so one hiccup becomes a standing, wrong "you may not".
+func TestVisibleNamespacesDoesNotCacheAFailureAsAnEmptyScope(t *testing.T) {
+	client, _ := fakeClient(func(ra *authzv1.ResourceAttributes) bool { return ra.Namespace == "team-a" })
+	c, _ := NewChecker(128, time.Minute, 50)
+	subj := Subject{User: "alice"}
+	attrs := Attributes{Verb: "list", Resource: "pods"}
+
+	boom := errors.New("namespaces could not be listed")
+	all, namespaces, err := c.VisibleNamespaces(context.Background(), client, subj, attrs,
+		func() ([]string, error) { return nil, boom })
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the provider's failure", err)
+	}
+	if all || len(namespaces) != 0 {
+		t.Errorf("a failed scan returned a scope: all=%v ns=%v", all, namespaces)
+	}
+
+	// The next call, with the namespaces readable again, must get the real
+	// answer rather than a cached "nowhere".
+	all, namespaces, err = c.VisibleNamespaces(context.Background(), client, subj, attrs,
+		nsList([]string{"team-a", "team-b"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all {
+		t.Fatal("narrow subject reported as cluster-wide")
+	}
+	if len(namespaces) != 1 || namespaces[0] != "team-a" {
+		t.Errorf("recovered scope = %v, want [team-a] — a failure was cached", namespaces)
 	}
 }
