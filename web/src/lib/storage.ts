@@ -117,6 +117,56 @@ export function isSaved(view: SavedSearch): boolean {
   return readJSON<SavedSearch[]>(SAVED_KEY, []).some((v) => savedKey(v) === savedKey(view))
 }
 
+/* ---- custom columns ---------------------------------------------------- */
+
+/**
+ * Extra label columns, per cluster and resource.
+ *
+ * Well-known kinds get hand-tuned tables and CRDs get their own
+ * additionalPrinterColumns, which matches what kubectl shows. What was missing
+ * is the escape hatch: the label a team actually navigates by — owner,
+ * version, the ticket that caused the rollout — lives in their own labels and
+ * had nowhere to appear except the catch-all Labels column.
+ *
+ * Labels only, not annotations: list rows already carry labels, so a label
+ * column costs nothing extra on the wire, while annotations would need the
+ * server to project them.
+ */
+const COLUMNS_KEY = 'orrery.columns'
+const MAX_COLUMNS_PER_RESOURCE = 6
+
+function columnsKeyFor(cluster: string, resource: string): string {
+  return `${cluster}/${resource}`
+}
+
+type ColumnMap = Record<string, string[]>
+
+export function readColumns(cluster: string, resource: string): string[] {
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const keys = all?.[columnsKeyFor(cluster, resource)]
+  return Array.isArray(keys) ? keys.filter((k) => typeof k === 'string') : []
+}
+
+export function addColumn(cluster: string, resource: string, label: string): void {
+  const trimmed = label.trim()
+  if (!trimmed) return
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const k = columnsKeyFor(cluster, resource)
+  const current = Array.isArray(all?.[k]) ? all[k] : []
+  if (current.includes(trimmed)) return
+  writeJSON(COLUMNS_KEY, {
+    ...all,
+    [k]: [...current, trimmed].slice(0, MAX_COLUMNS_PER_RESOURCE),
+  })
+}
+
+export function removeColumn(cluster: string, resource: string, label: string): void {
+  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
+  const k = columnsKeyFor(cluster, resource)
+  const current = Array.isArray(all?.[k]) ? all[k] : []
+  writeJSON(COLUMNS_KEY, { ...all, [k]: current.filter((c) => c !== label) })
+}
+
 /* ---- theme ------------------------------------------------------------- */
 
 export type Theme = 'dark' | 'light'

@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  addColumn,
   addSaved,
   isSaved,
   navStateKey,
   readJSON,
   readRecents,
+  readColumns,
   readSaved,
   recordRecent,
+  removeColumn,
   removeSaved,
   savedKey,
   writeJSON,
@@ -163,5 +166,43 @@ describe('saved searches', () => {
 
     expect(readSaved('prod').map((v) => v.q)).toEqual(['b'])
     expect(isSaved(view({ q: 'a' }))).toBe(false)
+  })
+})
+
+describe('custom label columns', () => {
+  beforeEach(() => {
+    stubStorage()
+  })
+
+  it('keeps chosen columns per cluster and resource', () => {
+    addColumn('prod', 'pods', 'team')
+    addColumn('prod', 'deployments', 'version')
+    addColumn('staging', 'pods', 'owner')
+
+    expect(readColumns('prod', 'pods')).toEqual(['team'])
+    expect(readColumns('prod', 'deployments')).toEqual(['version'])
+    expect(readColumns('staging', 'pods')).toEqual(['owner'])
+    expect(readColumns('prod', 'services')).toEqual([])
+  })
+
+  it('ignores a repeat and trims whitespace', () => {
+    addColumn('prod', 'pods', 'team')
+    addColumn('prod', 'pods', '  team  ')
+    addColumn('prod', 'pods', '   ')
+
+    expect(readColumns('prod', 'pods')).toEqual(['team'])
+  })
+
+  it('caps how many columns one resource can carry', () => {
+    for (let i = 0; i < 10; i++) addColumn('prod', 'pods', `k${i}`)
+    expect(readColumns('prod', 'pods')).toHaveLength(6)
+  })
+
+  it('removes only the named column', () => {
+    addColumn('prod', 'pods', 'team')
+    addColumn('prod', 'pods', 'owner')
+    removeColumn('prod', 'pods', 'team')
+
+    expect(readColumns('prod', 'pods')).toEqual(['owner'])
   })
 })

@@ -9,9 +9,17 @@ import { toggleSelectorTerm } from '../lib/labels'
 import type { SearchQuery } from '../lib/searchQuery'
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
-import { RefreshIcon, TagIcon, TrashIcon } from '../components/icons'
+import { RefreshIcon, TagIcon, TrashIcon, ColumnsIcon} from '../components/icons'
 import { SearchBar } from '../components/SearchBar'
-import { addSaved, isSaved, removeSaved, type SavedSearch } from '../lib/storage'
+import {
+  addColumn,
+  addSaved,
+  isSaved,
+  readColumns,
+  removeColumn,
+  removeSaved,
+  type SavedSearch,
+} from '../lib/storage'
 import { Badge, Button, ErrorState, GatedButton, Loading, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
@@ -26,6 +34,105 @@ function nameList(rows: Row[]): string {
 }
 
 /** Explains the live-update state in the header, honestly. */
+function ColumnPicker({
+  chosen,
+  available,
+  onAdd,
+  onRemove,
+}: {
+  chosen: string[]
+  available: string[]
+  onAdd: (key: string) => void
+  onRemove: (key: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  // Suggest the label keys actually present on these objects, which the search
+  // bar's facets already fetched. Typing a key that is not suggested still
+  // works — a label may exist on objects outside the current page.
+  const suggestions = available.filter((k) => !chosen.includes(k)).slice(0, 12)
+
+  const submit = () => {
+    onAdd(draft)
+    setDraft('')
+  }
+
+  return (
+    <div className="relative">
+      <Button
+        size="sm"
+        icon
+        variant={chosen.length > 0 ? 'primary' : 'default'}
+        aria-expanded={open}
+        aria-label="Choose label columns"
+        title="Add a label as its own column"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ColumnsIcon />
+      </Button>
+
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-72 border border-border bg-raised p-2.5 shadow-lg">
+          <p className="mb-2 text-[11px] tracking-[.08em] text-ink-faint uppercase">
+            Label columns
+          </p>
+
+          {chosen.length > 0 && (
+            <ul className="mb-2 flex flex-wrap gap-1">
+              {chosen.map((k) => (
+                <li key={k}>
+                  <button
+                    onClick={() => onRemove(k)}
+                    title={`Remove the ${k} column`}
+                    className="border border-border px-1.5 py-0.5 font-mono text-[11px] text-ink-muted hover:border-danger hover:text-danger"
+                  >
+                    {k} ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              submit()
+            }}
+            className="flex gap-1"
+          >
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="label key, e.g. team"
+              aria-label="Label key to add as a column"
+              className="min-w-0 flex-1 border border-border bg-surface-2 px-1.5 py-1 font-mono text-[11.5px] text-ink outline-none focus:border-accent"
+            />
+            <Button size="sm" type="submit" disabled={!draft.trim()}>
+              Add
+            </Button>
+          </form>
+
+          {suggestions.length > 0 && (
+            <ul className="mt-2 flex flex-wrap gap-1">
+              {suggestions.map((k) => (
+                <li key={k}>
+                  <button
+                    onClick={() => onAdd(k)}
+                    className="border border-border px-1.5 py-0.5 font-mono text-[11px] text-ink-faint hover:border-accent hover:text-accent-text"
+                  >
+                    + {k}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LiveIndicator({ state }: { state: 'connecting' | 'live' | 'polling' | 'off' }) {
   const map = {
     connecting: { tone: 'idle', label: 'connecting' },
@@ -187,6 +294,22 @@ export function ResourceList() {
         q,
       }
     : null
+  const [labelColumns, setLabelColumns] = useState<string[]>([])
+  useEffect(() => {
+    setLabelColumns(cluster && resource ? readColumns(cluster, resource) : [])
+  }, [cluster, resource])
+
+  const addLabelColumn = (key: string) => {
+    if (!cluster || !resource) return
+    addColumn(cluster, resource, key)
+    setLabelColumns(readColumns(cluster, resource))
+  }
+  const dropLabelColumn = (key: string) => {
+    if (!cluster || !resource) return
+    removeColumn(cluster, resource, key)
+    setLabelColumns(readColumns(cluster, resource))
+  }
+
   const [starred, setStarred] = useState(false)
   useEffect(() => {
     setStarred(savedView ? isSaved(savedView) : false)
@@ -331,11 +454,30 @@ export function ResourceList() {
       }
     }
 
+    // Chosen label columns read straight off the row's labels, which the list
+    // already carries — so this costs nothing on the wire and needs no
+    // server-side projection.
+    if (labelColumns.length > 0) {
+      columns = [
+        ...columns,
+        ...labelColumns.map(
+          (key): Column => ({ key: `label:${key}`, label: key, type: 'text', priority: 1 }),
+        ),
+      ]
+      rows = rows.map((row) => {
+        const next = { ...row }
+        for (const key of labelColumns) {
+          next[`label:${key}`] = row._labels?.[key] ?? '—'
+        }
+        return next
+      })
+    }
+
     if (showLabels) {
       columns = [...columns, { key: '_labels', label: 'Labels', type: 'labels', priority: 1 }]
     }
     return { rows, columns }
-  }, [data, metrics.data, isPods, showLabels, sort, order])
+  }, [data, metrics.data, isPods, showLabels, sort, order, labelColumns])
 
   // Only rows on the current page are actionable; keys that left the page
   // (filter, pagination, the delete completing) simply stop counting.
@@ -396,6 +538,12 @@ export function ResourceList() {
           facets={facets.data}
           onActivate={activateSearch}
           placeholder="Search or filter — name, app=web, status.phase=Running"
+        />
+        <ColumnPicker
+          chosen={labelColumns}
+          available={(facets.data?.labels ?? []).map((f) => f.key)}
+          onAdd={addLabelColumn}
+          onRemove={dropLabelColumn}
         />
         <Button
           size="sm"
