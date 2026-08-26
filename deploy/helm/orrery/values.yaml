@@ -108,6 +108,19 @@ autoscaling:
     scaleDown:
       stabilizationWindowSeconds: 600
 
+# The read-only HTTP proxy into pods and services — the browser's answer to
+# `kubectl port-forward` for HTTP workloads. GET and HEAD only, and every
+# request is gated on the pods/proxy or services/proxy subresource under the
+# caller's own identity.
+#
+# Turn it off when the workloads a cluster runs are not ones you want rendered
+# inside the console's origin, or when policy says a dashboard may read the API
+# server and nothing behind it. Disabling removes the route entirely, so it
+# cannot be reached by typing the URL, and the console hides the control rather
+# than offering one that 404s.
+proxy:
+  enabled: true
+
 podDisruptionBudget:
   enabled: true
   minAvailable: 1

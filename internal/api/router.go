@@ -79,7 +79,12 @@ func (a *API) Router() http.Handler {
 				r.Get("/explain", a.explainHandler)
 				// Read-only HTTP proxy into pods and services — the browser's
 				// kubectl port-forward. GET/HEAD only, enforced inside.
-				r.HandleFunc("/proxy/{namespace}/{ptype}/{name}/*", a.proxyHTTP)
+				// Registered only when enabled, so a disabled proxy is absent
+				// rather than merely hidden: there is no route to reach by
+				// typing the URL, and no handler to reason about.
+				if a.cfg.Proxy.ProxyEnabled() {
+					r.HandleFunc("/proxy/{namespace}/{ptype}/{name}/*", a.proxyHTTP)
+				}
 
 				// ---- streams ----
 				// A browser cannot attach a CSRF header to a WebSocket

@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiGroup, groupSegment, proxyURL, type ResourceRef } from '../api/client'
-import { useAccess, useEvents, useLiveResource } from '../api/hooks'
+import { useAccess, useEvents, useLiveResource, useMe } from '../api/hooks'
 import type { AccessCheck, KubeObject } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
@@ -441,6 +441,11 @@ function ResourceDetailInner() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const toast = useToast()
+  // The proxy is switchable server-side; when it is off the route does not
+  // exist, so the section is hidden rather than left to fail on click. A
+  // server that does not report the flag at all is treated as having it on.
+  const me = useMe()
+  const proxyEnabled = me.data?.features?.proxy !== false
 
   const ns = namespace === '_' ? undefined : namespace
   const ref: ResourceRef = {
@@ -958,7 +963,8 @@ function ResourceDetailInner() {
 
             {(isPod || kind === 'Service') && ns && (
               <ProxySection
-                allowed={may('proxy')} cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
+                allowed={may('proxy')}
+                enabled={proxyEnabled} cluster={cluster!} kind={kind} namespace={ns} name={name!} obj={obj} />
             )}
 
             <StatusSection status={status} />
@@ -1361,6 +1367,7 @@ function ProxySection({
   name,
   obj,
   allowed,
+  enabled,
 }: {
   cluster: string
   kind: string
@@ -1368,6 +1375,8 @@ function ProxySection({
   name: string
   obj: KubeObject
   allowed: boolean
+  /** The server serves the proxy route at all. */
+  enabled: boolean
 }) {
   const ports: { label: string; port: number }[] = []
   if (kind === 'Service') {
@@ -1386,6 +1395,9 @@ function ProxySection({
       }
     }
   }
+  // Nothing to offer when the server is not serving the route: an Open button
+  // that 404s is worse than no button.
+  if (!enabled) return null
   if (ports.length === 0) return null
 
   const ptype = kind === 'Service' ? 'services' : 'pods'

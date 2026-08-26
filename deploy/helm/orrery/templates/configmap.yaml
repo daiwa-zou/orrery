@@ -43,4 +43,6 @@ data:
     authz:
       ttl: {{ .Values.authz.ttl }}
       cacheSize: {{ .Values.authz.cacheSize }}
+    proxy:
+      enabled: {{ .Values.proxy.enabled }}
     clusters: {{ toJson .Values.clusters }}

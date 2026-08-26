@@ -314,6 +314,11 @@ func (a *API) whoami(w http.ResponseWriter, r *http.Request) {
 		"authenticated": true,
 		"oidcEnabled":   a.cfg.OIDC.Enabled,
 		"anonymous":     a.mw.Anonymous(),
+		// Optional capabilities the console should not offer when the server
+		// is not serving them.
+		"features": map[string]any{
+			"proxy": a.cfg.Proxy.ProxyEnabled(),
+		},
 	}
 	if s, ok := auth.SessionFrom(r.Context()); ok {
 		body["expiresAt"] = s.ExpiresAt

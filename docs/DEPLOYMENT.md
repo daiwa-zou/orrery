@@ -190,6 +190,24 @@ For clusters where impersonation is too strong a grant, register them in
 `passthrough` mode instead — the dashboard then holds no privileged credential
 for them and forwards each user's own token (see [OIDC.md](OIDC.md)).
 
+## Turning the HTTP proxy off
+
+The console can relay GET and HEAD to a pod or service through the API
+server's proxy subresource, under the caller's own identity — the browser's
+answer to `kubectl port-forward` for HTTP workloads. It is gated on the
+`pods/proxy` and `services/proxy` subresources like every other read.
+
+Set `proxy.enabled: false` (chart) or `proxy: {enabled: false}` (config) to
+remove it. That unregisters the route rather than hiding the button, so it
+cannot be reached by typing the URL, and the console stops offering the
+control instead of offering one that 404s. `-print-config` reports the
+resolved value.
+
+Reasons to: the workloads a cluster runs are not ones you want rendered inside
+the console's origin, or policy says a dashboard may read the API server and
+nothing behind it. Leaving it on is fine otherwise — it is read-only, and the
+subresource check is the same authority as everything else here.
+
 ## Configuration you will actually tune
 
 Every field has a default; `-print-config` shows what the server actually

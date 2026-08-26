@@ -99,6 +99,7 @@ func printResolved(cfg *config.Config) {
 	fmt.Printf("cache.idleTimeout:    %s\n", cfg.Cache.IdleTimeout)
 	fmt.Printf("cache.maxInformers:   %d\n", cfg.Cache.MaxInformersPerCluster)
 	fmt.Printf("authz.ttl:            %s\n", cfg.Authz.TTL)
+	fmt.Printf("proxy.enabled:        %t\n", cfg.Proxy.ProxyEnabled())
 	fmt.Printf("clusters:             %d\n", len(cfg.Clusters))
 	for _, c := range cfg.Clusters {
 		fmt.Printf("  - %-20s authMode=%-14s kubeconfig=%s context=%s\n",

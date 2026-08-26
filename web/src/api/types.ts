@@ -191,6 +191,16 @@ export interface Me {
   authenticated: boolean
   oidcEnabled: boolean
   anonymous: boolean
+  /**
+   * Optional capabilities the server is actually serving. The console hides
+   * what is switched off rather than offering a control that 404s.
+   *
+   * Absent on an older server, so callers should treat a missing flag as on
+   * and let the request fail honestly if it is not.
+   */
+  features?: {
+    proxy?: boolean
+  }
   csrfToken?: string
   expiresAt?: string
   user: {
