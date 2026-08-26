@@ -57,12 +57,43 @@ func benchFilter(b *testing.B, n int, query string) {
 
 // The question these answer: is the linear label-selector scan actually worth
 // indexing, or is the cost somewhere else entirely?
-func BenchmarkFilterLabelSelector1k(b *testing.B)  { benchFilter(b, 1_000, "labelSelector=tier%3Dweb") }
-func BenchmarkFilterLabelSelector10k(b *testing.B) { benchFilter(b, 10_000, "labelSelector=tier%3Dweb") }
-func BenchmarkFilterLabelSelector50k(b *testing.B) { benchFilter(b, 50_000, "labelSelector=tier%3Dweb") }
+func BenchmarkFilterLabelSelector1k(b *testing.B) { benchFilter(b, 1_000, "labelSelector=tier%3Dweb") }
+func BenchmarkFilterLabelSelector10k(b *testing.B) {
+	benchFilter(b, 10_000, "labelSelector=tier%3Dweb")
+}
+func BenchmarkFilterLabelSelector50k(b *testing.B) {
+	benchFilter(b, 50_000, "labelSelector=tier%3Dweb")
+}
 
 func BenchmarkFilterFieldSelector50k(b *testing.B) {
 	benchFilter(b, 50_000, "fieldSelector=status.phase%3DRunning")
 }
 
 func BenchmarkFilterFreeText50k(b *testing.B) { benchFilter(b, 50_000, "q=web") }
+
+// The free-text benchmark above searches for "web", which every object is
+// named, so matchesQuery returns on its first line and the label scan below it
+// never runs. These ask the other question: what does free text cost when it
+// has to look at the labels?
+func BenchmarkFreeTextLabelHit50k(b *testing.B)  { benchFilter(b, 50_000, "q=tier%3Dcache") }
+func BenchmarkFreeTextLabelMiss50k(b *testing.B) { benchFilterNoMatch(b, 50_000, "q=zzzz") }
+
+// benchFilterNoMatch is benchFilter for a query that matches nothing, which is
+// the worst case: every object is scanned to the end of its labels.
+func benchFilterNoMatch(b *testing.B, n int, query string) {
+	objs := benchObjects(n)
+	r := httptest.NewRequest("GET", "/?"+query, nil)
+	f, err := parseListFilter(r)
+	if err != nil {
+		b.Fatalf("parseListFilter: %v", err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		for _, o := range objs {
+			if f.matches(o) {
+				b.Fatal("this benchmark must match nothing")
+			}
+		}
+	}
+}
