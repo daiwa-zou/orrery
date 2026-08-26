@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api, wsURL, groupSegment, type ListParams, type ResourceRef } from './client'
 import type { KubeObject, ListResponse, Row, WatchMessage } from './types'
 
@@ -488,6 +488,25 @@ export function useRelated(ref: ResourceRef | null, enabled: boolean) {
     // The neighbourhood moves when pods come and go, which is often during the
     // incident someone is looking at — but a walk per second helps nobody.
     staleTime: 15_000,
+  })
+}
+
+/**
+ * The overview of every cluster at once, for the fleet page.
+ *
+ * One query per cluster rather than a new aggregate endpoint: each is already
+ * cached and shared server-side, they are independent so a slow or unreachable
+ * cluster does not hold up the others, and a cluster the caller may not read
+ * fails on its own instead of taking the page with it. The number of clusters
+ * is configuration, not user input, so the fan-out is bounded by deployment.
+ */
+export function useFleetOverviews(clusters: string[]) {
+  return useQueries({
+    queries: clusters.map((cluster) => ({
+      queryKey: ['overview', cluster],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.overview(cluster, signal),
+      refetchInterval: 30_000,
+    })),
   })
 }
 
