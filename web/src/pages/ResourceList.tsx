@@ -208,7 +208,7 @@ export function ResourceList() {
     [namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector],
   )
 
-  const { data, isLoading, error, live, refetch } = useLiveList(ref, listParams)
+  const { data, isLoading, error, stalled, live, refetch } = useLiveList(ref, listParams)
 
   const meta = data?.resource
   const canDelete = meta?.verbs.includes('delete') ?? false
@@ -490,6 +490,11 @@ export function ResourceList() {
   const bulkEnabled = canDelete || canRestart
 
   if (error) return <ErrorState error={error} retry={refetch} />
+  // A parked retry with nothing to show would otherwise fall through to the
+  // table's empty state, which asserts that the namespace is empty. Saying
+  // "nothing here" when the truth is "I could not ask" is the one answer worse
+  // than saying nothing.
+  if (stalled) return <ErrorState error={stalled} retry={refetch} />
 
   return (
     <div className="flex h-full flex-col">
