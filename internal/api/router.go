@@ -59,7 +59,13 @@ func (a *API) Router() http.Handler {
 			}
 
 			r.Get("/me", a.whoami)
+			// The read-only surface, described for whoever has to call it
+			// from a program rather than a browser.
+			r.Get("/capabilities", a.capabilities)
 			r.Get("/clusters", a.listClusters)
+			// Cross-cluster, so it sits above the per-cluster routes rather
+			// than inside them.
+			r.Get("/search", a.searchResources)
 
 			r.Route("/clusters/{cluster}", func(r chi.Router) {
 				// ---- reads ----
@@ -67,14 +73,22 @@ func (a *API) Router() http.Handler {
 				r.Get("/overview", a.clusterOverview)
 				r.Get("/stats", a.cacheStats)
 				r.Get("/events", a.listEvents)
+				// Asking whether a read is permitted is itself a read: it is a
+				// GET so a client that never writes needs no CSRF token.
+				r.Get("/access", a.accessProbe)
+				r.Get("/access/namespaces", a.namespaceAccess)
 				r.Get("/metrics/nodes", a.nodeMetrics)
 				r.Get("/metrics/pods", a.podMetrics)
 				r.Get("/pods/{namespace}/{name}/logs", a.getPodLogs)
 				r.Get("/pods/{namespace}/{name}/env", a.podEnv)
+				// The snapshot half of /ws/logs, for callers that ask a
+				// question rather than watch a rollout.
+				r.Get("/logs", a.podsLogSnapshot)
 
 				r.Get("/resources/{group}/{version}/{resource}", a.listResources)
 				r.Get("/resources/{group}/{version}/{resource}/facets", a.listFacets)
 				r.Get("/resources/{group}/{version}/{resource}/{namespace}/{name}", a.getResource)
+				r.Get("/resources/{group}/{version}/{resource}/{namespace}/{name}/related", a.relatedResources)
 				r.Get("/rollout/history", a.rolloutHistory)
 				r.Get("/explain", a.explainHandler)
 				// Read-only HTTP proxy into pods and services — the browser's

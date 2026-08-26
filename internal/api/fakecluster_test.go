@@ -137,6 +137,8 @@ func hndNewFake() *hndFake {
 		hndAPIResource("namespaces", "namespace", "Namespace", false, hndReadVerbs),
 		hndAPIResource("configmaps", "configmap", "ConfigMap", true, hndAllVerbs),
 		hndAPIResource("secrets", "secret", "Secret", true, hndReadVerbs),
+		hndAPIResource("persistentvolumeclaims", "persistentvolumeclaim", "PersistentVolumeClaim", true, hndReadVerbs),
+		hndAPIResource("persistentvolumes", "persistentvolume", "PersistentVolume", false, hndReadVerbs),
 	)
 	list("/apis/apps/v1", "apps/v1",
 		hndAPIResource("deployments", "deployment", "Deployment", true, hndAllVerbs),
@@ -262,6 +264,20 @@ func (f *hndFake) seed() {
 	)
 	add("", "v1", "configmaps", "ConfigMap", true)
 	add("", "v1", "secrets", "Secret", true)
+	// A bound claim and its volume, so the reference edge between them has
+	// something real to walk.
+	add("", "v1", "persistentvolumeclaims", "PersistentVolumeClaim", true,
+		hndObj("", "v1", "PersistentVolumeClaim", "demo", "data", map[string]any{
+			"spec":   map[string]any{"volumeName": "pv-data"},
+			"status": map[string]any{"phase": "Bound"},
+		}),
+	)
+	add("", "v1", "persistentvolumes", "PersistentVolume", false,
+		hndObj("", "v1", "PersistentVolume", "", "pv-data", map[string]any{
+			"spec":   map[string]any{"capacity": map[string]any{"storage": "1Gi"}},
+			"status": map[string]any{"phase": "Bound"},
+		}),
+	)
 	add("", "v1", "events", "Event", true,
 		hndObj("", "v1", "Event", "demo", "ev-1", map[string]any{
 			"type": "Normal", "reason": "Started", "message": "Started container app",
@@ -338,7 +354,24 @@ func (f *hndFake) seed() {
 			},
 		}),
 	)
-	add("networking.k8s.io", "v1", "ingresses", "Ingress", true)
+	add("networking.k8s.io", "v1", "ingresses", "Ingress", true,
+		hndObj("networking.k8s.io", "v1", "Ingress", "demo", "web-ing", map[string]any{
+			"spec": map[string]any{
+				"defaultBackend": map[string]any{
+					"service": map[string]any{"name": "svc", "port": map[string]any{"number": int64(80)}},
+				},
+				"rules": []any{map[string]any{
+					"host": "web.example",
+					"http": map[string]any{"paths": []any{map[string]any{
+						"path": "/",
+						"backend": map[string]any{
+							"service": map[string]any{"name": "web-backend", "port": map[string]any{"number": int64(8080)}},
+						},
+					}}},
+				}},
+			},
+		}),
+	)
 
 	// A CRD with printer columns plus two of its objects, so the table path
 	// that compiles additionalPrinterColumns runs against real discovery.

@@ -247,22 +247,42 @@ func (a *API) resolve(r *http.Request) (*resolved, error) {
 	return out, nil
 }
 
-// clusterOnly resolves just the cluster and the caller's clients.
+// resolveSpelling resolves a resource the way a caller is likely to have
+// written it.
+//
+// Discovery registers kinds in lower case, because that is how a URL spells
+// them. A client that has just read `kind: Deployment` out of a manifest, an
+// owner reference or an alert will send it back capitalised, and the literal
+// lookup misses. Trying the exact spelling first keeps any genuine match; the
+// fallback costs one map lookup and turns a confusing 404 into the obvious
+// answer. Only the endpoints that take a resource name as *data* need this —
+// the resource routes take it from a URL the console built.
+func (a *API) resolveSpelling(
+	ctx context.Context,
+	c *cluster.Cluster,
+	group, version, name string,
+) (cluster.APIResource, error) {
+	ar, err := c.Discovery.Resolve(ctx, group, version, name)
+	if err == nil {
+		return ar, nil
+	}
+	if lower := strings.ToLower(name); lower != name {
+		if ar, lowerErr := c.Discovery.Resolve(ctx, group, version, lower); lowerErr == nil {
+			return ar, nil
+		}
+	}
+	// The original error names what the caller actually asked for.
+	return cluster.APIResource{}, err
+}
+
+// clusterOnly resolves just the cluster named in the URL and the caller's
+// clients.
 func (a *API) clusterOnly(r *http.Request) (*resolved, error) {
-	name := chi.URLParam(r, "cluster")
-	c, err := a.registry.Get(name)
+	c, err := a.registry.Get(chi.URLParam(r, "cluster"))
 	if err != nil {
 		return nil, err
 	}
-	id, err := identityFrom(r)
-	if err != nil {
-		return nil, err
-	}
-	clients, err := c.ClientsFor(id)
-	if err != nil {
-		return nil, err
-	}
-	return &resolved{cluster: c, clients: clients, identity: id}, nil
+	return a.resolvedFor(r, c)
 }
 
 // query helpers
