@@ -219,6 +219,8 @@ surface to keep stable, and `cmd/orrery` is the only binary.
 - [DEPLOYMENT.md](docs/DEPLOYMENT.md) — production topologies, scaling, tuning
   and security posture.
 - [OIDC.md](docs/OIDC.md) — provider setup, claim mapping, troubleshooting.
+- [DECISIONS.md](docs/DECISIONS.md) — what was considered and deliberately not
+  built, and what would change the answer.
 - [RELEASING.md](docs/RELEASING.md) — what a `v*` tag produces, and the one
   thing to bump before cutting one.
 - [deploy/remote-cluster](deploy/remote-cluster/) — registering a remote
