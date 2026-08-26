@@ -444,3 +444,22 @@ export function useAccess(
     staleTime: 30_000,
   })
 }
+
+/**
+ * One object's neighbourhood.
+ *
+ * Enabled only when the caller says so, because the answer costs a walk: the
+ * server scans the resources a kind's children live in, each behind its own
+ * access review. A detail page asks when its overview is on screen, not on
+ * every navigation.
+ */
+export function useRelated(ref: ResourceRef | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['related', ref?.cluster, ref?.group, ref?.version, ref?.resource, ref?.namespace, ref?.name],
+    queryFn: ({ signal }) => api.related(ref!, signal),
+    enabled: enabled && !!ref?.name,
+    // The neighbourhood moves when pods come and go, which is often during the
+    // incident someone is looking at — but a walk per second helps nobody.
+    staleTime: 15_000,
+  })
+}

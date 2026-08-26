@@ -1,13 +1,14 @@
 import clsx from 'clsx'
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, apiGroup, groupSegment, proxyURL, type ResourceRef } from '../api/client'
+import { api, apiGroup, proxyURL, type ResourceRef } from '../api/client'
 import { useAccess, useEvents, useLiveResource, useMe } from '../api/hooks'
-import type { AccessCheck, KubeObject } from '../api/types'
+import type { AccessCheck, KubeObject, ObjectRef } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
 import { MetadataEditor } from '../components/MetadataEditor'
+import { RelatedSection } from '../components/RelatedSection'
 import {
   Age,
   Badge,
@@ -565,7 +566,32 @@ function ResourceDetailInner() {
   const mayExec = may('exec')
   const mayPatch = may('patch')
 
-  const owners = obj?.metadata.ownerReferences ?? []
+  // Memoised because the `?? []` default is a fresh array on every render,
+  // which would defeat every memo downstream of it.
+  const owners = useMemo(() => obj?.metadata.ownerReferences ?? [], [obj])
+
+  // Shown while the neighbourhood walk is in flight, and kept if it fails, so
+  // this page is never worse at naming an owner than it was before. The
+  // resource is guessed from the kind here — which is exactly what every owner
+  // link did before the server started resolving it through discovery.
+  const fallbackOwners = useMemo<ObjectRef[]>(
+    () =>
+      owners.map((o) => {
+        const { group, version } = splitApiVersion(o.apiVersion)
+        return {
+          relation: 'owner',
+          depth: 1,
+          kind: o.kind,
+          name: o.name,
+          uid: o.uid,
+          group,
+          version: version || 'v1',
+          resource: kindToResource(o.kind),
+          namespace: ns,
+        }
+      }),
+    [owners, ns],
+  )
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['object'] })
@@ -926,23 +952,14 @@ function ResourceDetailInner() {
                     onSave={saveMetadata('annotations')}
                   />
                 </Field>
-                {owners.length > 0 && (
-                  <Field label="Controlled by">
-                    <div className="flex flex-wrap gap-2">
-                      {owners.map((o) => (
-                        <Link
-                          key={o.uid}
-                          to={ownerHref(cluster!, o, ns)}
-                          className="text-accent-text hover:text-accent-text-hover hover:underline"
-                        >
-                          {o.kind}/{o.name}
-                        </Link>
-                      ))}
-                    </div>
-                  </Field>
-                )}
               </dl>
             </section>
+
+            <RelatedSection
+              subject={ref}
+              enabled={tab === 'overview'}
+              fallbackOwners={fallbackOwners}
+            />
 
             {isPod && (
               <ContainerSection
@@ -1099,21 +1116,6 @@ function ResourceDetailInner() {
       </Modal>
     </div>
   )
-}
-
-/**
- * Owner references carry their apiVersion, so the link can be exact — a CRD
- * owner on v1beta1 works just as well as a core Deployment. The kind→resource
- * pluralisation is the only guess left.
- */
-function ownerHref(
-  cluster: string,
-  owner: { apiVersion?: string; kind: string; name: string },
-  ns?: string,
-): string {
-  const { group, version } = splitApiVersion(owner.apiVersion)
-  const seg = groupSegment(group)
-  return `/c/${cluster}/r/${seg}/${version || 'v1'}/${kindToResource(owner.kind)}/${ns ?? '_'}/${owner.name}`
 }
 
 /** Renders status conditions plus the remaining status fields as JSON. */

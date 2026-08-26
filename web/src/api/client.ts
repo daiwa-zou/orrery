@@ -8,6 +8,7 @@ import type {
   Me,
   MetricsResponse,
   Overview,
+  RelatedResponse,
   ClusterSummary,
 } from './types'
 
@@ -259,6 +260,22 @@ export const api = {
     request<KubeObject>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
         `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}`,
+      {},
+      signal,
+    ),
+
+  /**
+   * One object's neighbourhood: owners, children, the node or services it is
+   * tied to, and the objects its spec names.
+   *
+   * Events are asked for separately by the detail page's own tab, so they are
+   * declined here rather than fetched twice.
+   */
+  related: (ref: ResourceRef, signal?: AbortSignal) =>
+    request<RelatedResponse>(
+      `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/` +
+        `${ref.resource}/${nsSegment(ref.namespace)}/${ref.name}/related` +
+        qs({ events: false }),
       {},
       signal,
     ),
