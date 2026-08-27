@@ -538,6 +538,14 @@ func (f listFilter) matches(o *unstructured.Unstructured) bool {
 
 // matchesQuery is the free-text filter: name, namespace, or any label as
 // "key=value", so typing "app=web" narrows by label without selector syntax.
+//
+// The label scan reads the raw map rather than GetLabels for the same reason
+// the selector path does — a fresh map per object is a lot of garbage for a
+// read-only walk — and never builds the "key=value" string it is searching.
+// A query the name happens to satisfy returns on the first line and none of
+// this runs; a query that has to reach the labels used to cost two allocations
+// per object, which is 16 MB on a fifty-thousand-object list, on every
+// keystroke the search box sends.
 func matchesQuery(o *unstructured.Unstructured, q string) bool {
 	if strings.Contains(strings.ToLower(o.GetName()), q) {
 		return true
@@ -545,8 +553,36 @@ func matchesQuery(o *unstructured.Unstructured, q string) bool {
 	if ns := o.GetNamespace(); ns != "" && strings.Contains(strings.ToLower(ns), q) {
 		return true
 	}
-	for k, v := range o.GetLabels() {
-		if strings.Contains(strings.ToLower(k+"="+v), q) {
+	for k, raw := range labelsOf(o) {
+		v, _ := raw.(string)
+		if matchesLabelPair(k, v, q) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesLabelPair reports whether q occurs in the lower-cased "key=value"
+// pair, without ever building that string. q is already lower-cased by
+// parseListFilter.
+//
+// strings.ToLower returns its argument untouched when there is nothing to
+// lower, and label keys and values are ASCII and almost always already
+// lower-case, so the two calls here are free in the ordinary case. What is
+// never free is the concatenation, which is why the three places a match can
+// fall are handled separately: inside the key, inside the value, or straddling
+// the "=" — and the last one can only line up with the pair's single "=", so
+// it is a suffix test against the key and a prefix test against the value.
+func matchesLabelPair(k, v, q string) bool {
+	lk, lv := strings.ToLower(k), strings.ToLower(v)
+	if strings.Contains(lk, q) || strings.Contains(lv, q) {
+		return true
+	}
+	for e := 0; e < len(q); e++ {
+		if q[e] != '=' {
+			continue
+		}
+		if strings.HasSuffix(lk, q[:e]) && strings.HasPrefix(lv, q[e+1:]) {
 			return true
 		}
 	}

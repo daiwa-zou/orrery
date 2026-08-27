@@ -71,6 +71,33 @@ func BenchmarkFilterFieldSelector50k(b *testing.B) {
 
 func BenchmarkFilterFreeText50k(b *testing.B) { benchFilter(b, 50_000, "q=web") }
 
+// The free-text benchmark above searches for "web", which every object is
+// named, so matchesQuery returns on its first line and the label scan below it
+// never runs. These ask the other question: what does free text cost when it
+// has to look at the labels?
+func BenchmarkFreeTextLabelHit50k(b *testing.B)  { benchFilter(b, 50_000, "q=tier%3Dcache") }
+func BenchmarkFreeTextLabelMiss50k(b *testing.B) { benchFilterNoMatch(b, 50_000, "q=zzzz") }
+
+// benchFilterNoMatch is benchFilter for a query that matches nothing, which is
+// the worst case: every object is scanned to the end of its labels.
+func benchFilterNoMatch(b *testing.B, n int, query string) {
+	objs := benchObjects(n)
+	r := httptest.NewRequest("GET", "/?"+query, nil)
+	f, err := parseListFilter(r)
+	if err != nil {
+		b.Fatalf("parseListFilter: %v", err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		for _, o := range objs {
+			if f.matches(o) {
+				b.Fatal("this benchmark must match nothing")
+			}
+		}
+	}
+}
+
 // Paging a list has to order it first. Sorting on object metadata reads the
 // name or the timestamp straight off each object; sorting on a projected
 // column has to compute that column for every object, because that is what
