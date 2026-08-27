@@ -280,7 +280,7 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:limit]
 	}
 	writeJSON(w, http.StatusOK, listResponse{
-		Items: rows, Columns: set.columns, Total: len(rows),
+		Items: &rows, Columns: set.columns, Total: len(rows),
 		Page: 1, PageSize: limit, Resource: metaOf(eventRes),
 	})
 }
