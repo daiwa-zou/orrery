@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -302,16 +303,66 @@ func TestStringSliceClaimToleratesProviderVariation(t *testing.T) {
 
 func TestSafeReturnToBlocksOpenRedirects(t *testing.T) {
 	cases := map[string]string{
-		"/c/prod/r/core/v1/pods":   "/c/prod/r/core/v1/pods",
-		"":                         "/",
-		"https://evil.example.com": "/",
-		"//evil.example.com":       "/",
-		`/\evil.example.com`:       "/",
-		"javascript:alert(1)":      "/",
+		"/c/prod/r/core/v1/pods":                "/c/prod/r/core/v1/pods",
+		"/c/prod/r/core/v1/pods?namespace=demo": "/c/prod/r/core/v1/pods?namespace=demo",
+		"/c/prod#tab":                           "/c/prod#tab",
+		"":                                      "/",
+		"https://evil.example.com":              "/",
+		"//evil.example.com":                    "/",
+		`/\evil.example.com`:                    "/",
+		"javascript:alert(1)":                   "/",
+		// Not a path at all, however it is dressed up.
+		"http:/evil.example.com": "/",
+		"c/prod":                 "/",
 	}
 	for in, want := range cases {
 		if got := safeReturnTo(in); got != want {
 			t.Errorf("safeReturnTo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Browsers remove ASCII tab, CR and LF from a URL before parsing it, so a
+// value that reads as a path here is a different URL by the time it is
+// followed: "/\t/evil.example" arrives at the browser as "//evil.example",
+// which is protocol-relative and lands off-site.
+//
+// Go's header writer replaces CR and LF with spaces on the way out, which
+// happens to defuse those two, but it leaves tab alone — the tab reaches the
+// Location header intact. So this cannot be left to the transport.
+func TestSafeReturnToRejectsControlCharacters(t *testing.T) {
+	for _, in := range []string{
+		"/\t/evil.example", // the live one: tab, then the second slash
+		"/\tevil.example",
+		"/\n//evil.example",
+		"/\r\n/evil.example",
+		"/c/prod\t/../..//evil.example",
+		"/\x00/evil.example",
+		"/\x7f//evil.example",
+		"/c/prod\u000b//evil.example", // vertical tab
+	} {
+		if got := safeReturnTo(in); got != "/" {
+			t.Errorf("safeReturnTo(%q) = %q, want %q", in, got, "/")
+		}
+	}
+}
+
+// The Location header a real server writes must not carry anything a browser
+// would strip: that is the property the check above exists to guarantee, and
+// asserting it here means a future relaxation of safeReturnTo is caught by
+// what actually goes on the wire.
+func TestReturnToNeverReachesTheWireStrippable(t *testing.T) {
+	for _, payload := range []string{"/\t/evil.example", "/\n//evil.example", "//evil.example", "/c/ok"} {
+		target := safeReturnTo(payload)
+		rec := httptest.NewRecorder()
+		http.Redirect(rec, httptest.NewRequest(http.MethodGet, "/", nil), target, http.StatusFound)
+
+		loc := rec.Header().Get("Location")
+		if strings.ContainsAny(loc, "\t\r\n") {
+			t.Errorf("payload %q produced Location %q, which a browser would rewrite", payload, loc)
+		}
+		if strings.HasPrefix(loc, "//") {
+			t.Errorf("payload %q produced a protocol-relative Location %q", payload, loc)
 		}
 	}
 }

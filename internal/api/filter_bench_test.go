@@ -97,3 +97,27 @@ func benchFilterNoMatch(b *testing.B, n int, query string) {
 		}
 	}
 }
+
+// Paging a list has to order it first. Sorting on object metadata reads the
+// name or the timestamp straight off each object; sorting on a projected
+// column has to compute that column for every object, because that is what
+// sorting means. What it must not do is keep the resulting row for every
+// object alive in order to render fifty of them.
+func benchSort(b *testing.B, n int, sortKey string) {
+	objs := benchObjects(n)
+	set := columnSet{row: baseRow}
+	r := httptest.NewRequest("GET", "/", nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if isMetaSortKey(sortKey) {
+			sortByMeta(objs, sortKey, false)
+		} else {
+			sortByCell(objs, set, sortKey, false)
+		}
+		_ = projectPage(objs, set, 1, 50, r)
+	}
+}
+
+func BenchmarkSortByMeta50k(b *testing.B)      { benchSort(b, 50_000, "name") }
+func BenchmarkSortByProjected50k(b *testing.B) { benchSort(b, 50_000, "status") }
