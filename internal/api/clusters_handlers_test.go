@@ -232,26 +232,26 @@ func TestClusterEndpointsHTTP(t *testing.T) {
 			t.Fatalf("events = total %d, columns %d", body.Total, len(body.Columns))
 		}
 		// Newest first.
-		if body.Items[0]["reason"] != "BackOff" {
-			t.Errorf("events not sorted newest-first: %v", body.Items[0])
+		if rowsOf(body)[0]["reason"] != "BackOff" {
+			t.Errorf("events not sorted newest-first: %v", rowsOf(body)[0])
 		}
 
 		rec = rig.get(t, "/api/v1/clusters/fake/events?warningsOnly=true")
 		hndDecode(t, rec, &body)
-		if body.Total != 1 || body.Items[0]["reason"] != "BackOff" {
-			t.Errorf("warningsOnly = %+v", body.Items)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "BackOff" {
+			t.Errorf("warningsOnly = %+v", rowsOf(body))
 		}
 
 		rec = rig.get(t, "/api/v1/clusters/fake/events?involvedName=web-1")
 		hndDecode(t, rec, &body)
-		if body.Total != 1 || body.Items[0]["reason"] != "Started" {
-			t.Errorf("involvedName filter = %+v", body.Items)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "Started" {
+			t.Errorf("involvedName filter = %+v", rowsOf(body))
 		}
 
 		rec = rig.get(t, "/api/v1/clusters/fake/events?namespace=demo&q=back-off")
 		hndDecode(t, rec, &body)
 		if body.Total != 1 {
-			t.Errorf("free-text filter = %+v", body.Items)
+			t.Errorf("free-text filter = %+v", rowsOf(body))
 		}
 	})
 

@@ -20,8 +20,8 @@ func TestResourceHandlersHTTP(t *testing.T) {
 		hndWantStatus(t, rec, 200)
 		var body listResponse
 		hndDecode(t, rec, &body)
-		if body.Total != 4 || len(body.Items) != 4 || len(body.Columns) == 0 {
-			t.Fatalf("list = total %d, items %d, columns %d", body.Total, len(body.Items), len(body.Columns))
+		if body.Total != 4 || len(rowsOf(body)) != 4 || len(body.Columns) == 0 {
+			t.Fatalf("list = total %d, items %d, columns %d", body.Total, len(rowsOf(body)), len(body.Columns))
 		}
 		if !body.Scope.AllNamespaces {
 			t.Errorf("scope = %+v, want allNamespaces", body.Scope)
@@ -30,10 +30,10 @@ func TestResourceHandlersHTTP(t *testing.T) {
 			t.Errorf("resource meta = %+v", body.Resource)
 		}
 		// Default sort is by name; labels ride along for the table.
-		if body.Items[0]["name"] != "done-1" {
-			t.Errorf("first row = %v", body.Items[0]["name"])
+		if rowsOf(body)[0]["name"] != "done-1" {
+			t.Errorf("first row = %v", rowsOf(body)[0]["name"])
 		}
-		for _, it := range body.Items {
+		for _, it := range rowsOf(body) {
 			if it["name"] == "web-1" {
 				labels, _ := it["_labels"].(map[string]any)
 				if labels["app"] != "web" {
@@ -59,8 +59,8 @@ func TestResourceHandlersHTTP(t *testing.T) {
 
 		rec = rig.get(t, "/api/v1/clusters/fake/resources/_/v1/pods?fieldSelector=status.phase%3DSucceeded")
 		hndDecode(t, rec, &body)
-		if body.Total != 1 || body.Items[0]["name"] != "done-1" {
-			t.Errorf("fieldSelector = %+v", body.Items)
+		if body.Total != 1 || rowsOf(body)[0]["name"] != "done-1" {
+			t.Errorf("fieldSelector = %+v", rowsOf(body))
 		}
 
 		// A bad selector is a 400, not an empty result.
@@ -73,11 +73,11 @@ func TestResourceHandlersHTTP(t *testing.T) {
 		hndWantStatus(t, rec, 200)
 		var body listResponse
 		hndDecode(t, rec, &body)
-		if body.Total != 4 || len(body.Objects) != 2 || len(body.Items) != 0 {
-			t.Fatalf("full view = total %d, objects %d, items %d", body.Total, len(body.Objects), len(body.Items))
+		if body.Total != 4 || len(objectsOf(body)) != 2 || len(rowsOf(body)) != 0 {
+			t.Fatalf("full view = total %d, objects %d, items %d", body.Total, len(objectsOf(body)), len(rowsOf(body)))
 		}
-		if body.Objects[0].GetKind() != "Pod" {
-			t.Errorf("object kind = %q", body.Objects[0].GetKind())
+		if objectsOf(body)[0].GetKind() != "Pod" {
+			t.Errorf("object kind = %q", objectsOf(body)[0].GetKind())
 		}
 	})
 
@@ -94,8 +94,8 @@ func TestResourceHandlersHTTP(t *testing.T) {
 		rec := rig.get(t, "/api/v1/clusters/fake/resources/_/v1/pods?sort=name&order=desc")
 		var body listResponse
 		hndDecode(t, rec, &body)
-		if body.Items[0]["name"] != "web-2" {
-			t.Errorf("desc sort first row = %v", body.Items[0]["name"])
+		if rowsOf(body)[0]["name"] != "web-2" {
+			t.Errorf("desc sort first row = %v", rowsOf(body)[0]["name"])
 		}
 	})
 
@@ -311,11 +311,11 @@ func TestResourceHandlersHTTP(t *testing.T) {
 			t.Errorf("printer columns = %v", keys)
 		}
 		byName := map[string]map[string]any{}
-		for _, it := range body.Items {
+		for _, it := range rowsOf(body) {
 			byName[asString(it["name"])] = it
 		}
 		if byName["w-1"]["x_color"] != "red" || byName["w-2"]["x_count"] != float64(7) {
-			t.Errorf("projected rows = %v", body.Items)
+			t.Errorf("projected rows = %v", rowsOf(body))
 		}
 	})
 
@@ -346,8 +346,8 @@ func TestResourceHandlersHTTP(t *testing.T) {
 		if len(body.Scope.Namespaces) != 2 || body.Scope.Namespaces[0] != "demo" {
 			t.Errorf("scope namespaces = %v", body.Scope.Namespaces)
 		}
-		if body.Total != 1 || body.Items[0]["name"] != "svc" {
-			t.Errorf("visible services = %+v", body.Items)
+		if body.Total != 1 || rowsOf(body)[0]["name"] != "svc" {
+			t.Errorf("visible services = %+v", rowsOf(body))
 		}
 	})
 
