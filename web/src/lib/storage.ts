@@ -98,6 +98,25 @@ export function navStateKey(cluster: string): string {
   return `orrery.nav.${cluster}`
 }
 
+/**
+ * A stored list of strings, given the raw JSON. See isSavedIn for why these
+ * take the string rather than reading the store.
+ *
+ * The fallback is for absent or unreadable, not for empty: an empty list is a
+ * real answer — every section collapsed by hand — and replacing it with the
+ * defaults would reopen them all on the next visit.
+ */
+export function stringArrayIn(raw: string | null, fallback: string[]): string[] {
+  if (raw === null) return fallback
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return fallback
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return fallback
+  }
+}
+
 /** Recently opened resources, used to fill the palette before anything is typed. */
 const RECENTS_KEY = 'orrery.recents'
 const MAX_RECENTS = 8
