@@ -925,7 +925,20 @@ func hndApplyJSONPatch(obj map[string]any, raw []byte) error {
 // hndOpenAPIDoc is a minimal but structurally real OpenAPI v3 slice for
 // core/v1, enough for kubectl-explain-style traversal of Pod.
 func hndOpenAPIDoc() map[string]any {
+	// A real Kubernetes OpenAPI document almost never writes a bare $ref: to
+	// hang a description on one it wraps it as
+	// {description, default, allOf: [{$ref}]}. The fixture used the bare form,
+	// which is why explain's type naming looked correct here while every real
+	// cluster reported "Object" for anything with a name.
 	ref := func(name string) map[string]any {
+		return map[string]any{
+			"description": "Reference to " + name,
+			"default":     map[string]any{},
+			"allOf":       []any{map[string]any{"$ref": "#/components/schemas/" + name}},
+		}
+	}
+	// The bare spelling still occurs, so both have to keep working.
+	bareRef := func(name string) map[string]any {
 		return map[string]any{"$ref": "#/components/schemas/" + name}
 	}
 	return map[string]any{
@@ -938,7 +951,7 @@ func hndOpenAPIDoc() map[string]any {
 					"properties": map[string]any{
 						"apiVersion": map[string]any{"type": "string", "description": "API version"},
 						"kind":       map[string]any{"type": "string", "description": "Kind"},
-						"metadata":   ref("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"),
+						"metadata":   bareRef("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"),
 						"spec":       ref("io.k8s.api.core.v1.PodSpec"),
 					},
 					"x-kubernetes-group-version-kind": []map[string]any{
