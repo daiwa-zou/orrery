@@ -76,6 +76,27 @@ func (d *openAPIDoc) resolveRef(s *openAPISchema) *openAPISchema {
 	return s
 }
 
+// refOf returns the $ref a schema carries.
+//
+// The Kubernetes document rarely writes a bare reference: to attach a
+// description to one it wraps it as {description, default, allOf: [{$ref}]},
+// which is the same shape resolveRef already follows. Reading s.Ref alone
+// therefore found nothing for almost every field, and the name of the type was
+// lost — pod.spec came back as "Object" rather than PodSpec, and
+// pod.spec.containers as []Object rather than []Container.
+func refOf(s *openAPISchema) string {
+	if s == nil {
+		return ""
+	}
+	if s.Ref != "" {
+		return s.Ref
+	}
+	if len(s.AllOf) == 1 && s.Properties == nil {
+		return refOf(s.AllOf[0])
+	}
+	return ""
+}
+
 func schemaType(d *openAPIDoc, s *openAPISchema) string {
 	r := d.resolveRef(s)
 	if r == nil {
@@ -91,13 +112,13 @@ func schemaType(d *openAPIDoc, s *openAPISchema) string {
 		if r.AdditionalProperties != nil {
 			return "map[string]" + schemaType(d, r.AdditionalProperties)
 		}
-		if ref := s.Ref; ref != "" {
+		if ref := refOf(s); ref != "" {
 			parts := strings.Split(ref, ".")
 			return parts[len(parts)-1]
 		}
 		return "Object"
 	case "":
-		if ref := s.Ref; ref != "" {
+		if ref := refOf(s); ref != "" {
 			parts := strings.Split(ref, ".")
 			return parts[len(parts)-1]
 		}
@@ -170,7 +191,17 @@ func (a *API) explainHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Walk the dotted field path, stepping through arrays and maps the same
 	// way kubectl explain does.
+	//
+	// Two schemas are carried, because they answer different questions.
+	// `declared` is the field as the document writes it — possibly an array,
+	// possibly a $ref — and it is what names the type: kubectl reports
+	// pod.spec.containers as []Container, and that is only visible before the
+	// array is unwrapped and the reference followed. `cur` is what the field
+	// resolves to, and it is what has the properties to list underneath.
+	// Reporting the type from `cur` is why every drilled-into field used to
+	// come back as the bare word "Object".
 	cur := doc.resolveRef(root)
+	declared := root
 	fieldPath := strings.Trim(q.Get("field"), ".")
 	if fieldPath != "" {
 		for _, part := range strings.Split(fieldPath, ".") {
@@ -186,9 +217,11 @@ func (a *API) explainHandler(w http.ResponseWriter, r *http.Request) {
 				a.writeErr(w, r, notFound("field %q not found under %s", part, kind))
 				return
 			}
-			cur = doc.resolveRef(cur.Properties[part])
+			declared = cur.Properties[part]
+			cur = doc.resolveRef(declared)
 		}
 	}
+	// The type is read before this, from `declared`.
 	for cur != nil && cur.Type == "array" {
 		cur = doc.resolveRef(cur.Items)
 	}
@@ -204,7 +237,7 @@ func (a *API) explainHandler(w http.ResponseWriter, r *http.Request) {
 	out := explainResponse{
 		Kind:        kind,
 		FieldPath:   fieldPath,
-		Type:        schemaType(&doc, cur),
+		Type:        schemaType(&doc, declared),
 		Description: cur.Description,
 	}
 	for name, prop := range cur.Properties {
