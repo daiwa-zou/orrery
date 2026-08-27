@@ -83,6 +83,13 @@ List endpoints take `namespace`, `q`, `labelSelector`, `fieldSelector`,
 Unsupported `fieldSelector` fields are rejected with a 400 naming the
 supported set, rather than silently matching nothing.
 
+The page arrives under `items` for `view=table` and under `objects` for
+`view=full`, and **the requested one is always present** — an empty namespace, a
+page past the end and a filter that matches nothing all return `[]` rather than
+omitting the key. The view that was *not* requested is absent, so "empty
+because you asked and there is nothing" stays distinguishable from "not the
+view you asked for", and no client needs to guard the field before reading it.
+
 Responses ship projected rows rather than whole objects. Well-known kinds get
 hand-tuned tables; custom resources get their own `additionalPrinterColumns` —
 the same columns `kubectl get` would show. `view=full` returns the objects

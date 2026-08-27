@@ -28,15 +28,25 @@ const maxBodyBytes = 4 << 20
 
 // listResponse is what a table page returns.
 type listResponse struct {
-	Items    []map[string]any             `json:"items,omitempty"`
-	Objects  []*unstructured.Unstructured `json:"objects,omitempty"`
-	Columns  []Column                     `json:"columns,omitempty"`
-	Total    int                          `json:"total"`
-	Page     int                          `json:"page"`
-	PageSize int                          `json:"pageSize"`
-	Resource resourceMeta                 `json:"resource"`
-	Scope    scopeInfo                    `json:"scope"`
-	Warnings []string                     `json:"warnings,omitempty"`
+	// Items and Objects are the two views of a page, and exactly one of them
+	// is populated: view=table projects rows, view=full returns the objects.
+	//
+	// Pointers so that "the view you asked for, which happens to be empty"
+	// and "the view you did not ask for" are different on the wire. A plain
+	// slice with omitempty makes an empty page indistinguishable from a
+	// missing field, so a namespace with no pods — or any page past the end —
+	// arrived with no items key at all, and every caller had to write
+	// `?? []` to survive it. overview.go states the rule plainly for its own
+	// warnings feed: an empty list must reach the client as a list.
+	Items    *[]map[string]any             `json:"items,omitempty"`
+	Objects  *[]*unstructured.Unstructured `json:"objects,omitempty"`
+	Columns  []Column                      `json:"columns,omitempty"`
+	Total    int                           `json:"total"`
+	Page     int                           `json:"page"`
+	PageSize int                           `json:"pageSize"`
+	Resource resourceMeta                  `json:"resource"`
+	Scope    scopeInfo                     `json:"scope"`
+	Warnings []string                      `json:"warnings,omitempty"`
 }
 
 type resourceMeta struct {
@@ -246,11 +256,14 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Query().Get("view") == "full" {
 		start, end := pageBounds(total, page, pageSize)
+		// Never nil: an empty page is an empty list, not an absent one.
+		page := make([]*unstructured.Unstructured, 0, end-start)
 		for _, o := range objs[start:end] {
-			resp.Objects = append(resp.Objects, cluster.TrimForResponse(o))
+			page = append(page, cluster.TrimForResponse(o))
 		}
+		resp.Objects = &page
 	} else {
-		resp.Items = rows
+		resp.Items = &rows
 		resp.Columns = set.columns
 	}
 
