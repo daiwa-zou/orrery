@@ -668,6 +668,15 @@ func serviceExternalIP(u *unstructured.Unstructured) string {
 	return joinLimit(ips, 2)
 }
 
+// servicePorts renders spec.ports the way `kubectl get svc` does, protocol
+// included.
+//
+// TCP used to be left off as the default, which is tidier right up to the
+// point where a service exposes the same port on two protocols. kube-dns
+// exposes 53 on both, and the column read "53/UDP, 53" — two entries that look
+// like a duplicate and a typo rather than the pair they are. kubectl writes
+// "53/UDP,53/TCP" and is unambiguous for the cost of four characters, and the
+// tables here are documented as showing the columns kubectl would.
 func servicePorts(u *unstructured.Unstructured) string {
 	var ports []string
 	for _, p := range slice(u, "spec", "ports") {
@@ -676,10 +685,13 @@ func servicePorts(u *unstructured.Unstructured) string {
 		if np := mint(m, "nodePort"); np > 0 {
 			s += fmt.Sprintf(":%d", np)
 		}
-		if proto := mstr(m, "protocol"); proto != "" && proto != "TCP" {
-			s += "/" + proto
+		proto := mstr(m, "protocol")
+		if proto == "" {
+			// The API server defaults it, but an object can reach the cache
+			// before defaulting or come from a hand-written manifest.
+			proto = "TCP"
 		}
-		ports = append(ports, s)
+		ports = append(ports, s+"/"+proto)
 	}
 	return joinLimit(ports, 4)
 }
