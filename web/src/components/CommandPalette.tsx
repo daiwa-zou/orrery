@@ -8,7 +8,7 @@ import { consoleHref } from '../lib/consoleHref'
 import { navLabel } from '../lib/format'
 import { rankResources, selectedIndex } from '../lib/palette'
 import { readRecents, readSaved, savedKey, type SavedSearch } from '../lib/storage'
-import { isBrowsable, isCustomGroup, type NavItem } from './nav'
+import { isBrowsable, type NavItem } from './nav'
 
 interface Entry {
   id: string
