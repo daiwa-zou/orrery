@@ -16,6 +16,7 @@ import {
   writeJSON,
   columnsIn,
   isSavedIn,
+  stringArrayIn,
   COLUMNS_KEY,
   SAVED_KEY,
   type SavedSearch,
@@ -339,5 +340,34 @@ describe('subscribeToKey', () => {
     listen(COLUMNS_KEY, seen)
     writeJSON(COLUMNS_KEY, {})
     expect(seen).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('stringArrayIn', () => {
+  const defaults = ['Workloads', 'Networking']
+
+  it('returns what was stored', () => {
+    expect(stringArrayIn(JSON.stringify(['Storage']), defaults)).toEqual(['Storage'])
+  })
+
+  // The distinction that matters: an empty list is a real answer — every
+  // section collapsed by hand — and falling back to the defaults there would
+  // reopen them all on the next visit.
+  it('keeps an empty list rather than falling back', () => {
+    expect(stringArrayIn('[]', defaults)).toEqual([])
+  })
+
+  it('falls back when there is nothing stored or it cannot be read', () => {
+    for (const raw of [null, '', 'not json', '{"a":1}', '"Workloads"', '7']) {
+      expect(stringArrayIn(raw, defaults)).toEqual(defaults)
+    }
+  })
+
+  it('drops entries that are not strings', () => {
+    expect(stringArrayIn(JSON.stringify(['Storage', 3, null, 'Config']), defaults)).toEqual([
+      'Storage',
+      'Config',
+    ])
   })
 })
