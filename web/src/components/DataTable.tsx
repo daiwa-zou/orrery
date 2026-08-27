@@ -277,8 +277,16 @@ export function DataTable({
               <tr
                 className={clsx(
                   'border-b border-ink/8 transition-colors',
+                  // A row is reached with Tab and activated with Enter, so it
+                  // needs a focus indicator a keyboard user can actually see.
+                  // The 4% tint this used to rely on is 1.10:1 against the
+                  // unfocused row — WCAG 2.4.11 asks for 3:1 — and it was
+                  // identical to hover, so focus and "the mouse is over there"
+                  // looked the same. The global :focus-visible outline is
+                  // 3.95:1; the negative offset keeps it inside the row rather
+                  // than drawn over its neighbours.
                   onRowClick &&
-                    'cursor-pointer hover:bg-ink/4 focus:bg-ink/4 focus:outline-none',
+                    'cursor-pointer hover:bg-ink/4 focus-visible:-outline-offset-2',
                   isSelected && 'bg-accent-soft',
                   row._terminating && 'opacity-55',
                 )}
