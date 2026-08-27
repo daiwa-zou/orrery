@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { APIResource, DiscoveryResponse } from '../api/types'
 import { buildNav, isBrowsable, isCustomGroup } from './nav'
-import { rankResources, scoreResource } from './CommandPalette'
+import { rankResources, scoreResource } from '../lib/palette'
 
 function resource(partial: Partial<APIResource> & { kind: string; name: string }): APIResource {
   return {
