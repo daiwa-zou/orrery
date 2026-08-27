@@ -13,10 +13,28 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/daiwa-zou/orrery/internal/cluster"
 )
+
+// rowsOf and objectsOf read the two page views. They are pointers on the wire
+// so that an empty page arrives as [] rather than as a missing key, which
+// leaves tests to say which of the two they meant.
+func rowsOf(body listResponse) []map[string]any {
+	if body.Items == nil {
+		return nil
+	}
+	return *body.Items
+}
+
+func objectsOf(body listResponse) []*unstructured.Unstructured {
+	if body.Objects == nil {
+		return nil
+	}
+	return *body.Objects
+}
 
 // quietAPI is the smallest API that can serve writeErr: it only touches a.log.
 func quietAPI() *API {
