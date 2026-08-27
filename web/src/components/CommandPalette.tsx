@@ -6,65 +6,9 @@ import { useClusters, useDiscovery, useNamespaces, useObjectSearch } from '../ap
 import type { APIResource } from '../api/types'
 import { consoleHref } from '../lib/consoleHref'
 import { navLabel } from '../lib/format'
+import { rankResources, selectedIndex } from '../lib/palette'
 import { readRecents, readSaved, savedKey, type SavedSearch } from '../lib/storage'
 import { isBrowsable, isCustomGroup, type NavItem } from './nav'
-
-/** The subset of a resource the ranker needs, so it can be tested on its own. */
-export interface RankableResource {
-  kind: string
-  name: string
-  singularName?: string
-  shortNames?: string[]
-  group: string
-}
-
-/**
- * Scores a resource against a query. Lower is better; Infinity means no match.
- *
- * The ordering is deliberate. An exact short-name hit wins outright, because
- * short names are what people type when they know exactly what they want —
- * "cm" should land on ConfigMaps, not on whatever else happens to contain
- * those two letters. Exact full names come next, then prefixes, then
- * substrings, with the API group considered last so it never outranks a kind.
- */
-export function scoreResource(r: RankableResource, query: string): number {
-  const q = query.trim().toLowerCase()
-  if (!q) return 0
-
-  const kind = r.kind.toLowerCase()
-  const name = r.name.toLowerCase()
-  const singular = (r.singularName ?? '').toLowerCase()
-  const shorts = (r.shortNames ?? []).map((s) => s.toLowerCase())
-  const group = r.group.toLowerCase()
-
-  if (shorts.includes(q)) return 0
-  if (kind === q || name === q || singular === q) return 1
-  if (shorts.some((s) => s.startsWith(q))) return 2
-  if (kind.startsWith(q)) return 3
-  if (name.startsWith(q) || (singular !== '' && singular.startsWith(q))) return 4
-  if (group.startsWith(q)) return 5
-  if (kind.includes(q)) return 6
-  if (name.includes(q)) return 7
-  if (group.includes(q)) return 8
-  return Infinity
-}
-
-/** Ranks and filters resources for a query, best first. */
-export function rankResources<T extends RankableResource>(items: T[], query: string): T[] {
-  return items
-    .map((item) => ({ item, score: scoreResource(item, query) }))
-    .filter(({ score }) => score !== Infinity)
-    .sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score
-      // Built-ins before custom resources at equal score, then alphabetical, so
-      // an operator's CRD cannot bury the kind of the same name people meant.
-      const aCustom = isCustomGroup(a.item.group)
-      const bCustom = isCustomGroup(b.item.group)
-      if (aCustom !== bCustom) return aCustom ? 1 : -1
-      return a.item.kind.localeCompare(b.item.kind)
-    })
-    .map(({ item }) => item)
-}
 
 interface Entry {
   id: string
@@ -101,7 +45,7 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
 
   const { data: discovery } = useDiscovery(open ? cluster : undefined)
   const { data: clusterList } = useClusters()
@@ -125,7 +69,7 @@ export function CommandPalette({
   useEffect(() => {
     if (open) {
       setQuery('')
-      setSelected(0)
+      setSelectedId(undefined)
     }
   }, [open])
 
@@ -289,10 +233,9 @@ export function CommandPalette({
     // must be recomputed on every open, not only when the query changes.
   }, [open, query, resources, primary, namespaceNames, clusterList, cluster, namespace, navigate, resourceHref, objects.data])
 
-  // Clamp the cursor when the result set shrinks under it.
-  useEffect(() => {
-    setSelected((i) => (i >= entries.length ? Math.max(0, entries.length - 1) : i))
-  }, [entries.length])
+  // Derived, so it is always in range and always points at the entry the user
+  // actually chose, however the list has been rearranged underneath.
+  const selected = selectedIndex(entries, selectedId)
 
   useEffect(() => {
     listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
@@ -310,11 +253,13 @@ export function CommandPalette({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        setSelected((i) => (entries.length === 0 ? 0 : (i + 1) % entries.length))
+        if (entries.length > 0) setSelectedId(entries[(selected + 1) % entries.length].id)
         break
       case 'ArrowUp':
         e.preventDefault()
-        setSelected((i) => (entries.length === 0 ? 0 : (i - 1 + entries.length) % entries.length))
+        if (entries.length > 0) {
+          setSelectedId(entries[(selected - 1 + entries.length) % entries.length].id)
+        }
         break
       case 'Enter':
         e.preventDefault()
@@ -351,7 +296,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value)
-              setSelected(0)
+              setSelectedId(undefined)
             }}
             placeholder="Search objects across every cluster, or jump to a resource"
             aria-label="Search"
@@ -395,7 +340,7 @@ export function CommandPalette({
                   // mousemove, not mouseenter: arrow-key navigation scrolls the
                   // list under a stationary cursor, and the resulting synthetic
                   // mouseenter would yank the selection right back.
-                  onMouseMove={() => setSelected(i)}
+                  onMouseMove={() => setSelectedId(entry.id)}
                   onClick={() => choose(entry)}
                   className={clsx(
                     'flex w-full cursor-pointer items-baseline gap-3 px-3 py-1.5 text-left text-[13px]',
