@@ -197,24 +197,74 @@ func originAllowed(origin string, allowed []string) bool {
 	return false
 }
 
+// assetPrefix is where Vite writes hashed output; it is the build's own
+// namespace rather than a path the client router may ever claim.
+const assetPrefix = "/assets/"
+
+// isSubresource reports whether the request is a page pulling in a script,
+// stylesheet, image or font, as opposed to a browser navigating.
+//
+// It only says yes on positive evidence, and it reads that evidence from
+// Sec-Fetch-Dest rather than from the path. Guessing from the path is not
+// available here: the obvious test — a dot means a file — is wrong, because
+// API groups and object names contain dots, so
+// /c/lens-a/r/acme.example/v1/sprocketz/demo/sp-1 is an ordinary deep link.
+//
+// Anything that does not say what it wanted is treated as a navigation and
+// gets the app, which keeps `curl /`, uptime checks and any client older than
+// Sec-Fetch-Dest working exactly as before. Nothing is lost by that: every
+// browser has sent the header since 2020, and the case this exists for — a
+// stale bundle during a deploy — lives entirely under the asset directory,
+// which spaHandler refuses on its own without consulting any header.
+func isSubresource(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Dest") {
+	case "", "document", "iframe", "frame":
+		return false
+	default:
+		// script, style, image, font, audio, video, empty (fetch/XHR), ...
+		return true
+	}
+}
+
 // spaHandler serves the built frontend from any filesystem — a directory on
 // disk or the bundle embedded in release binaries — falling back to
 // index.html so that deep links into client-side routes work on a hard
 // refresh. fs.FS path rules reject ".." traversal by construction.
+//
+// The fallback is deliberately not universal. Serving index.html for a
+// subresource that is missing turns "this file is gone" into a 200 carrying
+// HTML, which is the worst answer available: a stale <script> reports a syntax
+// error pointing at the first "<" of a document it never asked for, and a
+// stale stylesheet is dropped for a MIME mismatch and renders the page
+// unstyled with nothing logged at all. Both are the deploy window between new
+// HTML and old assets, which is exactly when a plain 404 would name the
+// problem outright.
+//
+// So a miss under the asset directory is a 404 whoever asked, and a miss
+// anywhere else is a 404 for a request that says it wanted a subresource.
+// Everything else still gets the app.
 func spaHandler(fsys fs.FS) http.HandlerFunc {
 	fileServer := http.FileServer(http.FS(fsys))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		clean := path.Clean("/" + r.URL.Path)
 		name := strings.TrimPrefix(clean, "/")
+		inAssets := strings.HasPrefix(clean, assetPrefix)
 
 		if info, err := fs.Stat(fsys, name); name != "" && err == nil && !info.IsDir() {
 			// Hashed assets are immutable; index.html must never be cached or
 			// a deploy leaves users on the old bundle.
-			if strings.HasPrefix(clean, "/assets/") {
+			if inAssets {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// The build owns /assets, so a miss there is a miss however the
+		// request was made.
+		if inAssets || isSubresource(r) {
+			http.NotFound(w, r)
 			return
 		}
 
