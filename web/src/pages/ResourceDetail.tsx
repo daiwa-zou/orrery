@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiGroup, type ResourceRef } from '../api/client'
-import { useAccess, useEvents, useLiveResource, useMe } from '../api/hooks'
+import { stalledReason, useAccess, useEvents, useLiveResource, useMe } from '../api/hooks'
 import type { AccessCheck, ObjectRef } from '../api/types'
 import { DataTable } from '../components/DataTable'
 import { LogViewer } from '../components/LogViewer'
@@ -173,6 +173,7 @@ function ResourceDetailInner() {
     involvedUID: obj?.metadata.uid,
   })
 
+  const eventsStalled = stalledReason(events)
   const kind = obj?.kind ?? ''
   const isPod = kind === 'Pod'
   const isNode = kind === 'Node'
@@ -706,6 +707,9 @@ function ResourceDetailInner() {
           <div className="p-4">
             {events.isLoading ? (
               <Loading className="py-16" label="Loading events" />
+            ) : eventsStalled ? (
+              // Not "No events": nothing was read, so nothing is known.
+              <ErrorState error={eventsStalled} retry={events.refetch} />
             ) : (
               <div className="blueprint bg-surface">
                 <Corners />
