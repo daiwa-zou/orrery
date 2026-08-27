@@ -196,7 +196,8 @@ func TestServicePorts(t *testing.T) {
 			map[string]any{"port": int64(8080), "protocol": "TCP"}, // TCP is the default, not worth printing
 		},
 	}})
-	if got := servicePorts(svc); got != "80, 443:30443, 53/UDP, 8080" {
+	// kubectl writes the protocol on every port; so does this.
+	if got := servicePorts(svc); got != "80/TCP, 443:30443/TCP, 53/UDP, 8080/TCP" {
 		t.Errorf("servicePorts = %q", got)
 	}
 	if got := servicePorts(mkObj(t, nil, nil)); got != "" {
@@ -404,7 +405,9 @@ func TestServiceRow(t *testing.T) {
 			"ports":     []any{map[string]any{"port": int64(80)}},
 		},
 	}))
-	if row["type"] != "ClusterIP" || row["clusterIP"] != "10.96.0.10" || row["ports"] != "80" {
+	// A port with no protocol in the object still renders as TCP, which is
+	// what the API server would have defaulted it to.
+	if row["type"] != "ClusterIP" || row["clusterIP"] != "10.96.0.10" || row["ports"] != "80/TCP" {
 		t.Errorf("service row = %v", row)
 	}
 }
@@ -728,5 +731,35 @@ func TestCRDRow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(row["versions"], []string{"v1alpha1", "v1"}) {
 		t.Errorf("crd versions = %v", row["versions"])
+	}
+}
+
+// The case that made the protocol worth showing: a service exposing the same
+// port number on two protocols. Without it the column reads "53/UDP, 53",
+// which looks like a duplicate rather than the pair it is — and this is not an
+// exotic shape, it is what kube-dns looks like on every cluster.
+func TestServicePortsDisambiguatesSameNumberOnTwoProtocols(t *testing.T) {
+	svc := mkObj(t, nil, map[string]any{
+		"spec": map[string]any{"ports": []any{
+			map[string]any{"port": int64(53), "protocol": "UDP"},
+			map[string]any{"port": int64(53), "protocol": "TCP"},
+			map[string]any{"port": int64(9153), "protocol": "TCP"},
+		}},
+	})
+	if got, want := servicePorts(svc), "53/UDP, 53/TCP, 9153/TCP"; got != want {
+		t.Errorf("servicePorts = %q, want %q", got, want)
+	}
+}
+
+// A nodePort keeps the protocol after it, as kubectl writes it.
+func TestServicePortsKeepsProtocolAfterNodePort(t *testing.T) {
+	svc := mkObj(t, nil, map[string]any{
+		"spec": map[string]any{"ports": []any{
+			map[string]any{"port": int64(443), "nodePort": int64(30443), "protocol": "TCP"},
+			map[string]any{"port": int64(69), "nodePort": int64(30069), "protocol": "UDP"},
+		}},
+	})
+	if got, want := servicePorts(svc), "443:30443/TCP, 69:30069/UDP"; got != want {
+		t.Errorf("servicePorts = %q, want %q", got, want)
 	}
 }
