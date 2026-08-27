@@ -238,18 +238,12 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	// any other column needs the projected value, so those rows are built up
 	// front and the object slice is reordered to match — otherwise view=full
 	// would page through a differently ordered list than view=table.
-	var rows []map[string]any
 	if isMetaSortKey(sortKey) {
 		sortByMeta(objs, sortKey, desc)
-		rows = projectPage(objs, set, page, pageSize, r)
 	} else {
-		all := make([]map[string]any, len(objs))
-		for i, o := range objs {
-			all[i] = buildRow(o, set, r)
-		}
-		sortProjected(objs, all, sortKey, desc)
-		rows = pageOf(all, page, pageSize)
+		sortByCell(objs, set, sortKey, desc)
 	}
+	rows := projectPage(objs, set, page, pageSize, r)
 
 	resp := listResponse{
 		Total:    total,
@@ -347,25 +341,49 @@ func sortByMeta(objs []*unstructured.Unstructured, key string, desc bool) {
 	})
 }
 
-// sortProjected orders rows by a projected column and keeps the parallel
-// object slice in the same order, so both response views agree on what the
-// requested page contains.
-func sortProjected(objs []*unstructured.Unstructured, rows []map[string]any, key string, desc bool) {
-	less := rowLess(rows, key, desc)
-	order := make([]int, len(rows))
+// sortByCell orders objects by one projected column.
+//
+// The value has to be computed for every object — that is what sorting means —
+// but only the requested page is ever rendered, so the row each value came out
+// of is dropped immediately. The previous version built a row map per object
+// and held all of them live in order to return fifty: on a fifty-thousand
+// object list that is sixty megabytes alive at once, per request, to page a
+// table.
+//
+// Ties break on name, so paging is deterministic, which is what the row-based
+// version did by comparing the projected "name" cell.
+func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, desc bool) {
+	if key == "" {
+		key = "name"
+	}
+	cells := make([]any, len(objs))
+	for i, o := range objs {
+		// set.row allocates a map; taking one value out of it and letting it
+		// go is the whole point.
+		cells[i] = set.row(o)[key]
+	}
+
+	order := make([]int, len(objs))
 	for i := range order {
 		order[i] = i
 	}
-	sort.SliceStable(order, func(i, j int) bool { return less(order[i], order[j]) })
+	sort.SliceStable(order, func(a, b int) bool {
+		i, j := order[a], order[b]
+		c := compareCell(cells[i], cells[j])
+		if c == 0 {
+			return objs[i].GetName() < objs[j].GetName()
+		}
+		if desc {
+			return c > 0
+		}
+		return c < 0
+	})
 
-	sortedObjs := make([]*unstructured.Unstructured, len(objs))
-	sortedRows := make([]map[string]any, len(rows))
+	sorted := make([]*unstructured.Unstructured, len(objs))
 	for dst, src := range order {
-		sortedObjs[dst] = objs[src]
-		sortedRows[dst] = rows[src]
+		sorted[dst] = objs[src]
 	}
-	copy(objs, sortedObjs)
-	copy(rows, sortedRows)
+	copy(objs, sorted)
 }
 
 // rowLess builds the comparison used for both row sorting paths.
