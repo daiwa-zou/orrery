@@ -14,12 +14,15 @@ import { SearchBar } from '../components/SearchBar'
 import {
   addColumn,
   addSaved,
-  isSaved,
-  readColumns,
+  COLUMNS_KEY,
+  columnsIn,
+  isSavedIn,
   removeColumn,
   removeSaved,
+  SAVED_KEY,
   type SavedSearch,
 } from '../lib/storage'
+import { useStoredRaw } from '../lib/useStored'
 import { Badge, Button, ErrorState, GatedButton, Loading, Modal, Spinner } from '../components/primitives'
 import { useToast } from '../components/Toast'
 
@@ -282,46 +285,53 @@ export function ResourceList() {
 
   // A starred view is the resource plus the narrowing that made it useful —
   // "the failing pods in staging" rather than just "pods".
-  const savedView: SavedSearch | null = meta
-    ? {
-        cluster: cluster!,
-        group: group!,
-        version: version!,
-        resource: resource!,
-        kind: meta.kind,
-        namespaced: meta.namespaced,
-        namespace,
-        q,
-      }
-    : null
-  const [labelColumns, setLabelColumns] = useState<string[]>([])
-  useEffect(() => {
-    setLabelColumns(cluster && resource ? readColumns(cluster, resource) : [])
-  }, [cluster, resource])
+  const savedView = useMemo<SavedSearch | null>(
+    () =>
+      meta
+        ? {
+            cluster: cluster!,
+            group: group!,
+            version: version!,
+            resource: resource!,
+            kind: meta.kind,
+            namespaced: meta.namespaced,
+            namespace,
+            q,
+          }
+        : null,
+    [meta, cluster, group, version, resource, namespace, q],
+  )
+
+  // Both of these are read from localStorage during render rather than copied
+  // into state by an effect, because an effect runs after paint and the copy
+  // would show one frame of the wrong thing every time the view changes. The
+  // raw string is what the hook returns, so these memos have a stable key.
+  const columnsRaw = useStoredRaw(COLUMNS_KEY)
+  const labelColumns = useMemo(
+    () => (cluster && resource ? columnsIn(columnsRaw, cluster, resource) : []),
+    [columnsRaw, cluster, resource],
+  )
 
   const addLabelColumn = (key: string) => {
     if (!cluster || !resource) return
     addColumn(cluster, resource, key)
-    setLabelColumns(readColumns(cluster, resource))
   }
   const dropLabelColumn = (key: string) => {
     if (!cluster || !resource) return
     removeColumn(cluster, resource, key)
-    setLabelColumns(readColumns(cluster, resource))
   }
 
-  const [starred, setStarred] = useState(false)
-  useEffect(() => {
-    setStarred(savedView ? isSaved(savedView) : false)
-    // Re-read whenever the view itself changes; the star belongs to this
-    // resource-plus-query, not to the page.
-  }, [cluster, group, version, resource, namespace, q, meta])
+  // The star belongs to this resource-plus-query, not to the page.
+  const savedRaw = useStoredRaw(SAVED_KEY)
+  const starred = useMemo(
+    () => (savedView ? isSavedIn(savedRaw, savedView) : false),
+    [savedRaw, savedView],
+  )
 
   const toggleStar = () => {
     if (!savedView) return
     if (starred) removeSaved(savedView)
     else addSaved(savedView)
-    setStarred(!starred)
   }
 
   const onLabelClick = useCallback(
