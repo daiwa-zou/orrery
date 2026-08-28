@@ -217,6 +217,18 @@ export function LogViewer({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-[7px]">
+        {/* The filter leads, because it is the control anyone reaching this
+            toolbar came for: the state badges beside it are read once and the
+            checkboxes are set once, where the filter is typed into, cleared
+            and typed into again while reading. */}
+        <FilterInput
+          value={filter}
+          onValueChange={setFilter}
+          placeholder="Filter lines"
+          aria-label="Filter log lines"
+          className="w-44"
+        />
+
         {containers.length > 1 && (
           <Select
             value={container}
@@ -252,14 +264,6 @@ export function LogViewer({
                 ? 'Log stream ended.'
                 : 'Log stream failed.'}
         </span>
-
-        <FilterInput
-          value={filter}
-          onValueChange={setFilter}
-          placeholder="Filter lines"
-          aria-label="Filter log lines"
-          className="w-44"
-        />
 
         <label className="flex items-center gap-1.5 text-xs text-ink-muted">
           <Checkbox checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
