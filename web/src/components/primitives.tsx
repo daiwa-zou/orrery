@@ -708,7 +708,15 @@ export function Listbox({
             ))}
           </ul>
           {footer && (
-            <div onClick={() => setOpen(false)} className="border-t border-border">
+            <div
+              // Mousedown would blur the list first, and the blur handler
+              // above unmounts the popup — so the click landed on whatever
+              // moved under the cursor, and the link did nothing at all. The
+              // suggestion lists in the search bars dodge this the same way.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setOpen(false)}
+              className="border-t border-border"
+            >
               {footer}
             </div>
           )}

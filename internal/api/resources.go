@@ -138,23 +138,83 @@ func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) ([]string,
 	return out, nil
 }
 
+// queryNamespaces reads the repeated ?namespace= parameter.
+//
+// It is repeatable because a console is read that way: the two namespaces an
+// incident spans, or the four a team owns, are one question and not four. An
+// empty list still means "everywhere the caller may look", which is what the
+// parameter has always meant when absent.
+func queryNamespaces(r *http.Request) []string {
+	raw := r.URL.Query()["namespace"]
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, ns := range raw {
+		ns = strings.TrimSpace(ns)
+		// A repeat is not a second request for the same objects, and an empty
+		// value is how a cleared filter arrives.
+		if ns == "" || seen[ns] {
+			continue
+		}
+		seen[ns] = true
+		out = append(out, ns)
+	}
+	return out
+}
+
 // visibleScope collects the objects the caller is allowed to list, together
 // with the scope actually granted and any partial-scan warnings. Every read
 // that serves cached objects must come through here (or perform the same
 // checks): the cache holds the dashboard's view, not the caller's.
-func (a *API) visibleScope(ctx context.Context, res *resolved, namespace string) ([]*unstructured.Unstructured, scopeInfo, []string, error) {
+func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []string) ([]*unstructured.Unstructured, scopeInfo, []string, error) {
 	var (
 		scope    scopeInfo
 		warnings []string
 	)
 
-	if namespace != "" {
-		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
-			return nil, scope, nil, err
+	if len(namespaces) > 0 {
+		// Each namespace is authorized on its own, because permission is
+		// granted that way. Asking for four and being allowed three is a
+		// partial answer, not a failure — but it must not be served as though
+		// it were the whole one, so the namespaces that were dropped are named
+		// in a warning rather than silently missing.
+		var (
+			allowed  []string
+			denied   []string
+			firstErr error
+		)
+		for _, ns := range namespaces {
+			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				denied = append(denied, ns)
+				continue
+			}
+			allowed = append(allowed, ns)
 		}
-		scope.Namespace = namespace
-		objs, err := res.cluster.Informers.List(ctx, res.resource, namespace)
-		return objs, scope, nil, err
+		if len(allowed) == 0 {
+			return nil, scope, nil, firstErr
+		}
+		if len(denied) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"You may not list %s in %s, so nothing from there is shown.",
+				res.resource.Name, strings.Join(denied, ", ")))
+		}
+
+		if len(allowed) == 1 {
+			scope.Namespace = allowed[0]
+		} else {
+			scope.Namespaces = allowed
+		}
+		var objs []*unstructured.Unstructured
+		for _, ns := range allowed {
+			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
+			if err != nil {
+				return nil, scope, warnings, err
+			}
+			objs = append(objs, part...)
+		}
+		return objs, scope, warnings, nil
 	}
 
 	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
@@ -208,12 +268,14 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespace := r.URL.Query().Get("namespace")
+	namespaces := queryNamespaces(r)
+	// A cluster-scoped resource has no namespaces to be narrowed to, and a
+	// filter that cannot apply must not be allowed to empty the list.
 	if !res.resource.Namespaced {
-		namespace = ""
+		namespaces = nil
 	}
 
-	objs, scope, warnings, err := a.visibleScope(ctx, res, namespace)
+	objs, scope, warnings, err := a.visibleScope(ctx, res, namespaces)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return

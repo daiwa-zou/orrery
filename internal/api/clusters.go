@@ -226,10 +226,25 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	res.resource = eventRes
 
-	namespace := r.URL.Query().Get("namespace")
-	if namespace != "" {
-		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
-			a.writeErr(w, r, err)
+	// Authorized one at a time, like every other read narrowed to namespaces:
+	// permission is granted that way, so being allowed two of the three asked
+	// for is a narrower feed rather than a refused one.
+	namespaces := queryNamespaces(r)
+	var scoped map[string]struct{}
+	if len(namespaces) > 0 {
+		var firstErr error
+		scoped = make(map[string]struct{}, len(namespaces))
+		for _, ns := range namespaces {
+			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			scoped[ns] = struct{}{}
+		}
+		if len(scoped) == 0 {
+			a.writeErr(w, r, firstErr)
 			return
 		}
 	}
@@ -260,8 +275,10 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 
 	rows := make([]map[string]any, 0, 64)
 	for _, e := range objs {
-		if namespace != "" && e.GetNamespace() != namespace {
-			continue
+		if scoped != nil {
+			if _, ok := scoped[e.GetNamespace()]; !ok {
+				continue
+			}
 		}
 		if uid != "" && str(e, "involvedObject", "uid") != uid {
 			continue

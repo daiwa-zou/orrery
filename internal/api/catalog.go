@@ -121,7 +121,7 @@ func paramRequired(name, typ, description string) endpointParam {
 
 // listParams are the filters every table-shaped response accepts.
 var listParams = []endpointParam{
-	param("namespace", "string", "", "restrict to one namespace; ignored for cluster-scoped resources"),
+	paramRepeat("namespace", "string", "restrict to a namespace; repeat for several, which are unioned. Ignored for cluster-scoped resources"),
 	param("q", "string", "", "free text over name, namespace and labels (matches key=value)"),
 	param("labelSelector", "string", "", "Kubernetes label selector"),
 	param("fieldSelector", "string", "", "field selector; unsupported fields are rejected rather than silently matching nothing"),
@@ -198,7 +198,7 @@ var readOnlyEndpoints = []endpoint{
 		Method: "GET", Path: "/api/v1/clusters/{cluster}/events",
 		Summary: "Events, newest first, optionally narrowed to one object.",
 		Params: []endpointParam{
-			param("namespace", "string", "", "restrict to one namespace"),
+			paramRepeat("namespace", "string", "restrict to a namespace; repeat for several, which are unioned"),
 			param("involvedUID", "string", "", "only events about this object UID"),
 			param("involvedName", "string", "", "only events about this object name"),
 			param("involvedKind", "string", "", "only events about this kind"),
@@ -289,7 +289,7 @@ var readOnlyEndpoints = []endpoint{
 		Method: "GET", Path: "/api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}/facets",
 		Summary: "The label keys, label values and field-selector values present on the objects the caller may see, narrowed by any search already applied. A hint for building filters, not an inventory.",
 		Params: []endpointParam{
-			param("namespace", "string", "", "restrict to one namespace"),
+			paramRepeat("namespace", "string", "restrict to a namespace; repeat for several, which are unioned"),
 			param("q", "string", "", "free text already applied, so suggestions lead somewhere"),
 			param("labelSelector", "string", "", "label selector already applied"),
 			param("fieldSelector", "string", "", "field selector already applied"),
@@ -324,7 +324,7 @@ var readOnlyEndpoints = []endpoint{
 		Summary:   "Live updates for a list, filtered by the same parameters the list endpoint takes.",
 		Transport: "websocket",
 		Params: []endpointParam{
-			param("namespace", "string", "", "restrict to one namespace"),
+			paramRepeat("namespace", "string", "restrict to a namespace; repeat for several, which are unioned"),
 			param("q", "string", "", "free text over name, namespace and labels"),
 			param("labelSelector", "string", "", "Kubernetes label selector"),
 			param("fieldSelector", "string", "", "field selector"),

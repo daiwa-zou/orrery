@@ -182,6 +182,12 @@ that publishes a schema.
 
 ## Events
 
+`namespace` is repeatable on the list, watch, facets and event endpoints:
+`?namespace=demo&namespace=payments` answers for both at once, authorizing each
+on its own, and the response's `scope` names the namespaces it actually covers.
+A namespace the caller may not list is dropped with a warning rather than
+failing the whole request; being allowed none of them is still a 403.
+
 `GET .../events` returns the event feed, filterable by `namespace`, `q`,
 `warningsOnly`, and by the object involved (`involvedUID`, `involvedName`,
 `involvedKind`) — the last of which is what an object's own event list uses.

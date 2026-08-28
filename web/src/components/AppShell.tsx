@@ -196,14 +196,15 @@ function NamespacePicker({ cluster }: { cluster: string }) {
         // The one place the word "namespace" appears is now the one control
         // named after it: the rows set the scope, and the row under them goes
         // to the namespaces themselves — status, labels, the ones that are
-        // stuck Terminating. That used to be a separate nav item four rows
-        // below this box, saying the same word for a different thing.
+        // stuck Terminating, and the actions that operate on them. That used
+        // to be a separate nav item four rows below this box, saying the same
+        // word for a different thing.
         footer={
           <Link
             to={`/c/${cluster}/r/core/v1/namespaces`}
             className="flex items-center justify-between px-3 py-2 text-[13px] text-accent-text transition-colors hover:bg-surface-2 hover:text-accent-text-hover"
           >
-            Browse namespaces
+            Manage namespaces
             <span aria-hidden>→</span>
           </Link>
         }

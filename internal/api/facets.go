@@ -131,12 +131,12 @@ func (a *API) listFacets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespace := r.URL.Query().Get("namespace")
+	namespaces := queryNamespaces(r)
 	if !res.resource.Namespaced {
-		namespace = ""
+		namespaces = nil
 	}
 
-	objs, scope, _, err := a.visibleScope(ctx, res, namespace)
+	objs, scope, _, err := a.visibleScope(ctx, res, namespaces)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
