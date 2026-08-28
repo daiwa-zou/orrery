@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addWhereTerm,
+  anchoredValue,
   columnValues,
   eventTermProblem,
   freeTextOf,
@@ -84,6 +85,14 @@ describe('where terms', () => {
   it('anchors a value picked from the feed and escapes it', () => {
     expect(valueTerm('reason', 'BackOff')).toBe('reason=~^BackOff$')
     expect(valueTerm('object', 'Pod/web.1')).toBe('object=~^Pod/web\\.1$')
+  })
+
+  it('separates the pattern from the operator, so !~ can keep its meaning', () => {
+    // A value picked after `reason!~` must exclude that reason. Building the
+    // term around a hard-coded `=~` would select it instead — the opposite of
+    // what was asked.
+    expect(anchoredValue('BackOff')).toBe('^BackOff$')
+    expect(`reason!~${anchoredValue('BackOff')}`).toBe('reason!~^BackOff$')
   })
 
   it('drops an exact repeat rather than filtering twice by the same thing', () => {

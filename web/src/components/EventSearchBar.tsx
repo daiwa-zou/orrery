@@ -3,22 +3,22 @@ import clsx from 'clsx'
 import type { Column, Row } from '../api/types'
 import {
   addWhereTerm,
+  anchoredValue,
   columnValues,
   eventTermProblem,
   freeTextOf,
   isWhereTerm,
   removeWhereTerm,
   trailingToken,
-  valueTerm,
   type EventQuery,
 } from '../lib/eventQuery'
-import { splitWhereTerm } from '../lib/searchQuery'
+import { columnOperators, splitWhereTerm } from '../lib/searchQuery'
 import { FilterInput } from './primitives'
 
 interface Suggestion {
   /** Replacement for the token being typed. */
   token: string
-  kind: 'column' | 'value'
+  kind: 'column' | 'operator' | 'value'
   display: string
   /** What the row is offering, in words: the capability a column suggestion
    *  unlocks, or where a suggested value came from. */
@@ -33,25 +33,6 @@ const RECENCY_VALUES = ['5m', '15m', '1h', '6h', '1d']
 
 /** Thresholds worth offering for a repeat count: once, a few, a lot. */
 const COUNT_VALUES = ['1', '3', '10']
-
-/**
- * The operator a column can answer, and the direction it is asked in.
- *
- * `lastSeen<15m` is "in the last quarter hour" and `count>3` is "more than a
- * one-off". The opposite of each is a question about an event feed that nobody
- * has ever needed to ask, so the offered form is the useful one.
- */
-function columnOp(type: string | undefined): string {
-  if (type === 'age') return '<'
-  if (type === 'number') return '>'
-  return '=~'
-}
-
-function opHint(key: string, type: string | undefined): string {
-  if (type === 'age') return 'in the last…'
-  if (type === 'number') return 'more than…'
-  return `${key} matching…`
-}
 
 /**
  * Whether a column's values are worth listing back to the reader.
@@ -89,30 +70,42 @@ function buildSuggestions(
     if (col.type === 'number') {
       return offer(COUNT_VALUES, 'times', (v) => `${started.column}${started.op}${v}`)
     }
-    // A pattern is being written by hand from here on: the values on offer are
-    // the ones this feed holds, anchored, because they were picked rather than
-    // typed as a fragment.
     if (started.op !== '=~' && started.op !== '!~') return []
     if (!enumerable(col)) return []
     // "in this feed" is the honest label: these are the values on screen, not
-    // every value the cluster has ever recorded.
-    return offer(columnValues(rows, started.column), 'in this feed', (v) =>
-      valueTerm(started.column, v),
+    // every value the cluster has ever recorded. The operator is carried
+    // through rather than assumed — a value picked after `reason!~` must
+    // exclude that reason, not select it.
+    return offer(
+      columnValues(rows, started.column),
+      'in this feed',
+      (v) => `${started.column}${started.op}${anchoredValue(v)}`,
     )
   }
 
   const needle = token.toLowerCase()
+
+  // Operator position: the token names a column, and what is missing is the
+  // comparison. Which ones exist depends on the column's type, and each is
+  // offered with what it would mean — `!~` is not a word anybody thinks in.
+  const named = columns.find((c) => c.key === token && !c.key.startsWith('_'))
+  if (named) {
+    return columnOperators(named.type).map(
+      (o): Suggestion => ({
+        token: `${token}${o.op}`,
+        kind: 'operator',
+        display: `${token}${o.op}`,
+        hint: o.means,
+      }),
+    )
+  }
+
+  // Key position. Nothing here carries an operator: choosing what to filter on
+  // and choosing how to compare it are two decisions, and making the second
+  // one for the reader is what hid `>=`, `<` and `!~` from everybody.
   return columns
     .filter((c) => !c.key.startsWith('_') && c.key.toLowerCase().includes(needle))
-    .map((c): Suggestion => {
-      const op = columnOp(c.type)
-      return {
-        token: `${c.key}${op}`,
-        kind: 'column',
-        display: `${c.key}${op}`,
-        hint: opHint(c.key, c.type),
-      }
-    })
+    .map((c): Suggestion => ({ token: c.key, kind: 'column', display: c.key, hint: 'column' }))
     .slice(0, MAX_SUGGESTIONS)
 }
 
@@ -147,6 +140,9 @@ export function EventSearchBar({
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [problem, setProblem] = useState<string>()
+  /** A column chosen from the list whose operator has not been picked yet; it
+   *  must not be searched for as a word in the meantime. */
+  const [pendingKey, setPendingKey] = useState<string>()
   const inputRef = useRef<HTMLInputElement>(null)
   const problemId = useId()
   const draftRef = useRef(draft)
@@ -166,8 +162,9 @@ export function EventSearchBar({
   // does not: it is promoted at a boundary the reader chooses, so a half-typed
   // `count>` is never applied as though it were finished.
   useEffect(() => {
-    const next = freeTextOf(draft)
     const trailing = trailingToken(draft)
+    const pending = pendingKey !== undefined && trailing === pendingKey
+    const next = freeTextOf(pending ? draft.slice(0, draft.length - trailing.length) : draft)
     const t = window.setTimeout(() => {
       const bad = eventTermProblem(trailing, columns)
       setProblem(bad)
@@ -179,7 +176,7 @@ export function EventSearchBar({
       if (next !== query.q) onCommit({ ...query, q: next })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [draft, query, onCommit, columns])
+  }, [draft, query, onCommit, columns, pendingKey])
 
   const clear = useCallback(() => {
     setProblem(undefined)
@@ -220,14 +217,17 @@ export function EventSearchBar({
         0,
         draftRef.current.length - trailingToken(draftRef.current).length,
       )
-      // A column on its own still needs its value, so it stays in the box with
-      // the list open. A finished term has nothing left to type.
-      if (s.kind === 'column') {
+      // Only a value finishes a term. A column still needs its operator and an
+      // operator still needs its value, so either stays in the box with the
+      // list open on the next step.
+      if (s.kind !== 'value') {
         setDraft(head + s.token)
+        setPendingKey(s.kind === 'operator' ? undefined : s.token)
         setOpen(true)
         inputRef.current?.focus()
         return
       }
+      setPendingKey(undefined)
       setDraft(head)
       setProblem(undefined)
       onCommit(addWhereTerm({ ...query, q: freeTextOf(head) }, s.token))

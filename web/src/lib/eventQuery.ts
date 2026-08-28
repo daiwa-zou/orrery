@@ -109,12 +109,17 @@ export function quoteValue(value: string): string {
 }
 
 /**
- * The predicate that selects exactly one observed value. Anchored, because it
+ * The pattern that matches exactly one observed value. Anchored, because it
  * was chosen from a list of what is actually there rather than typed as a
  * fragment: picking `Pulled` should not also bring in `PulledImageTwice`.
  */
+export function anchoredValue(value: string): string {
+  return `^${quoteValue(value)}$`
+}
+
+/** The predicate that selects exactly one observed value. */
 export function valueTerm(column: string, value: string): string {
-  return `${column}=~^${quoteValue(value)}$`
+  return `${column}=~${anchoredValue(value)}`
 }
 
 /** The query with one more predicate, dropping an exact repeat. */
