@@ -174,3 +174,22 @@ func TestDebugPodRefusedWhenNotPermitted(t *testing.T) {
 		t.Errorf("a forbidden request still reached the cluster: %v", got)
 	}
 }
+
+// A pod that has finished will never start another container: the kubelet is
+// done with it. The API server accepts the update anyway, so without this the
+// call succeeded, the container was added to a pod that was over, and the
+// console sat on "waiting for the node to start it" until whoever asked gave
+// up. An answer beats a spinner.
+func TestDebugPodRefusesAFinishedPod(t *testing.T) {
+	rig := hndNewRig(t)
+
+	rec := hndDebugPost(t, rig, `{"namespace":"demo","pod":"done-1"}`)
+	hndWantStatus(t, rec, http.StatusBadRequest)
+
+	if body := rec.Body.String(); !strings.Contains(body, "Succeeded") {
+		t.Errorf("the refusal should name the phase that caused it: %s", body)
+	}
+	if sent := rig.fake.ephemeralContainers(); len(sent) != 0 {
+		t.Errorf("nothing should have been added to a finished pod, got %v", sent)
+	}
+}

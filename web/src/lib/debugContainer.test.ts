@@ -119,3 +119,58 @@ describe('shouldRetryAttach', () => {
     expect(shouldRetryAttach('stream error', 0)).toBe(false)
   })
 })
+
+describe('a pod that has finished', () => {
+  // The hang this fixes: an ephemeral container added to a Succeeded pod never
+  // appears in the status, because the kubelet is done with the pod. That is
+  // indistinguishable from "the node has not got to it yet", so the terminal
+  // waited for a start that was never coming.
+  const finishedPod = (phase: string) =>
+    ({ metadata: { name: 'p' }, status: { phase } }) as unknown as KubeObject
+
+  it('reports a debugger that will never start, rather than one still starting', () => {
+    for (const phase of ['Succeeded', 'Failed']) {
+      const state = debugContainerState(finishedPod(phase), 'debugger-abc')
+      expect(state.phase).toBe('unstartable')
+      expect(state.detail).toContain(phase)
+      expect(debugStillStarting(state)).toBe(false)
+    }
+  })
+
+  it('ends the wait even when the container is sitting in Waiting', () => {
+    const pod = {
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Succeeded',
+        ephemeralContainerStatuses: [
+          { name: 'debugger-abc', state: { waiting: { reason: 'ContainerCreating' } } },
+        ],
+      },
+    } as unknown as KubeObject
+    expect(debugContainerState(pod, 'debugger-abc').phase).toBe('unstartable')
+  })
+
+  it('still prefers what the container itself said when it ran and exited', () => {
+    // An exit code is more specific than "the pod is over", and it is the
+    // thing that explains why the shell never appeared.
+    const pod = {
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Failed',
+        ephemeralContainerStatuses: [
+          { name: 'debugger-abc', state: { terminated: { exitCode: 127, reason: 'Error' } } },
+        ],
+      },
+    } as unknown as KubeObject
+    const state = debugContainerState(pod, 'debugger-abc')
+    expect(state.phase).toBe('terminated')
+    expect(state.detail).toContain('exit 127')
+  })
+
+  it('leaves a running pod alone', () => {
+    const pod = { metadata: { name: 'p' }, status: { phase: 'Running' } } as unknown as KubeObject
+    const state = debugContainerState(pod, 'debugger-abc')
+    expect(state.phase).toBe('absent')
+    expect(debugStillStarting(state)).toBe(true)
+  })
+})

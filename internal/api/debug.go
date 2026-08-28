@@ -96,6 +96,19 @@ func (a *API) debugPod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A pod that has finished will never start another container. The kubelet
+	// acts on ephemeral containers only while the pod is running, and the API
+	// server accepts the update regardless — so nothing fails, the container is
+	// simply added to a pod that is done, and whoever asked is left watching a
+	// spinner for a start that is not coming. Refusing here is the difference
+	// between an answer and a wait with no end.
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		a.writeErr(w, r, badRequest(
+			"pod %q has finished (%s), so the kubelet will not start a debug container in it — debug a running pod instead",
+			req.Pod, pod.Status.Phase))
+		return
+	}
+
 	// Targeting a container that does not exist fails inside the API server
 	// with a message about the pod spec; catching it here says which name was
 	// wrong and what the choices were.

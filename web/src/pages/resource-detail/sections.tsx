@@ -32,12 +32,19 @@ export function ContainerSection({
   onDebug,
   debugAllowed,
   debugPending,
+  podFinished,
 }: {
   rows: ContainerRow[]
   onLogs: (container: string) => void
   onDebug: (container: string) => void
   debugAllowed: boolean
   debugPending: boolean
+  /**
+   * Whether the pod has reached Succeeded or Failed. The kubelet starts no
+   * containers in a pod it has finished with, so offering Debug there is
+   * offering a button whose only outcome is a wait that never resolves.
+   */
+  podFinished?: boolean
 }) {
   if (rows.length === 0) return null
 
@@ -93,9 +100,17 @@ export function ContainerSection({
                     <GatedButton
                       size="sm"
                       variant="ghost"
-                      allowed={debugAllowed}
+                      // Dimmed with the reason rather than hidden, which is how
+                      // every other unavailable action reads here: a missing
+                      // button is a question ("where is Debug?"), a dimmed one
+                      // with a tooltip is an answer.
+                      allowed={debugAllowed && !podFinished}
                       disabled={debugPending}
-                      deniedTitle="Requires patch on pods/ephemeralcontainers"
+                      deniedTitle={
+                        podFinished
+                          ? 'This pod has finished, so the node will not start a debug container in it'
+                          : 'Requires patch on pods/ephemeralcontainers'
+                      }
                       title={`Start a debug container sharing ${c.name}'s process namespace`}
                       onClick={() => onDebug(c.name)}
                     >
