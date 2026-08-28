@@ -12,6 +12,8 @@ import {
   removeColumn,
   removeSaved,
   savedKey,
+  savedLabel,
+  describeSaved,
   subscribeToKey,
   writeJSON,
   columnsIn,
@@ -147,7 +149,10 @@ describe('saved searches', () => {
     kind: 'Pod',
     namespaced: true,
     namespace: '',
-    q: 'status.phase=Running',
+    q: '',
+    labelSelector: '',
+    fieldSelector: 'status.phase=Running',
+    name: '',
     ...over,
   })
 
@@ -170,6 +175,48 @@ describe('saved searches', () => {
 
     expect(readSaved('prod')).toHaveLength(1)
     expect(isSaved(view())).toBe(true)
+  })
+
+  it('keeps the selectors, which are the reason a view was starred at all', () => {
+    addSaved(view({ labelSelector: 'app=web,tier!=cache', fieldSelector: 'status.phase=Running' }))
+    const [stored] = readSaved('prod')
+    expect(stored.labelSelector).toBe('app=web,tier!=cache')
+    expect(stored.fieldSelector).toBe('status.phase=Running')
+  })
+
+  it('separates views that differ only by their filters', () => {
+    addSaved(view({ labelSelector: 'app=web' }))
+    addSaved(view({ labelSelector: 'app=api' }))
+    expect(readSaved('prod')).toHaveLength(2)
+  })
+
+  it('is the same star under a different name, and re-saving renames in place', () => {
+    addSaved(view({ name: 'First' }))
+    addSaved(view({ name: 'Second' }))
+    const all = readSaved('prod')
+    expect(all).toHaveLength(1)
+    expect(all[0].name).toBe('Second')
+    expect(isSaved(view({ name: 'anything' }))).toBe(true)
+  })
+
+  // Stars written before the selectors and the name existed must survive the
+  // upgrade: dropping them would silently empty everyone's saved views.
+  it('hydrates a view stored before it had selectors or a name', () => {
+    const legacy = {
+      cluster: 'prod',
+      group: 'core',
+      version: 'v1',
+      resource: 'pods',
+      kind: 'Pod',
+      namespaced: true,
+      namespace: 'demo',
+      q: 'nginx',
+    }
+    window.localStorage.setItem(SAVED_KEY, JSON.stringify([legacy]))
+
+    const [stored] = readSaved('prod')
+    expect(stored).toMatchObject({ q: 'nginx', labelSelector: '', fieldSelector: '', name: '' })
+    expect(savedLabel(stored)).toBe('Pods · nginx')
   })
 
   it('separates views that differ only by query or namespace', () => {
@@ -245,13 +292,21 @@ describe('reading from a raw stored string', () => {
     kind: 'Pod',
     namespaced: true,
     namespace: 'demo',
-    q: 'status.phase=Running',
+    q: '',
+    labelSelector: 'app=web',
+    fieldSelector: 'status.phase=Running',
+    name: 'Failing web pods',
   }
 
   it('finds a starred view and misses one that differs', () => {
     const raw = JSON.stringify([view])
     expect(isSavedIn(raw, view)).toBe(true)
-    expect(isSavedIn(raw, { ...view, q: '' })).toBe(false)
+    expect(isSavedIn(raw, { ...view, fieldSelector: '' })).toBe(false)
+  })
+
+  it('matches on what the view selects, not on what it was called', () => {
+    const raw = JSON.stringify([view])
+    expect(isSavedIn(raw, { ...view, name: 'Renamed' })).toBe(true)
   })
 
   it('reads the columns for one resource only', () => {
@@ -369,5 +424,50 @@ describe('stringArrayIn', () => {
       'Storage',
       'Config',
     ])
+  })
+})
+
+describe('naming a saved view', () => {
+  const base: SavedSearch = {
+    cluster: 'prod',
+    group: 'core',
+    version: 'v1',
+    resource: 'pods',
+    kind: 'Pod',
+    namespaced: true,
+    namespace: '',
+    q: '',
+    labelSelector: '',
+    fieldSelector: '',
+    name: '',
+  }
+
+  it('uses the name the reader gave it', () => {
+    expect(savedLabel({ ...base, name: 'Failing web pods' })).toBe('Failing web pods')
+  })
+
+  it('falls back to what the view selects', () => {
+    expect(savedLabel({ ...base, labelSelector: 'app=web' })).toBe('Pods · app=web')
+  })
+
+  it('lists every term, from both selectors and the free text', () => {
+    expect(
+      describeSaved({
+        ...base,
+        labelSelector: 'app=web,tier!=cache',
+        fieldSelector: 'status.phase=Running',
+        q: 'nginx',
+      }),
+    ).toBe('Pods · app=web, tier!=cache, status.phase=Running, nginx')
+  })
+
+  it('describes an unfiltered view by its scope', () => {
+    expect(describeSaved(base)).toBe('Pods in all namespaces')
+    expect(describeSaved({ ...base, namespace: 'demo' })).toBe('Pods in demo')
+    expect(describeSaved({ ...base, namespaced: false })).toBe('All Pods')
+  })
+
+  it('treats a blank name as no name', () => {
+    expect(savedLabel({ ...base, name: '   ', namespace: 'demo' })).toBe('Pods in demo')
   })
 })
