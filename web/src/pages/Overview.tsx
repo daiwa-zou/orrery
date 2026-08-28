@@ -295,9 +295,24 @@ export function Overview() {
                 {(data.warnings ?? []).map((w, i) => (
                   <li
                     key={`${w.object}-${w.reason}-${i}`}
-                    className="flex gap-2.5 border-b border-ink/7 py-2 text-[13px] last:border-b-0"
+                    // items-start, because a flex row stretches its children by
+                    // default: a two-line message was making its neighbour's
+                    // badge two lines tall, so the same reason came out a
+                    // different size on every row.
+                    className="flex items-start gap-2.5 border-b border-ink/7 py-2 text-[13px] last:border-b-0"
                   >
-                    <Badge tone="warn">{w.reason}</Badge>
+                    {/* One width for every reason, so the rows read as a column
+                        rather than as a ragged edge. A reason longer than the
+                        column is truncated with its full text in the tooltip —
+                        the alternative is one outlier setting the width for
+                        everything beside it. */}
+                    <Badge
+                      tone="warn"
+                      title={w.reason}
+                      className="w-36 shrink-0 justify-center overflow-hidden"
+                    >
+                      <span className="truncate">{w.reason}</span>
+                    </Badge>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-ink">
                         <span className="text-ink-faint">{w.namespace}/</span>

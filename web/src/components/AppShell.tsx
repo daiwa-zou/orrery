@@ -10,7 +10,7 @@ import {
 } from 'react-router-dom'
 import { api, groupSegment } from '../api/client'
 import { useClusters, useDiscovery, useListAccess, useMe, useNamespaces } from '../api/hooks'
-import type { ClusterSummary, HealthStatus } from '../api/types'
+import type { HealthStatus } from '../api/types'
 import { HEALTH_TONE, navLabel } from '../lib/format'
 import {
   currentTheme,
@@ -23,7 +23,14 @@ import {
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
-import { Badge, Button, Eyebrow, Select, Spinner } from './primitives'
+import {
+  Badge,
+  Button,
+  Eyebrow,
+  Listbox,
+  Spinner,
+  type ListboxItem,
+} from './primitives'
 import { CommandPalette } from './CommandPalette'
 import { LogoMark, Wordmark } from './Logo'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
@@ -63,28 +70,44 @@ function HealthDot({ status }: { status: HealthStatus }) {
  */
 function ClusterSwitcher({ current }: { current?: string }) {
   const { data, isLoading } = useClusters()
-  const [open, setOpen] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(0)
   const navigate = useNavigate()
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
-  const listboxId = useId()
 
   const clusters = data?.clusters ?? []
   const active = clusters.find((c) => c.name === current)
 
-  // Focus lives on the listbox itself; options are pointed at with
-  // aria-activedescendant so a screen reader tracks the arrow keys.
-  useEffect(() => {
-    if (open) listRef.current?.focus()
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    listRef.current
-      ?.querySelector('[data-active="true"]')
-      ?.scrollIntoView({ block: 'nearest' })
-  }, [open, activeIndex])
+  const items = useMemo(
+    () =>
+      clusters.map((c): ListboxItem => ({
+        value: c.name,
+        label: c.displayName,
+        content: (
+          <>
+            <HealthDot status={c.health.status} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-ink">{c.displayName}</span>
+              <span className="block truncate font-mono text-[10.5px] text-ink-faint">
+                {c.available
+                  ? `${c.health.version ?? 'unknown version'} · ${c.health.latencyMs}ms`
+                  : (c.error ?? 'unreachable')}
+              </span>
+              {c.labels && Object.keys(c.labels).length > 0 && (
+                <span className="mt-1 flex flex-wrap gap-1">
+                  {Object.entries(c.labels).map(([k, v]) => (
+                    <span
+                      key={k}
+                      className="bg-canvas px-1 font-mono text-[10px] text-ink-faint ring-1 ring-border"
+                    >
+                      {k}={v}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </span>
+          </>
+        ),
+      })),
+    [clusters],
+  )
 
   if (isLoading) {
     return (
@@ -94,66 +117,14 @@ function ClusterSwitcher({ current }: { current?: string }) {
     )
   }
 
-  const openList = () => {
-    const idx = clusters.findIndex((c) => c.name === current)
-    setActiveIndex(idx >= 0 ? idx : 0)
-    setOpen(true)
-  }
-
-  const close = () => {
-    setOpen(false)
-    triggerRef.current?.focus()
-  }
-
-  const select = (cluster: ClusterSummary) => {
-    close()
-    navigate(`/c/${cluster.name}`)
-  }
-
-  const onListKeyDown = (e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault()
-        setActiveIndex((i) => Math.min(i + 1, clusters.length - 1))
-        break
-      case 'ArrowUp':
-        e.preventDefault()
-        setActiveIndex((i) => Math.max(i - 1, 0))
-        break
-      case 'Home':
-        e.preventDefault()
-        setActiveIndex(0)
-        break
-      case 'End':
-        e.preventDefault()
-        setActiveIndex(clusters.length - 1)
-        break
-      case 'Enter':
-      case ' ':
-        e.preventDefault()
-        if (clusters[activeIndex]) select(clusters[activeIndex])
-        break
-      case 'Escape':
-        e.preventDefault()
-        close()
-        break
-      case 'Tab':
-        // Let focus move on naturally, but not with a stale popup behind it.
-        setOpen(false)
-        break
-    }
-  }
-
   return (
-    <div className="relative">
-      <button
-        ref={triggerRef}
-        onClick={() => (open ? setOpen(false) : openList())}
-        className="flex w-full items-center gap-2 bg-surface-2 px-2.5 py-2 text-left ring-1 ring-border transition-colors hover:ring-border-strong"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-      >
+    <Listbox
+      items={items}
+      value={current ?? ''}
+      onSelect={(name) => navigate(`/c/${name}`)}
+      ariaLabel="Clusters"
+    >
+      <span className="flex items-center gap-2">
         <HealthDot status={active?.health.status ?? 'unknown'} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-ink">
@@ -163,101 +134,54 @@ function ClusterSwitcher({ current }: { current?: string }) {
             {active?.health.version ?? `${clusters.length} available`}
           </span>
         </span>
-        <span aria-hidden className="text-ink-faint">
-          ▾
-        </span>
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <ul
-            ref={listRef}
-            id={listboxId}
-            role="listbox"
-            aria-label="Clusters"
-            tabIndex={-1}
-            aria-activedescendant={
-              clusters[activeIndex] ? `${listboxId}-${activeIndex}` : undefined
-            }
-            onKeyDown={onListKeyDown}
-            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto bg-raised py-1 shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong outline-none"
-          >
-            {clusters.map((c, i) => (
-              <li
-                key={c.name}
-                id={`${listboxId}-${i}`}
-                role="option"
-                aria-selected={c.name === current}
-                data-active={i === activeIndex}
-                onMouseMove={() => setActiveIndex(i)}
-                onClick={() => select(c)}
-                className={clsx(
-                  'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
-                  i === activeIndex && 'bg-surface-2',
-                  c.name === current && 'bg-accent-soft',
-                )}
-              >
-                <HealthDot status={c.health.status} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-ink">{c.displayName}</span>
-                  <span className="block truncate font-mono text-[10.5px] text-ink-faint">
-                    {c.available
-                      ? `${c.health.version ?? 'unknown version'} · ${c.health.latencyMs}ms`
-                      : (c.error ?? 'unreachable')}
-                  </span>
-                  {c.labels && Object.keys(c.labels).length > 0 && (
-                    <span className="mt-1 flex flex-wrap gap-1">
-                      {Object.entries(c.labels).map(([k, v]) => (
-                        <span
-                          key={k}
-                          className="bg-canvas px-1 font-mono text-[10px] text-ink-faint ring-1 ring-border"
-                        >
-                          {k}={v}
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
+      </span>
+    </Listbox>
   )
 }
+
+/** The neutral first row: no namespace filter at all. */
+const ALL_NAMESPACES = '\u0000all'
 
 function NamespacePicker({ cluster }: { cluster: string }) {
   const { names } = useNamespaces(cluster)
   const [params, setParams] = useSearchParams()
+  const labelId = useId()
   const current = params.get('namespace') ?? ''
 
+  // "All namespaces" is a row like any other, and it needs a value that no
+  // namespace can have — '' would make the row that clears the filter
+  // indistinguishable from no row being selected.
+  const items = useMemo(
+    (): ListboxItem[] => [
+      { value: ALL_NAMESPACES, label: 'All namespaces' },
+      ...names.map((n) => ({ value: n, label: n })),
+    ],
+    [names],
+  )
+
   return (
-    <label className="block">
-      <Eyebrow as="span" className="mb-1 block">Namespace</Eyebrow>
-      <Select
-        value={current}
-        onChange={(e) => {
+    <div>
+      <Eyebrow as="span" id={labelId} className="mb-1 block">
+        Namespace
+      </Eyebrow>
+      <Listbox
+        items={items}
+        value={current === '' ? ALL_NAMESPACES : current}
+        labelledBy={labelId}
+        onSelect={(value) => {
           const next = new URLSearchParams(params)
-          if (e.target.value) next.set('namespace', e.target.value)
-          else next.delete('namespace')
+          if (value === ALL_NAMESPACES) next.delete('namespace')
+          else next.set('namespace', value)
           // Changing scope invalidates the page you were on. Replace, like
           // every other filter control, so Back leaves the page rather than
           // replaying each namespace hop.
           next.delete('page')
           setParams(next, { replace: true })
         }}
-        className="w-full"
       >
-        <option value="">All namespaces</option>
-        {names.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </Select>
-    </label>
+        <span className="block truncate text-sm text-ink">{current || 'All namespaces'}</span>
+      </Listbox>
+    </div>
   )
 }
 

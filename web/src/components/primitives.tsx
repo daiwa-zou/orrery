@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   useSyncExternalStore,
   type ComponentPropsWithRef,
   type ReactNode,
@@ -80,10 +81,14 @@ export function Badge({
   children,
   tone = 'idle',
   title,
+  className,
 }: {
   children: ReactNode
   tone?: Tone
   title?: string
+  /** For a badge that has to line up with others — a fixed column width,
+   *  typically. Layout only; the skin is not a caller's business. */
+  className?: string
 }) {
   return (
     <span
@@ -91,6 +96,7 @@ export function Badge({
       className={clsx(
         'inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] ring-1 ring-inset whitespace-nowrap',
         TONE_CLASS[tone],
+        className,
       )}
     >
       {children}
@@ -489,10 +495,208 @@ export function FilterInput({
   )
 }
 
+/** One row of a Listbox. */
+export interface ListboxItem {
+  /** Reported on selection, and the row's key. */
+  value: string
+  /** What type-ahead matches and what a screen reader reads. */
+  label: string
+  /** A richer row than its label, for a list that shows more than a name. */
+  content?: ReactNode
+}
+
+/** How long a type-ahead burst stays one word: long enough to spell a
+ *  namespace, short enough that the next search starts fresh. */
+const TYPE_AHEAD_MS = 700
+
 /**
- * A native select on the same scale. Native is deliberate: it keeps the
- * platform's own keyboard handling and its long-list behaviour, which a
- * hand-rolled listbox would have to reimplement badly.
+ * A dropdown that is drawn by this application rather than by the platform.
+ *
+ * The native `<select>` below is still the right control for a short list
+ * inside a form. It is the wrong one for the console's own chrome: the browser
+ * paints that menu in the operating system's colours and typeface, so the two
+ * pickers in the sidebar looked like they came from different programs — one
+ * of them from a different decade.
+ *
+ * What native gives away for free is the part that has to be re-earned here,
+ * and is: focus moves to the listbox with the options pointed at by
+ * aria-activedescendant, arrows and Home/End move, Enter and Space choose,
+ * Escape closes and returns focus to the trigger, Tab leaves without a stale
+ * popup behind it, and typing jumps — which is how anyone picks one namespace
+ * out of two hundred without reaching for the mouse.
+ */
+export function Listbox({
+  items,
+  value,
+  onSelect,
+  ariaLabel,
+  labelledBy,
+  children,
+}: {
+  items: ListboxItem[]
+  /** The selected value; '' when the list has a neutral first row. */
+  value: string
+  onSelect: (value: string) => void
+  ariaLabel?: string
+  /** Id of an existing label, for a control that already has one on screen. */
+  labelledBy?: string
+  /** The closed control's contents; the frame and the caret are drawn here. */
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const listboxId = useId()
+  const typed = useRef({ text: '', at: 0 })
+
+  // Focus lives on the listbox itself; options are pointed at with
+  // aria-activedescendant so a screen reader tracks the arrow keys.
+  useEffect(() => {
+    if (open) listRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
+
+  const openList = () => {
+    const at = items.findIndex((i) => i.value === value)
+    setActiveIndex(at >= 0 ? at : 0)
+    setOpen(true)
+  }
+
+  const close = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const choose = (item: ListboxItem) => {
+    close()
+    onSelect(item.value)
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActiveIndex((i) => Math.min(i + 1, items.length - 1))
+        return
+      case 'ArrowUp':
+        e.preventDefault()
+        setActiveIndex((i) => Math.max(i - 1, 0))
+        return
+      case 'Home':
+        e.preventDefault()
+        setActiveIndex(0)
+        return
+      case 'End':
+        e.preventDefault()
+        setActiveIndex(items.length - 1)
+        return
+      case 'Enter':
+      case ' ':
+        e.preventDefault()
+        if (items[activeIndex]) choose(items[activeIndex])
+        return
+      case 'Escape':
+        e.preventDefault()
+        close()
+        return
+      case 'Tab':
+        // Let focus move on naturally, but not with a stale popup behind it.
+        setOpen(false)
+        return
+    }
+
+    // Type-ahead. A burst of letters spells one prefix; a pause starts a new
+    // one, except that repeating a single letter cycles the matches for it,
+    // which is what every platform list does and what fingers expect.
+    if (e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey) return
+    const now = Date.now()
+    const fresh = now - typed.current.at > TYPE_AHEAD_MS
+    const repeat = !fresh && typed.current.text === e.key
+    const text = fresh || repeat ? e.key : typed.current.text + e.key
+    typed.current = { text, at: now }
+
+    const matches = (i: number) => items[i].label.toLowerCase().startsWith(text.toLowerCase())
+    const from = repeat || text.length === 1 ? activeIndex + 1 : activeIndex
+    for (let n = 0; n < items.length; n++) {
+      const i = (from + n) % items.length
+      if (matches(i)) {
+        e.preventDefault()
+        setActiveIndex(i)
+        return
+      }
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => (open ? setOpen(false) : openList())}
+        className="flex w-full items-center gap-2 bg-surface-2 px-2.5 py-2 text-left ring-1 ring-border transition-colors hover:ring-border-strong"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        aria-labelledby={labelledBy}
+        aria-controls={open ? listboxId : undefined}
+      >
+        <span className="min-w-0 flex-1">{children}</span>
+        <span aria-hidden className="text-ink-faint">
+          ▾
+        </span>
+      </button>
+
+      {open && (
+        <>
+          {/* Catches the click that dismisses the popup, so choosing "somewhere
+              else" does not also press whatever was underneath. */}
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={ariaLabel}
+            aria-labelledby={labelledBy}
+            tabIndex={-1}
+            aria-activedescendant={items[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
+            onKeyDown={onKeyDown}
+            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto bg-raised py-1 shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong outline-none"
+          >
+            {items.map((item, i) => (
+              <li
+                key={item.value}
+                id={`${listboxId}-${i}`}
+                role="option"
+                aria-selected={item.value === value}
+                data-active={i === activeIndex}
+                onMouseMove={() => setActiveIndex(i)}
+                onClick={() => choose(item)}
+                className={clsx(
+                  'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
+                  i === activeIndex && 'bg-surface-2',
+                  item.value === value && 'bg-accent-soft',
+                )}
+              >
+                {item.content ?? <span className="truncate text-[13px] text-ink">{item.label}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A native select on the same scale, for the short lists inside forms and
+ * dialogs. The console's own chrome uses Listbox above: a menu the platform
+ * paints in its own colours reads as another application's, which is exactly
+ * what the sidebar's two pickers looked like side by side.
  */
 export function Select({
   size = 'sm',
@@ -639,13 +843,17 @@ export function Eyebrow({
   as: Tag = 'h2',
   className,
   children,
+  id,
 }: {
   as?: 'h2' | 'p' | 'span'
   className?: string
   children: ReactNode
+  /** For an eyebrow that names a control beside it, via aria-labelledby. */
+  id?: string
 }) {
   return (
     <Tag
+      id={id}
       className={clsx(
         'text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase',
         className,
