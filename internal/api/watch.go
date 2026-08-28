@@ -40,11 +40,17 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		namespace = ""
 	}
 
-	// The stream applies the same q/labelSelector/fieldSelector the list
+	// The stream applies the same q/labelSelector/fieldSelector/where the list
 	// endpoint does, so a narrowly filtered page is not woken by every change
-	// elsewhere in the namespace. Parse before upgrading: a bad selector is a
-	// plain 400, same as on the list endpoint.
-	filter, err := parseListFilter(r)
+	// elsewhere in the namespace — and, for the column predicates, is not sent
+	// the rows it just excluded.
+	//
+	// The table is resolved here rather than after the upgrade because a
+	// column predicate is checked against its column, and parsing has to stay
+	// on this side of it: a bad filter is then a plain 400, same as on the
+	// list endpoint, instead of a socket that opens and immediately closes.
+	set := a.tableFor(r.Context(), res.cluster, res.resource)
+	filter, err := parseListFilter(r, set)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
@@ -82,8 +88,6 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sub.Close()
-
-	set := a.tableFor(ctx, res.cluster, res.resource)
 
 	items := make([]map[string]any, 0, len(initial))
 	for _, o := range initial {

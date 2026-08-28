@@ -219,13 +219,17 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	objs, err = filterObjects(objs, r)
+	// The table definition comes first now: a column predicate is checked
+	// against the column it names, so the filter cannot be parsed — let alone
+	// run — until the columns are known.
+	set := a.tableFor(ctx, res.cluster, res.resource)
+
+	objs, err = filterObjects(objs, r, set)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
 	}
 
-	set := a.tableFor(ctx, res.cluster, res.resource)
 	sortKey := r.URL.Query().Get("sort")
 	desc := r.URL.Query().Get("order") == "desc"
 
@@ -438,10 +442,16 @@ type listFilter struct {
 	q        string
 	labelSel labels.Selector
 	fieldSel fields.Selector
+	// Column predicates, and the projector they read through. Keeping them
+	// here rather than filtering separately is what stops the list and the
+	// watch from disagreeing: a stream that did not apply them would push in
+	// the very rows the page had just excluded.
+	where []wherePredicate
+	set   columnSet
 }
 
 func (f listFilter) empty() bool {
-	return f.q == "" && f.labelSel == nil && f.fieldSel == nil
+	return f.q == "" && f.labelSel == nil && f.fieldSel == nil && len(f.where) == 0
 }
 
 // unstructuredLabels adapts an object's raw label map to labels.Labels without
@@ -533,6 +543,16 @@ func (f listFilter) matches(o *unstructured.Unstructured) bool {
 	if f.fieldSel != nil && !f.fieldSel.Matches(objectFields{o}) {
 		return false
 	}
+	if len(f.where) > 0 {
+		// Projecting is the expensive part, so it happens once per object and
+		// only when something actually asks for a column.
+		row := f.set.row(o)
+		for _, p := range f.where {
+			if !p.matches(row) {
+				return false
+			}
+		}
+	}
 	return true
 }
 
@@ -589,8 +609,8 @@ func matchesLabelPair(k, v, q string) bool {
 	return false
 }
 
-func parseListFilter(r *http.Request) (listFilter, error) {
-	f := listFilter{q: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))}
+func parseListFilter(r *http.Request, set columnSet) (listFilter, error) {
+	f := listFilter{q: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))), set: set}
 
 	if raw := r.URL.Query().Get("labelSelector"); raw != "" {
 		sel, err := labels.Parse(raw)
@@ -616,12 +636,22 @@ func parseListFilter(r *http.Request) (listFilter, error) {
 		}
 		f.fieldSel = sel
 	}
+
+	where, err := parseWhere(r.URL.Query()["where"], set.columns)
+	if err != nil {
+		return f, err
+	}
+	f.where = where
 	return f, nil
 }
 
 // filterObjects applies the free-text, label and field filters in one pass.
-func filterObjects(objs []*unstructured.Unstructured, r *http.Request) ([]*unstructured.Unstructured, error) {
-	f, err := parseListFilter(r)
+func filterObjects(
+	objs []*unstructured.Unstructured,
+	r *http.Request,
+	set columnSet,
+) ([]*unstructured.Unstructured, error) {
+	f, err := parseListFilter(r, set)
 	if err != nil {
 		return nil, err
 	}
