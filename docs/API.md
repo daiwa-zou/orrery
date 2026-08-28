@@ -199,6 +199,25 @@ event columns — `count>3`, `lastSeen<15m`, `reason=~^Failed`, `type!~Normal`.
 Both are applied before `limit`, so a match older than the newest few hundred
 events still surfaces, and `total` reports what matched rather than what fitted.
 
+## Rollout history
+
+`GET .../rollout/history?namespace=&name=` lists a deployment's revisions,
+newest first, from the ReplicaSets it owns.
+
+Each entry carries what `kubectl rollout history` shows — revision, images,
+change cause — plus what it cannot: `ready`/`replicas` for that revision, and
+`changes`, naming how its pod template differs from the one deployed now.
+Images are reported per container in the direction a rollback would travel
+(`web: nginx:1.25 → nginx:1.24`); everything else is named rather than diffed
+(`env`, `args`, `resources`), because the choice being made needs to know
+*whether* to look, and the object's YAML is where to look.
+
+`identical` says the template matches the deployed one exactly, so rolling back
+would change nothing. It is not implied by an empty `changes`: a difference this
+server does not name leaves both empty and `identical` false. The comparison
+ignores `pod-template-hash`, which the Deployment controller derives from the
+rest of the template and which therefore differs between any two revisions.
+
 ## Neighbourhoods
 
 `GET .../resources/{g}/{v}/{r}/{namespace}/{name}/related` returns everything

@@ -231,7 +231,7 @@ var readOnlyEndpoints = []endpoint{
 	},
 	{
 		Method: "GET", Path: "/api/v1/clusters/{cluster}/rollout/history",
-		Summary: "A deployment's revisions, newest first, with images and change causes.",
+		Summary: "A deployment's revisions, newest first, with images, change causes, readiness, and how each differs from the revision deployed now.",
 		Params: []endpointParam{
 			paramRequired("namespace", "string", "the deployment's namespace"),
 			paramRequired("name", "string", "the deployment's name"),

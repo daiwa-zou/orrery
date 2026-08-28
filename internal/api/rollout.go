@@ -22,15 +22,27 @@ const revisionAnnotation = "deployment.kubernetes.io/revision"
 
 const changeCauseAnnotation = "kubernetes.io/change-cause"
 
-// revisionSummary is one entry of `kubectl rollout history`.
+// revisionSummary is one entry of `kubectl rollout history`, plus what the
+// command cannot tell you: how this revision differs from the one running now.
 type revisionSummary struct {
-	Revision    int64    `json:"revision"`
-	Name        string   `json:"name"`
-	Images      []string `json:"images"`
-	Replicas    int64    `json:"replicas"`
-	Current     bool     `json:"current"`
-	ChangeCause string   `json:"changeCause,omitempty"`
-	CreatedAt   string   `json:"createdAt"`
+	Revision int64    `json:"revision"`
+	Name     string   `json:"name"`
+	Images   []string `json:"images"`
+	Replicas int64    `json:"replicas"`
+	// Ready is how many of those replicas ever became ready. A revision that
+	// never reached readiness is a poor thing to go back to, and the number is
+	// the only warning of that on the page.
+	Ready       int64  `json:"ready"`
+	Current     bool   `json:"current"`
+	ChangeCause string `json:"changeCause,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	// Changes is what rolling back here would alter in the pod template,
+	// phrased in the direction it would travel. Empty on the current revision.
+	Changes []string `json:"changes"`
+	// Identical says the template matches the one deployed now exactly, so a
+	// rollback would change nothing. Empty Changes does not imply it: a
+	// difference this server does not name leaves both empty and false.
+	Identical bool `json:"identical"`
 }
 
 // deploymentRevisions lists the ReplicaSets owned by a deployment, newest
@@ -110,17 +122,39 @@ func (a *API) rolloutHistory(w http.ResponseWriter, r *http.Request) {
 
 	currentRev, _ := strconv.ParseInt(dep.GetAnnotations()[revisionAnnotation], 10, 64)
 
+	// Every revision is compared against the deployed one, so the question the
+	// list exists to answer — which of these do I go back to — is answered on
+	// the row rather than left to whoever remembers what changed.
+	var currentRS *unstructured.Unstructured
+	for _, rs := range owned {
+		if revisionOf(rs) == currentRev {
+			currentRS = rs
+			break
+		}
+	}
+
 	out := make([]revisionSummary, 0, len(owned))
 	for _, rs := range owned {
-		out = append(out, revisionSummary{
+		current := revisionOf(rs) == currentRev
+		summary := revisionSummary{
 			Revision:    revisionOf(rs),
 			Name:        rs.GetName(),
 			Images:      containerImages(rs, "spec", "template", "spec"),
 			Replicas:    i64(rs, "status", "replicas"),
-			Current:     revisionOf(rs) == currentRev,
+			Ready:       i64(rs, "status", "readyReplicas"),
+			Current:     current,
 			ChangeCause: rs.GetAnnotations()[changeCauseAnnotation],
 			CreatedAt:   rs.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05Z"),
-		})
+			Changes:     []string{},
+		}
+		if !current {
+			changes, identical := revisionChanges(currentRS, rs)
+			if changes != nil {
+				summary.Changes = changes
+			}
+			summary.Identical = identical
+		}
+		out = append(out, summary)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revisions": out})
 }

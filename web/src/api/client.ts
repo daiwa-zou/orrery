@@ -182,9 +182,19 @@ export interface Revision {
   name: string
   images: string[]
   replicas: number
+  /** How many of those replicas became ready — a revision that never did is a
+   *  poor thing to go back to. */
+  ready: number
   current: boolean
   changeCause?: string
   createdAt: string
+  /** What rolling back here would change in the pod template, in the
+   *  direction the rollback would travel. Empty on the current revision. */
+  changes?: string[]
+  /** The template matches the deployed one exactly, so a rollback would change
+   *  nothing. Not implied by empty `changes`: a difference the server does not
+   *  name leaves both empty and false. */
+  identical?: boolean
 }
 
 export interface ResourceRef {
