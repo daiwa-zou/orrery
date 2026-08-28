@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { groupSegment } from '../api/client'
 import { stalledReason, useDiscovery, useEvents } from '../api/hooks'
-import type { APIResource, Row } from '../api/types'
-import { isCustomGroup } from '../components/nav'
+import type { Row } from '../api/types'
+import { objectPath, resourcesByKind } from '../components/nav'
 import { DataTable } from '../components/DataTable'
 import { EventSearchBar } from '../components/EventSearchBar'
 import { RefreshIcon } from '../components/icons'
@@ -97,26 +96,7 @@ export function Events() {
 
   // Maps an involvedObject kind to the resource that serves it, so a row click
   // can land on the object the event is about.
-  const resourceByKind = useMemo(() => {
-    const map = new Map<string, APIResource>()
-    for (const group of discovery?.groups ?? []) {
-      for (const res of group.resources) {
-        const key = res.kind.toLowerCase()
-        const existing = map.get(key)
-        // Built-in groups win over CRDs that shadow a well-known kind (an
-        // operator's "Service" must not capture core/v1 Service events), then
-        // preferred versions win within a group.
-        const better =
-          !existing ||
-          (isCustomGroup(existing.group) && !isCustomGroup(res.group)) ||
-          (isCustomGroup(existing.group) === isCustomGroup(res.group) &&
-            res.preferred &&
-            !existing.preferred)
-        if (better) map.set(key, res)
-      }
-    }
-    return map
-  }, [discovery])
+  const byKind = useMemo(() => resourcesByKind(discovery), [discovery])
 
   // The event's generated name is noise and its creation age repeats lastSeen;
   // kubectl get events shows neither, and neither do we.
@@ -125,7 +105,9 @@ export function Events() {
     [data],
   )
 
-  const rows = data?.items ?? []
+  // Memoised because it feeds two memos and the search bar's suggestion
+  // vocabulary; a fresh [] every render would recompute all three.
+  const rows = useMemo(() => data?.items ?? [], [data])
   const summary = useMemo(() => summarizeEvents(rows), [rows])
   const warningsOnly = whereTerms.includes(WARNINGS_TERM)
   const filtering = q !== '' || whereTerms.length > 0
@@ -134,13 +116,8 @@ export function Events() {
     commit(warningsOnly ? removeWhereTerm(query, WARNINGS_TERM) : addWhereTerm(query, WARNINGS_TERM))
 
   const openInvolved = (row: Row) => {
-    const [kind, name] = String(row.object ?? '').split('/')
-    if (!kind || !name) return
-    const res = resourceByKind.get(kind.toLowerCase())
-    if (!res) return
-    const groupSeg = groupSegment(res.group)
-    const ns = res.namespaced ? (row.namespace ?? '_') : '_'
-    navigate(`/c/${cluster}/r/${groupSeg}/${res.version}/${res.name}/${ns}/${name}`)
+    const path = objectPath(cluster!, byKind, String(row.object ?? ''), row.namespace)
+    if (path) navigate(path)
   }
 
   if (error) return <ErrorState error={error} retry={refetch} />

@@ -1,6 +1,8 @@
 import clsx from 'clsx'
+import { useMemo, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useCacheStats, useNodeMetrics, useOverview, usePodMetrics } from '../api/hooks'
+import { useCacheStats, useDiscovery, useNodeMetrics, useOverview, usePodMetrics } from '../api/hooks'
+import { objectPath, resourcesByKind } from '../components/nav'
 import { metricsState, type MetricsState } from '../lib/metricsState'
 import type { CountSummary } from '../api/types'
 import {
@@ -182,6 +184,32 @@ const WORKLOAD_LABELS: Record<string, { label: string; path: string }> = {
 /** How many rows the "Top pods by usage" card shows. */
 const TOP_PODS = 6
 
+/**
+ * One clickable row, or the same row inert.
+ *
+ * A reference this console cannot resolve — an unknown kind, or discovery that
+ * has not arrived — must not be dressed as a link. Sending someone to a 404 is
+ * worse than leaving the row as text, and from where they sit the two are
+ * indistinguishable from the console being broken.
+ */
+function RowShell({
+  to,
+  title,
+  children,
+}: {
+  to?: string
+  title: string
+  children: ReactNode
+}) {
+  const className = 'flex w-full items-start gap-2.5 py-2 text-left text-[13px]'
+  if (!to) return <div className={className}>{children}</div>
+  return (
+    <Link to={to} title={title} className={`${className} transition-colors hover:bg-ink/4`}>
+      {children}
+    </Link>
+  )
+}
+
 export function Overview() {
   const { cluster } = useParams<{ cluster: string }>()
   const { data, isLoading, error, refetch } = useOverview(cluster)
@@ -192,6 +220,10 @@ export function Overview() {
   const nodeMetrics = metricsState(metrics)
   const podUsage = metricsState(podMetrics)
   const stats = useCacheStats(cluster)
+  // Which resource serves each kind, so a warning's "Pod/web-1" can become a
+  // link to that pod.
+  const { data: discovery } = useDiscovery(cluster)
+  const byKind = useMemo(() => resourcesByKind(discovery), [discovery])
 
   if (isLoading) {
     return (
@@ -293,14 +325,22 @@ export function Overview() {
             ) : (
               <ul>
                 {(data.warnings ?? []).map((w, i) => (
-                  <li
-                    key={`${w.object}-${w.reason}-${i}`}
-                    // items-start, because a flex row stretches its children by
-                    // default: a two-line message was making its neighbour's
-                    // badge two lines tall, so the same reason came out a
-                    // different size on every row.
-                    className="flex items-start gap-2.5 border-b border-ink/7 py-2 text-[13px] last:border-b-0"
-                  >
+                  <li key={`${w.object}-${w.reason}-${i}`} className="border-b border-ink/7 last:border-b-0">
+                    {/* The row is about one object, so the whole row goes to
+                        it — a warning is read and then chased, and making the
+                        reader aim at the chip inside it is a target for no
+                        reason. A Link rather than a click handler, so it opens
+                        in a new tab, copies, and answers the keyboard the way
+                        every other row in this card already does.
+
+                        items-start, because a flex row stretches its children
+                        by default: a two-line message was making its
+                        neighbour's badge two lines tall, so the same reason
+                        came out a different size on every row. */}
+                    <RowShell
+                      to={objectPath(cluster!, byKind, w.object, w.namespace)}
+                      title={`Open ${w.namespace}/${w.object}`}
+                    >
                     {/* One width for every reason, so the rows read as a column
                         rather than as a ragged edge. A reason longer than the
                         column is truncated with its full text in the tooltip —
@@ -347,8 +387,13 @@ export function Overview() {
                         text — at four thousand repeats it is the number that
                         says how bad this is, and it was the one thing on the
                         row still drawn as an afterthought. Grouped digits,
-                        because ×4801 is read as a word and ×4,801 as a size. */}
-                    <div className="flex shrink-0 flex-col items-end gap-1 self-center text-[11px] text-ink-faint">
+                        because ×4801 is read as a word and ×4,801 as a size.
+
+                        A fixed width, like the usage columns in the card below:
+                        a column sized to its own row's content is not a column,
+                        and ×32 beside ×4,904 was pushing the two ages to
+                        different places on every line. */}
+                    <div className="flex w-20 shrink-0 flex-col items-end gap-1 self-center text-[11px] text-ink-faint">
                       <Age timestamp={w.lastSeen} />
                       {w.count > 1 && (
                         <span
@@ -359,6 +404,7 @@ export function Overview() {
                         </span>
                       )}
                     </div>
+                    </RowShell>
                   </li>
                 ))}
               </ul>

@@ -1,3 +1,4 @@
+import { groupSegment } from '../api/client'
 import type { APIResource, DiscoveryResponse } from '../api/types'
 
 /**
@@ -148,4 +149,62 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
   rest.sort(byKind)
 
   return { primary, custom, rest }
+}
+
+/**
+ * Which resource serves each kind, for the places that hold a reference like
+ * "Pod/web-1" and have to turn it into a link.
+ *
+ * An event and an overview warning both name their subject by kind, which is
+ * not enough to address it: the console's URLs are keyed by group, version and
+ * resource. Discovery has all three, but a kind can appear more than once in
+ * it, so this picks between the candidates by two rules.
+ *
+ * Built-in groups beat custom ones, because an operator that ships its own
+ * `Service` CRD must not capture the events about core/v1 Services — the
+ * shadowed kind is the one almost everybody means. Within a tier, a preferred
+ * version beats a superseded one, for the same reason discovery marks it.
+ */
+export function resourcesByKind(discovery?: DiscoveryResponse): Map<string, APIResource> {
+  const map = new Map<string, APIResource>()
+  for (const group of discovery?.groups ?? []) {
+    for (const res of group.resources) {
+      const key = res.kind.toLowerCase()
+      const existing = map.get(key)
+      const better =
+        !existing ||
+        (isCustomGroup(existing.group) && !isCustomGroup(res.group)) ||
+        (isCustomGroup(existing.group) === isCustomGroup(res.group) &&
+          res.preferred &&
+          !existing.preferred)
+      if (better) map.set(key, res)
+    }
+  }
+  return map
+}
+
+/**
+ * The console path for a "Kind/name" reference, or undefined when it cannot be
+ * resolved — an unknown kind, a malformed reference, or discovery that has not
+ * arrived yet.
+ *
+ * Undefined is the load-bearing case. A row that cannot be resolved must not
+ * be dressed as a link: sending someone to a 404 is worse than leaving the
+ * reference as text, and it is indistinguishable to them from the console
+ * being broken.
+ */
+export function objectPath(
+  cluster: string,
+  byKind: Map<string, APIResource>,
+  ref: string,
+  namespace?: string,
+): string | undefined {
+  const [kind, name] = ref.split('/')
+  if (!kind || !name) return undefined
+  const res = byKind.get(kind.toLowerCase())
+  if (!res) return undefined
+  // Cluster-scoped objects take "_" in the namespace position, and so does a
+  // namespaced one whose namespace we were not told.
+  const ns = res.namespaced ? namespace || '_' : '_'
+  return `/c/${cluster}/r/${groupSegment(res.group)}/${res.version}/${res.name}/${ns}/${name}`
 }
