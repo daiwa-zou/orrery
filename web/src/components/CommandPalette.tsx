@@ -117,6 +117,8 @@ export function CommandPalette({
       // saved view land on the unfiltered list.
       if (v.labelSelector) qs.set('labelSelector', v.labelSelector)
       if (v.fieldSelector) qs.set('fieldSelector', v.fieldSelector)
+      // Repeated, like everywhere else it travels.
+      for (const term of v.where ?? []) qs.append('where', term)
       const tail = qs.toString()
       return `/c/${v.cluster}/r/${v.group}/${v.version}/${v.resource}${tail ? `?${tail}` : ''}`
     }

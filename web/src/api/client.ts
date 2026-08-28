@@ -123,6 +123,8 @@ export interface ListParams {
   q?: string
   labelSelector?: string
   fieldSelector?: string
+  /** Column predicates; repeated in the query string, one per term. */
+  where?: string[]
   sort?: string
   order?: 'asc' | 'desc'
   page?: number
@@ -292,6 +294,7 @@ export const api = {
           q: scope?.q || undefined,
           labelSelector: scope?.labelSelector || undefined,
           fieldSelector: scope?.fieldSelector || undefined,
+          where: scope?.where?.length ? scope.where : undefined,
         }),
       {},
       signal,

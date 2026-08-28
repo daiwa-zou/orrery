@@ -179,6 +179,8 @@ export interface SavedSearch {
    */
   labelSelector: string
   fieldSelector: string
+  /** Column predicates, one per entry — the shape the URL repeats. */
+  where: string[]
   /** What the reader called it. Empty falls back to describeSaved. */
   name: string
 }
@@ -193,6 +195,7 @@ function hydrate(v: SavedSearch): SavedSearch {
     q: v.q ?? '',
     labelSelector: v.labelSelector ?? '',
     fieldSelector: v.fieldSelector ?? '',
+    where: v.where ?? [],
     name: v.name ?? '',
   }
 }
@@ -212,6 +215,7 @@ export function savedKey(v: SavedSearch): string {
     v.q ?? '',
     v.labelSelector ?? '',
     v.fieldSelector ?? '',
+    (v.where ?? []).join('\u0000'),
   ].join('|')
 }
 
@@ -220,6 +224,7 @@ export function describeSaved(v: SavedSearch): string {
   const terms = [
     ...splitSelector(v.labelSelector ?? ''),
     ...splitSelector(v.fieldSelector ?? ''),
+    ...(v.where ?? []),
     ...(v.q ? [v.q] : []),
   ]
   const where = v.namespace || (v.namespaced ? 'all namespaces' : '')

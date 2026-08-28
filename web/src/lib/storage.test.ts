@@ -152,6 +152,7 @@ describe('saved searches', () => {
     q: '',
     labelSelector: '',
     fieldSelector: 'status.phase=Running',
+    where: [],
     name: '',
     ...over,
   })
@@ -175,6 +176,22 @@ describe('saved searches', () => {
 
     expect(readSaved('prod')).toHaveLength(1)
     expect(isSaved(view())).toBe(true)
+  })
+
+  it('keeps the column predicates too, and they tell two views apart', () => {
+    addSaved(view({ where: ['restarts>3'] }))
+    addSaved(view({ where: ['age<1h'] }))
+    const all = readSaved('prod')
+    expect(all).toHaveLength(2)
+    expect(all.map((v) => v.where)).toEqual(
+      expect.arrayContaining([['restarts>3'], ['age<1h']]),
+    )
+  })
+
+  it('describes a predicate alongside the selectors', () => {
+    expect(savedLabel(view({ where: ['restarts>3'], fieldSelector: '' }))).toBe(
+      'Pods · restarts>3',
+    )
   })
 
   it('keeps the selectors, which are the reason a view was starred at all', () => {
@@ -295,6 +312,7 @@ describe('reading from a raw stored string', () => {
     q: '',
     labelSelector: 'app=web',
     fieldSelector: 'status.phase=Running',
+    where: [],
     name: 'Failing web pods',
   }
 
@@ -439,6 +457,7 @@ describe('naming a saved view', () => {
     q: '',
     labelSelector: '',
     fieldSelector: '',
+    where: [],
     name: '',
   }
 
