@@ -34,7 +34,15 @@ export function MetadataEditor({
   if (!editing) {
     return (
       <div className="flex items-start gap-2">
-        <LabelChips labels={values} />
+        {/* The chips are 21px and the button is 28px, so aligning both to the
+            top left Edit's text sitting below the chip it stands beside. The
+            wrapper takes the button's height and centres a single row of chips
+            inside it, which lines the two up — while a block that wraps to
+            several rows still starts at the top, where a control that acts on
+            the whole block belongs. */}
+        <div className="flex min-h-7 min-w-0 items-center">
+          <LabelChips labels={values} />
+        </div>
         <GatedButton
           allowed={canEdit}
           deniedTitle="Requires patch on this resource"
