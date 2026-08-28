@@ -321,8 +321,6 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sortByCell(objs, set, sortKey, desc)
 	}
-	rows := projectPage(objs, set, page, pageSize, r)
-
 	resp := listResponse{
 		Total:    total,
 		Page:     page,
@@ -332,15 +330,19 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		Warnings: warnings,
 	}
 
+	// Each view projects only what it serves. Building both cost a row map per
+	// object on the page — up to a thousand of them — that view=full then threw
+	// away unread.
 	if r.URL.Query().Get("view") == "full" {
 		start, end := pageBounds(total, page, pageSize)
 		// Never nil: an empty page is an empty list, not an absent one.
-		page := make([]*unstructured.Unstructured, 0, end-start)
+		full := make([]*unstructured.Unstructured, 0, end-start)
 		for _, o := range objs[start:end] {
-			page = append(page, cluster.TrimForResponse(o))
+			full = append(full, cluster.TrimForResponse(o))
 		}
-		resp.Objects = &page
+		resp.Objects = &full
 	} else {
+		rows := projectPage(objs, set, page, pageSize, r)
 		resp.Items = &rows
 		resp.Columns = set.columns
 	}

@@ -256,10 +256,14 @@ func (c *Checker) VisibleNamespaces(
 		truncated = true
 	}
 
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		allowed  = make([]string, 0, 8)
+		failed   int
+		firstErr error
+	)
 	sem := make(chan struct{}, 16)
-	allowed := make([]string, 0, 8)
 
 	for _, ns := range scan {
 		wg.Add(1)
@@ -270,15 +274,48 @@ func (c *Checker) VisibleNamespaces(
 			a := attrs
 			a.Namespace = ns
 			dec, err := c.Allowed(ctx, client, subj, a)
-			if err == nil && dec.Allowed {
-				mu.Lock()
+
+			mu.Lock()
+			defer mu.Unlock()
+			// A review that could not be performed is not a denial. Counting
+			// it as one is how a throttled API server, or a caller who
+			// navigated away mid-scan, becomes a permanent-looking "you are
+			// allowed nowhere" — see the note below the loop.
+			switch {
+			case err != nil:
+				failed++
+				if firstErr == nil {
+					firstErr = err
+				}
+			case dec.Allowed:
 				allowed = append(allowed, ns)
-				mu.Unlock()
 			}
 		}(ns)
 	}
 	wg.Wait()
 	sort.Strings(allowed)
+
+	// A scan that could not ask every question has not measured a scope; it has
+	// measured a lower bound on one. Two things follow, and the code above the
+	// loop only ever guarded the first.
+	//
+	// It must not be cached. Truncation is deterministic — the same scan hits
+	// the same limit — so a truncated entry is worth keeping and is kept, with
+	// its flag. A failed review is a hiccup: caching it freezes the narrowed
+	// scope for the whole TTL, and the next request, which would have
+	// succeeded, is answered from the bad one instead.
+	//
+	// And it must be reported. Every caller already knows what to do with a
+	// scan error — surface it as a warning beside a partial answer, or as the
+	// unavailability it is when nothing came back — because that is how
+	// truncation is handled. Silence is the one answer that misleads: an empty
+	// `allowed` with no error is read as a definite "you may not", and the user
+	// is sent to their cluster administrator over a timeout.
+	if failed > 0 {
+		return false, allowed, fmt.Errorf(
+			"could not check %d of %d namespaces, so this may not be everywhere you can look: %w",
+			failed, len(scan), firstErr)
+	}
 
 	c.nsMu.Lock()
 	// Expired entries are never read again; sweep them here so the map cannot
