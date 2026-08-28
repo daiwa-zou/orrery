@@ -6,6 +6,8 @@
  * page down for.
  */
 
+import { splitSelector } from './labels'
+
 /**
  * The stored string for a key, or null. This is the snapshot the reactive
  * hook reads: a primitive, so it is stable between renders and can be
@@ -150,7 +152,7 @@ export function recordRecent(entry: RecentResource): void {
 /* ---- saved searches ---------------------------------------------------- */
 
 /**
- * A starred query: the resource that was being listed and the search text that
+ * A starred view: the resource that was being listed and the whole search that
  * narrowed it. Teams operate the same handful of views every day — "my team's
  * failing pods", "everything in staging" — and re-typed them each time.
  */
@@ -166,25 +168,90 @@ export interface SavedSearch {
   namespaced: boolean
   /** Namespace the view was scoped to, empty for all namespaces. */
   namespace: string
-  /** The search-bar text. Empty means "the unfiltered list". */
+  /** Free text. Empty means "no words to match". */
   q: string
+  /**
+   * The label and field selectors, exactly as the list endpoint takes them.
+   *
+   * These are the whole point and they were missing: a view is starred
+   * because of `app=web,tier!=cache`, and storing only the free text saved
+   * the resource and threw the reason away.
+   */
+  labelSelector: string
+  fieldSelector: string
+  /** What the reader called it. Empty falls back to describeSaved. */
+  name: string
 }
 
-/** Identity of a saved view: same resource, namespace and query is the same star. */
+/**
+ * Fills in a stored view from before the selectors and the name existed, so
+ * an upgrade keeps everyone's stars instead of quietly dropping them.
+ */
+function hydrate(v: SavedSearch): SavedSearch {
+  return {
+    ...v,
+    q: v.q ?? '',
+    labelSelector: v.labelSelector ?? '',
+    fieldSelector: v.fieldSelector ?? '',
+    name: v.name ?? '',
+  }
+}
+
+/**
+ * Identity of a saved view: the same resource narrowed the same way is the
+ * same star. The name is not part of it — renaming a view must not turn it
+ * into a second one.
+ */
 export function savedKey(v: SavedSearch): string {
-  return [v.cluster, v.group, v.version, v.resource, v.namespace, v.q].join('|')
+  return [
+    v.cluster,
+    v.group,
+    v.version,
+    v.resource,
+    v.namespace,
+    v.q ?? '',
+    v.labelSelector ?? '',
+    v.fieldSelector ?? '',
+  ].join('|')
+}
+
+/** A readable summary of what a view actually selects, for an unnamed star. */
+export function describeSaved(v: SavedSearch): string {
+  const terms = [
+    ...splitSelector(v.labelSelector ?? ''),
+    ...splitSelector(v.fieldSelector ?? ''),
+    ...(v.q ? [v.q] : []),
+  ]
+  const where = v.namespace || (v.namespaced ? 'all namespaces' : '')
+  if (terms.length === 0) return where ? `${v.kind}s in ${where}` : `All ${v.kind}s`
+  return `${v.kind}s · ${terms.join(', ')}`
+}
+
+/** The name to show: what the reader called it, or what it selects. */
+export function savedLabel(v: SavedSearch): string {
+  return v.name?.trim() || describeSaved(v)
 }
 
 export function readSaved(cluster: string): SavedSearch[] {
-  return readJSON<SavedSearch[]>(SAVED_KEY, []).filter(
-    (v) => v && typeof v === 'object' && v.cluster === cluster && typeof v.q === 'string',
-  )
+  return readJSON<SavedSearch[]>(SAVED_KEY, [])
+    .filter((v) => v && typeof v === 'object' && v.cluster === cluster)
+    .map(hydrate)
 }
 
-/** Stars a view, newest first. Re-starring an identical view is a no-op. */
+/**
+ * Stars a view, newest first. Re-saving one that is already stored replaces
+ * it in place rather than being dropped, so a rename takes effect without
+ * shuffling the list.
+ */
 export function addSaved(view: SavedSearch): void {
   const all = readJSON<SavedSearch[]>(SAVED_KEY, [])
-  if (all.some((v) => savedKey(v) === savedKey(view))) return
+  const at = all.findIndex((v) => savedKey(v) === savedKey(view))
+  if (at >= 0) {
+    const next = [...all]
+    next[at] = view
+    writeJSON(SAVED_KEY, next)
+    return
+  }
   writeJSON(SAVED_KEY, [view, ...all].slice(0, MAX_SAVED))
 }
 
@@ -208,7 +275,20 @@ export function isSaved(view: SavedSearch): boolean {
  * each time would be a new identity every render.
  */
 export function isSavedIn(raw: string | null, view: SavedSearch): boolean {
-  return parseArray<SavedSearch>(raw).some((v) => savedKey(v) === savedKey(view))
+  return savedIn(raw, view) !== undefined
+}
+
+/**
+ * The stored view matching this one, which is where its name lives.
+ *
+ * A view built from the current page knows what it selects but not what the
+ * reader called it, so anything that wants to *say* the name — a toast, a
+ * tooltip — has to look it up rather than describe it afresh.
+ */
+export function savedIn(raw: string | null, view: SavedSearch): SavedSearch | undefined {
+  return parseArray<SavedSearch>(raw)
+    .map(hydrate)
+    .find((v) => savedKey(v) === savedKey(view))
 }
 
 /* ---- custom columns ---------------------------------------------------- */

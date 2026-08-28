@@ -7,7 +7,7 @@ import type { APIResource } from '../api/types'
 import { consoleHref } from '../lib/consoleHref'
 import { navLabel } from '../lib/format'
 import { rankResources, selectedIndex } from '../lib/palette'
-import { readRecents, readSaved, savedKey, type SavedSearch } from '../lib/storage'
+import { readRecents, readSaved, savedKey, savedLabel, type SavedSearch } from '../lib/storage'
 import { isBrowsable, type NavItem } from './nav'
 
 interface Entry {
@@ -113,6 +113,10 @@ export function CommandPalette({
       const qs = new URLSearchParams()
       if (v.namespace) qs.set('namespace', v.namespace)
       if (v.q) qs.set('q', v.q)
+      // The selectors are the filter. Leaving them out is what made opening a
+      // saved view land on the unfiltered list.
+      if (v.labelSelector) qs.set('labelSelector', v.labelSelector)
+      if (v.fieldSelector) qs.set('fieldSelector', v.fieldSelector)
       const tail = qs.toString()
       return `/c/${v.cluster}/r/${v.group}/${v.version}/${v.resource}${tail ? `?${tail}` : ''}`
     }
@@ -124,11 +128,11 @@ export function CommandPalette({
       out.push({
         id,
         section: 'Saved',
-        label: navLabel(v.kind),
-        // The query is the point of a saved view, so it is the hint rather
-        // than the group — "Pods · status.phase=Running" reads as the thing
-        // that was actually starred.
-        hint: [v.namespace || 'all namespaces', v.q || 'no filter'].join(' · '),
+        // What the reader called it, or what it selects. Every saved view
+        // used to be labelled with just its kind, so six starred pod views
+        // were six entries called "Pods".
+        label: savedLabel(v),
+        hint: [v.namespace || 'all namespaces', navLabel(v.kind)].join(' · '),
         run: () => navigate(savedHref(v)),
       })
     }
