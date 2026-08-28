@@ -61,6 +61,10 @@ type hndFake struct {
 	// nsOnlyResource denies only the cluster-wide review for one resource,
 	// which forces the per-namespace fallback scan.
 	nsOnlyResource string
+	// failReviewResource makes access reviews for one resource fail outright
+	// rather than come back denied — the difference between "you may not" and
+	// "we could not ask", which callers must not collapse.
+	failReviewResource string
 	// trace, when set, records every path the fake is asked for, so a test can
 	// assert on where a request actually landed rather than only on its status.
 	trace func(string)
@@ -634,7 +638,12 @@ func (f *hndFake) serveAccessReview(w http.ResponseWriter, r *http.Request, path
 	if attrs != nil {
 		f.mu.Lock()
 		deny, nsOnly := f.denyResource, f.nsOnlyResource
+		failReview := f.failReviewResource
 		f.mu.Unlock()
+		if failReview != "" && attrs.Resource == failReview {
+			hndStatus(w, 500, "InternalError", "the access review could not be performed")
+			return
+		}
 		if deny != "" && attrs.Resource == deny {
 			allowed = false
 		}

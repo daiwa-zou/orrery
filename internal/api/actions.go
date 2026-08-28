@@ -189,8 +189,20 @@ type drainResult struct {
 	Failed   []string `json:"failed"`
 	// NotPermitted counts pods on the node the caller may not evict. A count,
 	// not a list: their identities are exactly what the caller may not see.
-	NotPermitted int  `json:"notPermitted,omitempty"`
-	DryRun       bool `json:"dryRun"`
+	NotPermitted int `json:"notPermitted,omitempty"`
+	// NotChecked counts pods whose eviction permission could not be
+	// established at all, because the access review itself failed. They were
+	// not evicted either, and the node is not drained — but saying so under
+	// NotPermitted told an operator their RBAC was short when the truth was
+	// that the API server did not answer. A drain is precisely when an API
+	// server is busy, so this is not a rare shape.
+	//
+	// A count and not a list for the same reason NotPermitted is, and more
+	// sharply: the check that would have told us whether the caller may see
+	// these pods is the one that did not run, so naming them cannot be
+	// justified.
+	NotChecked int  `json:"notChecked,omitempty"`
+	DryRun     bool `json:"dryRun"`
 }
 
 // drainNode cordons a node and evicts its pods, honouring PodDisruptionBudgets
@@ -255,7 +267,11 @@ func (a *API) drainNode(w http.ResponseWriter, r *http.Request) {
 		// before any reporting: a drain response naming pods the caller could
 		// not see is an inventory of other tenants' workloads.
 		if err := a.authorize(ctx, &evictRes, "create", ns, name, "eviction"); err != nil {
-			result.NotPermitted++
+			if isForbidden(err) {
+				result.NotPermitted++
+			} else {
+				result.NotChecked++
+			}
 			continue
 		}
 

@@ -506,6 +506,12 @@ export const api = {
       failed: string[]
       /** Pods on the node the caller may not evict — a count, not names. */
       notPermitted?: number
+      /**
+       * Pods whose eviction permission could not be checked at all. Also a
+       * count: the review that would have said whether they may be named is
+       * the one that failed.
+       */
+      notChecked?: number
       dryRun: boolean
     }>(`/clusters/${cluster}/actions/drain`, { method: 'POST', body: JSON.stringify(opts) }),
 
