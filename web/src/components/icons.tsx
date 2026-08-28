@@ -93,3 +93,7 @@ export function SearchIcon({ className }: { className?: string }) {
     />
   )
 }
+
+export function CloseIcon({ className }: { className?: string }) {
+  return <Icon className={className} d="M6 18 18 6M6 6l12 12" />
+}
