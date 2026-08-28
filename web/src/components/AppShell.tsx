@@ -591,18 +591,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {cluster && (
           <>
-            <div className="space-y-2 border-b border-border p-3">
+            <div className="border-b border-border p-3">
               <NamespacePicker cluster={cluster} />
-              <button
-                onClick={() => setPaletteOpen(true)}
-                className="flex h-7 w-full items-center gap-2 bg-surface-2 px-2.5 text-left text-xs text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
-              >
-                <SearchIcon className="size-3.5" />
-                <span>Search</span>
-                <kbd className="ml-auto border border-ink/18 px-1 font-sans text-[10px] text-ink-faint">
-                  ⌘K
-                </kbd>
-              </button>
             </div>
 
             <nav className="flex-1 overflow-y-auto px-0 py-2">
@@ -682,6 +672,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             name={detailMatch?.params.name}
           />
           <div className="flex items-center gap-2.5">
+            {/* Search reaches every cluster and every resource, which is not
+                what the sidebar below it describes: that column is one
+                cluster's navigation, and a control that ignores the scope it
+                sat under read as part of it. Here it sits with the other
+                things that belong to the whole console. */}
+            {cluster && (
+              <button
+                onClick={() => setPaletteOpen(true)}
+                title="Search objects across every cluster, or jump to a resource (⌘K)"
+                className="flex h-7 items-center gap-2 bg-surface-2 px-2.5 text-left text-xs text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted sm:w-56"
+              >
+                <SearchIcon className="size-3.5 shrink-0" />
+                {/* The word goes first on a wide header and drops on a narrow
+                    one, where the icon and the shortcut still say what it is. */}
+                <span className="hidden sm:inline">Search</span>
+                <kbd className="ml-auto hidden border border-ink/18 px-1 font-sans text-[10px] text-ink-faint sm:inline">
+                  ⌘K
+                </kbd>
+              </button>
+            )}
             <Button
               size="sm"
               icon
