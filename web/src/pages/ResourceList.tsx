@@ -507,6 +507,12 @@ export function ResourceList() {
   // permission, so a read-only viewer sees the affordance and why it is inert.
   const bulkEnabled = canDelete || canRestart
 
+  // A page past the end is not an empty collection. "No Pod found" there is
+  // the same lie the rest of this codebase works to avoid: there are pods,
+  // this page is simply not where they are.
+  const lastPage = data ? Math.max(1, Math.ceil(data.total / pageSize)) : 1
+  const pastEnd = !!data && data.total > 0 && rows.length === 0 && page > lastPage
+
   if (error) return <ErrorState error={error} retry={refetch} />
   // A parked retry with nothing to show would otherwise fall through to the
   // table's empty state, which asserts that the namespace is empty. Saying
@@ -671,16 +677,35 @@ export function ResourceList() {
             onLabelClick={showLabels ? onLabelClick : undefined}
             loading={isLoading}
             emptyTitle={
-              q || labelSelector || fieldSelector
-                ? 'No matches'
-                : `No ${meta?.kind ?? resource} found`
+              pastEnd
+                ? `Nothing on page ${page.toLocaleString()}`
+                : q || labelSelector || fieldSelector
+                  ? 'No matches'
+                  : `No ${meta?.kind ?? resource} found`
             }
             emptyDescription={
-              q || labelSelector || fieldSelector
-                ? 'Try relaxing the filters.'
-                : namespace
-                  ? `Nothing in namespace ${namespace}.`
-                  : undefined
+              pastEnd ? (
+                <>
+                  There {data!.total === 1 ? 'is' : 'are'}{' '}
+                  {data!.total.toLocaleString()}{' '}
+                  {/* `resource` is the API's own plural — "pods", but also
+                      "ingresses" and "networkpolicies", which appending an
+                      "s" to the kind would get wrong. */}
+                  {data!.total === 1 ? (meta?.kind ?? resource) : resource}, on{' '}
+                  {lastPage.toLocaleString()} {lastPage === 1 ? 'page' : 'pages'}.{' '}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => update({ page: '1' })}
+                  >
+                    Back to the first page
+                  </Button>
+                </>
+              ) : q || labelSelector || fieldSelector ? (
+                'Try relaxing the filters.'
+              ) : namespace ? (
+                `Nothing in namespace ${namespace}.`
+              ) : undefined
             }
             selected={bulkEnabled ? selected : undefined}
             onSelectedChange={bulkEnabled ? setSelected : undefined}
