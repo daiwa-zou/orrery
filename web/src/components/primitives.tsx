@@ -531,6 +531,7 @@ export function Listbox({
   onSelect,
   ariaLabel,
   labelledBy,
+  footer,
   children,
 }: {
   items: ListboxItem[]
@@ -540,6 +541,13 @@ export function Listbox({
   ariaLabel?: string
   /** Id of an existing label, for a control that already has one on screen. */
   labelledBy?: string
+  /**
+   * An action under the options — somewhere to go rather than something to
+   * choose. It sits outside the listbox in the markup, because a link is not
+   * an option and a screen reader should not be told it is one; Tab reaches
+   * it from the list, and the popup closes once it is used.
+   */
+  footer?: ReactNode
   /** The closed control's contents; the frame and the caret are drawn here. */
   children: ReactNode
 }) {
@@ -606,7 +614,9 @@ export function Listbox({
         return
       case 'Tab':
         // Let focus move on naturally, but not with a stale popup behind it.
-        setOpen(false)
+        // With a footer, the next stop is inside the popup, so it stays: the
+        // blur handler below closes it once focus actually leaves.
+        if (!footer) setOpen(false)
         return
     }
 
@@ -633,7 +643,14 @@ export function Listbox({
   }
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onBlur={(e) => {
+        // Focus moving within the popup — list to footer — is not leaving it.
+        if (!open || e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        setOpen(false)
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -656,6 +673,10 @@ export function Listbox({
           {/* Catches the click that dismisses the popup, so choosing "somewhere
               else" does not also press whatever was underneath. */}
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          {/* The panel carries the skin; the list inside it carries the
+              scrolling, so a footer stays put while the options move under
+              it. */}
+          <div className="animate-in absolute z-40 mt-1 w-full bg-raised shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong">
           <ul
             ref={listRef}
             id={listboxId}
@@ -665,7 +686,7 @@ export function Listbox({
             tabIndex={-1}
             aria-activedescendant={items[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
             onKeyDown={onKeyDown}
-            className="animate-in absolute z-40 mt-1 max-h-96 w-full overflow-auto bg-raised py-1 shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong outline-none"
+            className="max-h-96 overflow-auto py-1 outline-none"
           >
             {items.map((item, i) => (
               <li
@@ -686,6 +707,12 @@ export function Listbox({
               </li>
             ))}
           </ul>
+          {footer && (
+            <div onClick={() => setOpen(false)} className="border-t border-border">
+              {footer}
+            </div>
+          )}
+          </div>
         </>
       )}
     </div>

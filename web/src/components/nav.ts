@@ -62,15 +62,21 @@ const CURATED: { title: string; resources: string[] }[] = [
 /**
  * The cluster-scoped views, in the order they are read in.
  *
- * These used to be a section called "Cluster", which was a tautology in a
- * console that shows one cluster at a time — every item in this sidebar is
- * that cluster's. Worse, it put them among the namespace-filtered sections:
- * pick a namespace and every list below moves except these two, because a
- * node is not in a namespace and neither is a namespace. Sitting them beside
- * Overview and Events, above the sections, gives the sidebar a rule it can
- * keep: above the fold is the cluster, below it is what runs inside it.
+ * This used to be a section called "Cluster" holding Nodes and Namespaces,
+ * which was a tautology in a console that shows one cluster at a time — every
+ * item in this sidebar is that cluster's. Worse, it sat among the
+ * namespace-filtered sections: pick a namespace and every list below moves
+ * except those, because a node is not in a namespace. Beside Overview and
+ * Events, above the sections, the sidebar has a rule it can keep — above is
+ * the cluster, below is what runs inside it.
+ *
+ * Namespaces is not here, though it is cluster-scoped too. The namespace
+ * picker sits four rows above this list, so the word appeared twice in one
+ * column meaning two different things: the scope everything is filtered by,
+ * and a list of objects. The list now hangs off the picker itself, which is
+ * where someone thinking about namespaces is already looking.
  */
-const CLUSTER_SCOPED = ['nodes', 'namespaces']
+const CLUSTER_SCOPED = ['nodes']
 
 /**
  * Kubernetes' own API groups that predate the `*.k8s.io` convention and so

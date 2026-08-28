@@ -23,14 +23,7 @@ import {
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
-import {
-  Badge,
-  Button,
-  Eyebrow,
-  Listbox,
-  Spinner,
-  type ListboxItem,
-} from './primitives'
+import { Button, Eyebrow, Listbox, Spinner, type ListboxItem } from './primitives'
 import { CommandPalette } from './CommandPalette'
 import { LogoMark, Wordmark } from './Logo'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
@@ -200,6 +193,20 @@ function NamespacePicker({ cluster }: { cluster: string }) {
         items={items}
         value={current === '' ? ALL_NAMESPACES : current}
         labelledBy={labelId}
+        // The one place the word "namespace" appears is now the one control
+        // named after it: the rows set the scope, and the row under them goes
+        // to the namespaces themselves — status, labels, the ones that are
+        // stuck Terminating. That used to be a separate nav item four rows
+        // below this box, saying the same word for a different thing.
+        footer={
+          <Link
+            to={`/c/${cluster}/r/core/v1/namespaces`}
+            className="flex items-center justify-between px-3 py-2 text-[13px] text-accent-text transition-colors hover:bg-surface-2 hover:text-accent-text-hover"
+          >
+            Browse namespaces
+            <span aria-hidden>→</span>
+          </Link>
+        }
         onSelect={(value) => {
           const next = new URLSearchParams(params)
           if (value === ALL_NAMESPACES) next.delete('namespace')
@@ -211,7 +218,10 @@ function NamespacePicker({ cluster }: { cluster: string }) {
           setParams(next, { replace: true })
         }}
       >
-        <span className="block truncate text-sm text-ink">{current || 'All namespaces'}</span>
+        {/* "All", not "All namespaces": the eyebrow above already said the
+            word, and the row inside the list still says it in full where it
+            has to stand on its own. */}
+        <span className="block truncate text-sm text-ink">{current || 'All'}</span>
       </Listbox>
     </div>
   )
@@ -671,7 +681,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             name={detailMatch?.params.name}
           />
           <div className="flex items-center gap-2.5">
-            {namespace && <Badge tone="info">ns: {namespace}</Badge>}
             <Button
               size="sm"
               icon

@@ -252,8 +252,6 @@ describe('objectPath', () => {
 })
 
 describe('cluster-scoped views', () => {
-  // The shared fixture is a slice of namespaced resources; these two are the
-  // point of this group, so they are named here.
   const nav = buildNav(
     discovery([
       resource({ kind: 'Pod', name: 'pods' }),
@@ -262,17 +260,23 @@ describe('cluster-scoped views', () => {
     ]),
   )
 
-  it('lifts nodes and namespaces out of the namespace-filtered sections', () => {
-    // They used to live in a section called "Cluster", between Configuration
+  it('lifts nodes out of the namespace-filtered sections', () => {
+    // Nodes used to live in a section called "Cluster", between Configuration
     // and the CRDs — among lists that all move when the namespace picker
-    // changes, when these two never do.
-    expect(nav.clusterScoped.map((i) => i.resource)).toEqual(['nodes', 'namespaces'])
+    // changes, when a node never does.
+    expect(nav.clusterScoped.map((i) => i.resource)).toEqual(['nodes'])
     expect(nav.primary.map((s) => s.title)).not.toContain('Cluster')
   })
 
-  it('claims them, so they do not also appear under All resources', () => {
-    const rest = nav.rest.map((i) => i.resource)
-    expect(rest).not.toContain('nodes')
-    expect(rest).not.toContain('namespaces')
+  it('claims nodes, so they do not also appear under All resources', () => {
+    expect(nav.rest.map((i) => i.resource)).not.toContain('nodes')
+  })
+
+  it('leaves namespaces to the picker that is named after them', () => {
+    // The word appeared twice in one column meaning two different things: the
+    // scope every list below is filtered by, and a list of objects. The list
+    // hangs off the picker now, and stays reachable under All resources.
+    expect(nav.clusterScoped.map((i) => i.resource)).not.toContain('namespaces')
+    expect(nav.rest.map((i) => i.resource)).toContain('namespaces')
   })
 })
