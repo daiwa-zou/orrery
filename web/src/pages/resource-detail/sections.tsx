@@ -104,12 +104,20 @@ export function ContainerSection({
                       // every other unavailable action reads here: a missing
                       // button is a question ("where is Debug?"), a dimmed one
                       // with a tooltip is an answer.
-                      allowed={debugAllowed && !podFinished}
+                      // A debug container shares the target's process
+                      // namespace, so the target needs a process. Aimed at a
+                      // container that is not running, the kubelet answers
+                      // CreateContainerConfigError and the ephemeral container
+                      // — which cannot be edited or removed — waits there for
+                      // the life of the pod.
+                      allowed={debugAllowed && !podFinished && c.running}
                       disabled={debugPending}
                       deniedTitle={
                         podFinished
                           ? 'This pod has finished, so the node will not start a debug container in it'
-                          : 'Requires patch on pods/ephemeralcontainers'
+                          : !c.running
+                            ? `${c.name} is not running (${c.state}), so a debug container cannot share its process namespace`
+                            : 'Requires patch on pods/ephemeralcontainers'
                       }
                       title={`Start a debug container sharing ${c.name}'s process namespace`}
                       onClick={() => onDebug(c.name)}

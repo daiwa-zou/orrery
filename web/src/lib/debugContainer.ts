@@ -14,6 +14,23 @@ import type { KubeObject } from '../api/types'
  */
 export type DebugPhase = 'absent' | 'starting' | 'running' | 'terminated' | 'unstartable'
 
+/**
+ * Waiting reasons the kubelet will not resolve on its own.
+ *
+ * A pull that is backing off is genuinely still trying, and the pane says so
+ * and keeps waiting. These are different: they describe the container as
+ * specified, and the specification of an ephemeral container cannot be changed
+ * or removed. CreateContainerConfigError is the one that was hanging — a
+ * debugger targeting a container that is not running reports it and then sits
+ * in Waiting for the life of the pod.
+ */
+const PERMANENT_WAITING = new Set([
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'InvalidImageName',
+  'RunContainerError',
+])
+
 export interface DebugContainerState {
   phase: DebugPhase
   /** The reason behind the phase, when the kubelet gave one. */
@@ -63,9 +80,10 @@ export function debugContainerState(
     const w = state.waiting
     const reason = w.reason ? String(w.reason) : undefined
     const message = w.message ? String(w.message) : undefined
+    const detail = reason && message ? `${reason} — ${message}` : (reason ?? message)
     return {
-      phase: 'starting',
-      detail: reason && message ? `${reason} — ${message}` : (reason ?? message),
+      phase: reason && PERMANENT_WAITING.has(reason) ? 'unstartable' : 'starting',
+      detail,
     }
   }
 

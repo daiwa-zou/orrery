@@ -174,3 +174,41 @@ describe('a pod that has finished', () => {
     expect(debugStillStarting(state)).toBe(true)
   })
 })
+
+describe('a wait the kubelet will not resolve', () => {
+  const waiting = (reason: string, message?: string) =>
+    ({
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Running',
+        ephemeralContainerStatuses: [{ name: 'debugger-abc', state: { waiting: { reason, message } } }],
+      },
+    }) as unknown as KubeObject
+
+  it('keeps waiting through the reasons that are still trying', () => {
+    for (const reason of ['ContainerCreating', 'ImagePullBackOff', 'ErrImagePull', 'PodInitializing']) {
+      const state = debugContainerState(waiting(reason), 'debugger-abc')
+      expect(state.phase).toBe('starting')
+      expect(debugStillStarting(state)).toBe(true)
+    }
+  })
+
+  it('stops on a config error, which is what a missing target container is', () => {
+    // The hang: a debugger aimed at a container that is not running gets
+    // CreateContainerConfigError and sits in Waiting for the life of the pod,
+    // because an ephemeral container can be neither edited nor removed.
+    const state = debugContainerState(
+      waiting('CreateContainerConfigError', 'unable to find target container nginx'),
+      'debugger-abc',
+    )
+    expect(state.phase).toBe('unstartable')
+    expect(debugStillStarting(state)).toBe(false)
+    expect(state.detail).toContain('unable to find target container nginx')
+  })
+
+  it('stops on the other reasons that describe the spec rather than the moment', () => {
+    for (const reason of ['CreateContainerError', 'InvalidImageName', 'RunContainerError']) {
+      expect(debugContainerState(waiting(reason), 'debugger-abc').phase).toBe('unstartable')
+    }
+  })
+})

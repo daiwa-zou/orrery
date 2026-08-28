@@ -13,6 +13,8 @@ export interface ContainerRow {
   name: string
   image: string
   ready: boolean
+  /** Whether it has a process right now, which is what a debug target needs. */
+  running: boolean
   restarts: number
   state: string
   stateDetail?: string
@@ -57,6 +59,7 @@ export function containerRows(obj?: KubeObject): ContainerRow[] {
       name: String(s.name ?? ''),
       image: String(s.image ?? ''),
       ready: s.ready === true,
+      running: state.running !== undefined,
       restarts: Number(s.restartCount ?? 0),
       state: name,
       stateDetail: detail,

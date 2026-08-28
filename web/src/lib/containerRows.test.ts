@@ -89,3 +89,26 @@ describe('containerRows', () => {
     expect(row.restarts).toBe(4)
   })
 })
+
+describe('running', () => {
+  // A debug container shares its target's process namespace, so the button
+  // that offers one has to know whether there is a process to share.
+  it('is true only while the container has a process', () => {
+    const pod = {
+      status: {
+        containerStatuses: [
+          { name: 'up', state: { running: { startedAt: '2026-01-01T00:00:00Z' } } },
+          { name: 'pulling', state: { waiting: { reason: 'ImagePullBackOff' } } },
+          { name: 'done', state: { terminated: { exitCode: 0, reason: 'Completed' } } },
+          { name: 'unreported', state: {} },
+        ],
+      },
+    } as unknown as KubeObject
+    expect(containerRows(pod).map((r) => [r.name, r.running])).toEqual([
+      ['up', true],
+      ['pulling', false],
+      ['done', false],
+      ['unreported', false],
+    ])
+  })
+})
