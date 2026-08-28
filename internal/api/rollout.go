@@ -80,8 +80,16 @@ func (a *API) deploymentRevisions(ctx context.Context, res *resolved, namespace,
 		return nil, nil, err
 	}
 
+	// InformerManager.Get returns (nil, nil) for an object that is not in the
+	// cache and (nil, err) for a cache that could not be read, and folding
+	// those together answers "no such deployment" to a question that was never
+	// asked. This walk is what rollout history and undo are built on, so the
+	// moment it lies is the moment someone is rolling back a bad deploy.
 	dep, err := res.cluster.Informers.Get(ctx, depRes, namespace, name)
-	if err != nil || dep == nil {
+	if err != nil {
+		return nil, nil, err
+	}
+	if dep == nil {
 		return nil, nil, notFound("deployment %s/%s", namespace, name)
 	}
 
@@ -339,7 +347,11 @@ func (a *API) triggerCronJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cj, err := res.cluster.Informers.Get(ctx, cjRes, req.Namespace, req.Name)
-	if err != nil || cj == nil {
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	if cj == nil {
 		a.writeErr(w, r, notFound("cronjob %s/%s", req.Namespace, req.Name))
 		return
 	}
