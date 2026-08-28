@@ -309,20 +309,55 @@ export function Overview() {
                     <Badge
                       tone="warn"
                       title={w.reason}
-                      className="w-36 shrink-0 justify-center overflow-hidden"
+                      // Centred both ways: the text inside its own box, and the
+                      // box against the row, so a one-line warning and a
+                      // three-line one both read as labelled from the middle
+                      // rather than hanging off the top.
+                      className="w-36 shrink-0 justify-center self-center overflow-hidden"
                     >
                       <span className="truncate">{w.reason}</span>
                     </Badge>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-ink">
-                        <span className="text-ink-faint">{w.namespace}/</span>
-                        {w.object}
+                      {/* Three parts, three registers: the reason is the
+                          warning tone because it is what went wrong, the object
+                          is the info tone this console already uses for "which
+                          thing" (the ns: chip in the header is the same), and
+                          the message stays neutral because it is prose rather
+                          than a label. Amber next to amber would have made the
+                          object read as a second severity. */}
+                      <p className="min-w-0">
+                        <Badge tone="info" title={`${w.namespace}/${w.object}`} className="max-w-full overflow-hidden font-mono">
+                          <span className="truncate">
+                            <span className="opacity-70">{w.namespace}/</span>
+                            {w.object}
+                          </span>
+                        </Badge>
                       </p>
-                      <p className="text-[12.5px] leading-snug text-ink-muted">{w.message}</p>
+                      {/* Recessed rather than outlined like the chips above
+                          it: the message is the one part of the row that is
+                          prose, and a third bordered box on the same line
+                          would make three labels where there are two. */}
+                      <p className="mt-1 bg-canvas px-2 py-1 text-[12.5px] leading-snug text-ink-muted ring-1 ring-border">
+                        {w.message}
+                      </p>
                     </div>
-                    <div className="shrink-0 text-right text-[11px] text-ink-faint">
+                    {/* When it last happened, and how often. Centred with the
+                        reason it belongs to, and the repeat count chipped like
+                        the other facts in the row rather than left as loose
+                        text — at four thousand repeats it is the number that
+                        says how bad this is, and it was the one thing on the
+                        row still drawn as an afterthought. Grouped digits,
+                        because ×4801 is read as a word and ×4,801 as a size. */}
+                    <div className="flex shrink-0 flex-col items-end gap-1 self-center text-[11px] text-ink-faint">
                       <Age timestamp={w.lastSeen} />
-                      {w.count > 1 && <p>×{w.count}</p>}
+                      {w.count > 1 && (
+                        <span
+                          title={`Seen ${w.count.toLocaleString()} times`}
+                          className="bg-canvas px-1.5 py-0.5 font-mono text-[10.5px] text-ink-muted tabular-nums ring-1 ring-border"
+                        >
+                          ×{w.count.toLocaleString()}
+                        </span>
+                      )}
                     </div>
                   </li>
                 ))}
