@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiGroup, type ResourceRef } from '../api/client'
@@ -22,6 +22,7 @@ import {
   TaintsButton,
 } from './resource-detail/actions'
 import { containerRows } from '../lib/containerRows'
+import { debugContainerState, debugStillStarting } from '../lib/debugContainer'
 import {
   ContainerSection,
   DataSection,
@@ -93,6 +94,38 @@ function TabButton({
   )
 }
 
+/**
+ * The terminal pane while a debug container is still being started.
+ *
+ * Attaching before the kubelet has pulled the image fails with `container not
+ * found`, and the exec stream does not retry — so the wait happens here,
+ * where the reason for it can be shown. A pull that is backing off looks
+ * identical to a slow one from the API's side, so leaving is offered rather
+ * than a timeout guessing on the viewer's behalf.
+ */
+function DebugStarting({
+  container,
+  image,
+  detail,
+  onCancel,
+}: {
+  container: string
+  image: string
+  detail?: string
+  onCancel: () => void
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+      <Loading label={`Starting ${container}`} className="py-0" />
+      <p className="font-mono text-[11.5px] text-ink-faint">{image}</p>
+      <p className="max-w-[420px] text-sm text-ink-muted">
+        {detail ?? 'Waiting for the node to pull the image and start the container.'}
+      </p>
+      <Button onClick={onCancel}>Stop waiting</Button>
+    </div>
+  )
+}
+
 export function ResourceDetail() {
   const params = useParams()
   // Remount per object: tab choice, modal state and editor drafts belong to
@@ -145,6 +178,10 @@ function ResourceDetailInner() {
   // pod's first container.
   const [termContainer, setTermContainer] = useState<string>()
   const [debugPending, setDebugPending] = useState(false)
+  // A debug container that exists in the pod spec but has no process to
+  // attach to yet. The terminal shows why it is waiting instead of opening a
+  // shell that the API server would refuse with `container not found`.
+  const [debugStarting, setDebugStarting] = useState<{ container: string; image: string }>()
 
   const switchTab = (next: Tab) => {
     if (
@@ -184,6 +221,33 @@ function ResourceDetailInner() {
   // rather than beside its first use because the access checks below need to
   // know whether there is a pod set to ask about.
   const podSelector = useMemo(() => podSelectorOf(kind, obj?.spec), [obj, kind])
+
+  // The pod watch is what tells us the debug container has started. Deriving
+  // it from the object already on screen means no second poll loop, and it
+  // keeps the wait honest: whatever the kubelet says, the pane says.
+  const debugState = useMemo(
+    () => (debugStarting ? debugContainerState(obj, debugStarting.container) : undefined),
+    [obj, debugStarting],
+  )
+
+  useEffect(() => {
+    if (!debugStarting || !debugState) return
+    if (debugState.phase === 'running') {
+      setTermContainer(debugStarting.container)
+      setDebugStarting(undefined)
+      return
+    }
+    // A debug image whose entrypoint exits leaves nothing to attach to, and
+    // the container cannot be removed to try again — worth saying loudly.
+    if (debugState.phase === 'terminated') {
+      toast.push({
+        tone: 'danger',
+        title: `${debugStarting.container} exited before a shell could attach`,
+        description: debugState.detail,
+      })
+      setDebugStarting(undefined)
+    }
+  }, [debugStarting, debugState, toast])
 
   // Every action asks about the exact verb and resource the backend will
   // check, so a button never appears that the server would refuse. Keyed, not
@@ -372,12 +436,15 @@ function ResourceDetailInner() {
     setDebugPending(true)
     try {
       const res = await api.debug(cluster, ns, name, target)
-      setTermContainer(res.container)
+      // Created, not started: the call only writes the container into the pod
+      // spec. The terminal opens on the waiting pane and swaps itself for a
+      // shell when the watch reports the container running.
+      setDebugStarting({ container: res.container, image: res.image })
       setTab('terminal')
       toast.push({
         tone: 'ok',
-        title: `Debug container started`,
-        description: `${res.container} (${res.image}) — it may take a moment to pull and start.`,
+        title: `Debug container created`,
+        description: `${res.container} (${res.image}) — attaching once the kubelet starts it.`,
       })
       refetch()
     } catch (e) {
@@ -748,16 +815,25 @@ function ResourceDetailInner() {
           />
         )}
 
-        {tab === 'terminal' && isPod && (
-          <Suspense fallback={<Loading label="Loading terminal" />}>
-            <Terminal
-              cluster={cluster!}
-              namespace={ns!}
-              pod={name!}
-              container={termContainer ?? defaultContainerOf(obj)}
+        {tab === 'terminal' &&
+          isPod &&
+          (debugStarting && debugState && debugStillStarting(debugState) ? (
+            <DebugStarting
+              container={debugStarting.container}
+              image={debugStarting.image}
+              detail={debugState.detail}
+              onCancel={() => setDebugStarting(undefined)}
             />
-          </Suspense>
-        )}
+          ) : (
+            <Suspense fallback={<Loading label="Loading terminal" />}>
+              <Terminal
+                cluster={cluster!}
+                namespace={ns!}
+                pod={name!}
+                container={termContainer ?? defaultContainerOf(obj)}
+              />
+            </Suspense>
+          ))}
       </div>
 
       <Modal
