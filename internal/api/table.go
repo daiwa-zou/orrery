@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,12 +92,19 @@ func (a *API) tableFor(ctx context.Context, c *cluster.Cluster, ar cluster.APIRe
 		return set
 	}
 
-	set := a.crdColumns(ctx, c, ar)
+	set, err := a.crdColumns(ctx, c, ar)
 	if set.row == nil {
 		set = genericColumns()
 	}
 	set = finalize(set, ar)
-	a.tables.put(key, set)
+	// A CRD that could not be read is not a CRD without printer columns, and
+	// the two used to be cached as the same thing. One informer hiccup then
+	// held an operator's carefully chosen columns off the table for the whole
+	// TTL, with nothing on screen to suggest why — the generic name/age table
+	// looks exactly like a resource that never defined any.
+	if err == nil {
+		a.tables.put(key, set)
+	}
 	return set
 }
 
@@ -127,15 +135,23 @@ func genericColumns() columnSet {
 // kubectl produces a useful table for a CRD it has never seen. Reusing them
 // means an operator's carefully chosen columns show up in the dashboard for
 // free.
-func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.APIResource) columnSet {
+//
+// A non-nil error means the question could not be asked — the caller keeps the
+// generic table it falls back to, but must not remember it as the answer. A
+// nil error with an empty set is the real and common answer: this resource is
+// not a custom one, or its CRD defines no printer columns.
+func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.APIResource) (columnSet, error) {
 	if ar.Group == "" {
-		return columnSet{}
+		return columnSet{}, nil
 	}
 	crdName := ar.Name + "." + ar.Group
 
 	obj, err := c.Informers.Get(ctx, crdResource, "", crdName)
-	if err != nil || obj == nil {
-		return columnSet{}
+	if err != nil {
+		return columnSet{}, err
+	}
+	if obj == nil {
+		return columnSet{}, nil
 	}
 
 	var raw []any
@@ -148,10 +164,11 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 		break
 	}
 	if len(raw) == 0 {
-		return columnSet{}
+		return columnSet{}, nil
 	}
 
 	var compiled []printerColumn
+	taken := make(map[string]int, len(raw))
 	for _, item := range raw {
 		m := mapOf(item)
 		name := mstr(m, "name")
@@ -164,7 +181,7 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 		if err := jp.Parse("{" + strings.TrimSpace(path) + "}"); err != nil {
 			continue
 		}
-		key := "x_" + sanitizeKey(name)
+		key := uniqueKey(taken, "x_"+sanitizeKey(name))
 		col := Column{
 			Key:      key,
 			Label:    name,
@@ -177,7 +194,7 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 		compiled = append(compiled, printerColumn{column: col, mu: &sync.Mutex{}, path: jp})
 	}
 	if len(compiled) == 0 {
-		return columnSet{}
+		return columnSet{}, nil
 	}
 
 	cols := make([]Column, 0, len(compiled))
@@ -201,7 +218,7 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 			}
 			return r
 		},
-	}
+	}, nil
 }
 
 // printerColumnType maps OpenAPI column types onto the frontend's renderers.
@@ -230,4 +247,28 @@ func sanitizeKey(name string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+// uniqueKey keeps one printer column from being served under another's key.
+//
+// sanitizeKey is deliberately lossy — it has to be, since a column name is
+// free-form text and a row key is not — so "Ready %" and "Ready!" both come
+// out as "ready", and a name made only of punctuation comes out empty. Two
+// columns then shared one key: the row map holds whichever the loop wrote
+// last, and the table rendered that value twice under two different headings.
+// Nothing about that looks like a bug on screen, which is the worst property a
+// wrong number can have.
+//
+// The suffix is assigned in the CRD's own column order, so a given CRD always
+// produces the same keys and a client can cache them.
+func uniqueKey(taken map[string]int, key string) string {
+	if key == "x_" {
+		key = "x_column"
+	}
+	n, seen := taken[key]
+	taken[key] = n + 1
+	if !seen {
+		return key
+	}
+	return key + "_" + strconv.Itoa(n+1)
 }
