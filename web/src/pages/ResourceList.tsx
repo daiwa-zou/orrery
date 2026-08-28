@@ -7,6 +7,9 @@ import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory, RESTARTABLE_RESOURCES } from '../lib/format'
 import { toggleSelectorTerm } from '../lib/labels'
 import { queryTerms, removeQueryTerm, type SearchQuery } from '../lib/searchQuery'
+
+/** The unfiltered scope, stable so it never re-keys the facets query. */
+const EMPTY_QUERY: SearchQuery = { q: '', labelSelector: '', fieldSelector: '' }
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { RefreshIcon, TagIcon, TrashIcon, ColumnsIcon} from '../components/icons'
@@ -286,10 +289,13 @@ export function ResourceList() {
       }),
     [update],
   )
-  // Facets are only fetched once the user reaches for the search bar.
+  // Facets are only fetched once the user reaches for the search bar, and
+  // then only for what is already filtering — the search bar reports that
+  // scope, since only it knows which term the cursor is inside.
   const [searchActive, setSearchActive] = useState(false)
   const activateSearch = useCallback(() => setSearchActive(true), [])
-  const facets = useFacets(ref, namespace, searchActive)
+  const [facetScope, setFacetScope] = useState<SearchQuery>(EMPTY_QUERY)
+  const facets = useFacets(ref, namespace, searchActive, facetScope)
 
   // A starred view is the resource plus the narrowing that made it useful —
   // "the failing pods in staging" rather than just "pods".
@@ -571,6 +577,7 @@ export function ResourceList() {
           onCommit={commitSearch}
           facets={facets.data}
           onActivate={activateSearch}
+          onScopeChange={setFacetScope}
           placeholder="Search or filter — name, app=web, status.phase=Running"
         />
         <ColumnPicker

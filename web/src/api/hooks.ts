@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueries, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api, wsURL, groupSegment, type ListParams, type ResourceRef } from './client'
 import type { KubeObject, ListResponse, Row, WatchMessage } from './types'
+import type { SearchQuery } from '../lib/searchQuery'
 
 export function useMe() {
   return useQuery({
@@ -392,14 +393,40 @@ export function useLiveResource(ref: ResourceRef | null): LiveObjectState {
  * Search-autocomplete vocabulary. Fetched lazily (enabled when the search bar
  * first gains focus) so pages that never search never pay for the scan.
  */
-export function useFacets(ref: ResourceRef | null, namespace: string, enabled: boolean) {
+/**
+ * The autocomplete vocabulary for one resource, narrowed by `scope` — the
+ * search already applied, minus the term being typed.
+ *
+ * The scope is part of the key, so moving from `app=web` to `app=web
+ * tier=front` refetches rather than reusing the wider answer. The previous
+ * result stays on screen while it does (placeholderData), because a dropdown
+ * that empties itself between keystrokes reads as "nothing matches" rather
+ * than as "still asking".
+ */
+export function useFacets(
+  ref: ResourceRef | null,
+  namespace: string,
+  enabled: boolean,
+  scope?: SearchQuery,
+) {
   return useQuery({
     queryKey: ref
-      ? ['facets', ref.cluster, ref.group, ref.version, ref.resource, namespace]
+      ? [
+          'facets',
+          ref.cluster,
+          ref.group,
+          ref.version,
+          ref.resource,
+          namespace,
+          scope?.q ?? '',
+          scope?.labelSelector ?? '',
+          scope?.fieldSelector ?? '',
+        ]
       : ['facets', 'none'],
-    queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, signal),
+    queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, scope, signal),
     enabled: !!ref && enabled,
     staleTime: 30_000,
+    placeholderData: (previous) => previous,
   })
 }
 

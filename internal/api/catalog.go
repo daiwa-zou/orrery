@@ -285,9 +285,12 @@ var readOnlyEndpoints = []endpoint{
 	},
 	{
 		Method: "GET", Path: "/api/v1/clusters/{cluster}/resources/{group}/{version}/{resource}/facets",
-		Summary: "The label keys, label values and field-selector values present on the objects the caller may see. A hint for building filters, not an inventory.",
+		Summary: "The label keys, label values and field-selector values present on the objects the caller may see, narrowed by any search already applied. A hint for building filters, not an inventory.",
 		Params: []endpointParam{
 			param("namespace", "string", "", "restrict to one namespace"),
+			param("q", "string", "", "free text already applied, so suggestions lead somewhere"),
+			param("labelSelector", "string", "", "label selector already applied"),
+			param("fieldSelector", "string", "", "field selector already applied"),
 		},
 	},
 	{
