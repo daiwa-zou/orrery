@@ -9,7 +9,7 @@ import { toggleSelectorTerm } from '../lib/labels'
 import { queryTerms, removeQueryTerm, type SearchQuery } from '../lib/searchQuery'
 
 /** The unfiltered scope, stable so it never re-keys the facets query. */
-const EMPTY_QUERY: SearchQuery = { q: '', labelSelector: '', fieldSelector: '' }
+const EMPTY_QUERY: SearchQuery = { q: '', labelSelector: '', fieldSelector: '', where: [] }
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { RefreshIcon, TagIcon, TrashIcon, ColumnsIcon} from '../components/icons'
@@ -206,6 +206,10 @@ export function ResourceList() {
   const labelSelector = params.get('labelSelector') ?? ''
   // Deep-link only (e.g. "pods on this node"); there is no input for it.
   const fieldSelector = params.get('fieldSelector') ?? ''
+  // Repeated rather than comma-separated, because a pattern may contain a
+  // comma. Joined only to key the memo below on the values themselves.
+  const whereTerms = params.getAll('where')
+  const whereKey = whereTerms.join('\u0000')
   const showLabels = params.get('labels') === '1'
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
@@ -218,8 +222,19 @@ export function ResourceList() {
       : null
 
   const listParams = useMemo(
-    () => ({ namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector }),
-    [namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector],
+    () => ({
+      namespace,
+      q,
+      sort,
+      order,
+      page,
+      pageSize,
+      labelSelector,
+      fieldSelector,
+      where: whereTerms,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector, whereKey],
   )
 
   const { data, isLoading, error, stalled, live, refetch } = useLiveList(ref, listParams)
@@ -276,18 +291,30 @@ export function ResourceList() {
   )
 
   const searchQuery = useMemo<SearchQuery>(
-    () => ({ q, labelSelector, fieldSelector }),
-    [q, labelSelector, fieldSelector],
+    () => ({ q, labelSelector, fieldSelector, where: whereTerms }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [q, labelSelector, fieldSelector, whereKey],
   )
+
+  // `where` is the one repeated parameter, so it is set here rather than
+  // through update()'s one-value-per-key patch.
   const commitSearch = useCallback(
-    (next: SearchQuery) =>
-      update({
+    (next: SearchQuery) => {
+      const params_ = new URLSearchParams(params)
+      for (const [k, v] of Object.entries({
         q: next.q,
         labelSelector: next.labelSelector,
         fieldSelector: next.fieldSelector,
         page: '1',
-      }),
-    [update],
+      })) {
+        if (v === null || v === '') params_.delete(k)
+        else params_.set(k, v)
+      }
+      params_.delete('where')
+      for (const term of next.where ?? []) params_.append('where', term)
+      setParams(params_, { replace: true })
+    },
+    [params, setParams],
   )
   // Facets are only fetched once the user reaches for the search bar, and
   // then only for what is already filtering — the search bar reports that
@@ -581,6 +608,7 @@ export function ResourceList() {
           query={searchQuery}
           onCommit={commitSearch}
           facets={facets.data}
+          columns={data?.columns}
           onActivate={activateSearch}
           onScopeChange={setFacetScope}
           placeholder="Search, or add a filter — app=web"
@@ -664,7 +692,7 @@ export function ResourceList() {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => commitSearch({ q: '', labelSelector: '', fieldSelector: '' })}
+              onClick={() => commitSearch(EMPTY_QUERY)}
             >
               Clear all
             </Button>

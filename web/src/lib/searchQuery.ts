@@ -17,6 +17,75 @@ export interface SearchQuery {
   q: string
   labelSelector: string
   fieldSelector: string
+  /**
+   * Column predicates — the comparisons a Kubernetes selector cannot express.
+   * A list rather than a joined string because a pattern may contain a comma,
+   * and each one travels as its own repeated `where` parameter.
+   */
+  where: string[]
+}
+
+/**
+ * The operators that mark a term as a column predicate rather than a
+ * selector. Longest first, so `>=` is never read as `>` before a value that
+ * begins with `=`.
+ *
+ * Every one of these is a syntax error to a Kubernetes selector, which is
+ * what makes the two languages safe to mix in one box: a term using any of
+ * them can only be a predicate, and `=`, `!=`, `in` and `!key` keep exactly
+ * the meanings they had.
+ */
+export const WHERE_OPS = ['>=', '<=', '=~', '!~', '>', '<'] as const
+export type WhereOp = (typeof WHERE_OPS)[number]
+
+/** A column name, as far as the client can tell without asking the server. */
+const COLUMN_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
+
+export interface WhereTerm {
+  column: string
+  op: WhereOp
+  value: string
+}
+
+/**
+ * Reads a token as a column predicate, or returns undefined if it is not one.
+ *
+ * The part before the operator has to look like a column name. Without that,
+ * `app=a>b` — a label term with an illegal value — would be read as a
+ * predicate on a column called `app=a`, and the reader would be told about a
+ * missing column instead of about the character that is actually wrong.
+ */
+export function parseWhereTerm(token: string): WhereTerm | undefined {
+  const split = splitWhereTerm(token)
+  return split && split.value !== '' ? split : undefined
+}
+
+/**
+ * The same split, but accepting a term whose value has not been typed yet.
+ *
+ * `age>` is not a filter — there is nothing to compare against — but it is
+ * plainly on its way to being one, and that matters for what happens to it in
+ * the meantime: searching object names for the literal text "age>" empties
+ * the list the instant a column is picked from the dropdown.
+ */
+export function splitWhereTerm(token: string): WhereTerm | undefined {
+  let best = -1
+  let op: WhereOp | undefined
+  for (const candidate of WHERE_OPS) {
+    const at = token.indexOf(candidate)
+    if (at < 0) continue
+    // `!=` belongs to label selectors; its `=` must not start an `=~`.
+    if (candidate === '=~' && at > 0 && '!<>'.includes(token[at - 1])) continue
+    if (best < 0 || at < best || (at === best && candidate.length > op!.length)) {
+      best = at
+      op = candidate
+    }
+  }
+  if (best < 0 || !op) return undefined
+
+  const column = token.slice(0, best)
+  if (!COLUMN_RE.test(column)) return undefined
+  return { column, op, value: token.slice(best + op.length) }
 }
 
 /** Mirrors the server's supportedFieldKeys, minus the dotless `type` — a bare
@@ -85,9 +154,19 @@ export function parseSearchInput(text: string): ParsedSearch {
   const labels: string[] = []
   const fields: string[] = []
   const words: string[] = []
+  const where: string[] = []
   const problems: SearchProblem[] = []
 
   for (const token of tokenizeSearch(text)) {
+    // Predicates are tested first because their operators cannot appear in a
+    // selector at all: anything carrying one is unambiguously a predicate,
+    // and nothing below would have read it correctly.
+    const predicate = parseWhereTerm(token)
+    if (predicate) {
+      where.push(token)
+      continue
+    }
+
     const set = SET_EXPR_RE.exec(token)
     if (set) {
       const bad = validateMetaKey(set[1])
@@ -132,6 +211,7 @@ export function parseSearchInput(text: string): ParsedSearch {
     q: words.join(' '),
     labelSelector: labels.join(','),
     fieldSelector: fields.join(','),
+    where,
     committable: problems.length === 0,
     problems,
   }
@@ -142,6 +222,7 @@ export function composeSearchInput(query: SearchQuery): string {
   return [
     ...splitSelector(query.labelSelector),
     ...splitSelector(query.fieldSelector),
+    ...(query.where ?? []),
     query.q.trim(),
   ]
     .filter(Boolean)
@@ -150,13 +231,20 @@ export function composeSearchInput(query: SearchQuery): string {
 
 export function sameQuery(a: SearchQuery, b: SearchQuery): boolean {
   return (
-    a.q === b.q && a.labelSelector === b.labelSelector && a.fieldSelector === b.fieldSelector
+    a.q === b.q &&
+    a.labelSelector === b.labelSelector &&
+    a.fieldSelector === b.fieldSelector &&
+    sameTerms(a.where, b.where)
   )
+}
+
+function sameTerms(a: string[] = [], b: string[] = []): boolean {
+  return a.length === b.length && a.every((t, i) => t === b[i])
 }
 
 /** One removable part of a committed query. */
 export interface QueryTerm {
-  kind: 'text' | 'label' | 'field'
+  kind: 'text' | 'label' | 'field' | 'where'
   /** As it reads in the search bar, which is how it should read on a chip. */
   term: string
 }
@@ -174,6 +262,7 @@ export function queryTerms(query: SearchQuery): QueryTerm[] {
   return [
     ...splitSelector(query.labelSelector).map((term): QueryTerm => ({ kind: 'label', term })),
     ...splitSelector(query.fieldSelector).map((term): QueryTerm => ({ kind: 'field', term })),
+    ...(query.where ?? []).map((term): QueryTerm => ({ kind: 'where', term })),
     ...tokenizeSearch(query.q).map((term): QueryTerm => ({ kind: 'text', term })),
   ]
 }
@@ -199,13 +288,17 @@ export function removeQueryTerm(query: SearchQuery, target: QueryTerm): SearchQu
         : query.q,
     labelSelector: target.kind === 'label' ? without(query.labelSelector) : query.labelSelector,
     fieldSelector: target.kind === 'field' ? without(query.fieldSelector) : query.fieldSelector,
+    where:
+      target.kind === 'where'
+        ? (query.where ?? []).filter((t) => t !== target.term)
+        : (query.where ?? []),
   }
 }
 
 /** Whether a token is a selector the server will actually apply. */
 export function isFilterTerm(token: string): boolean {
   const parsed = parseSearchInput(token)
-  return parsed.labelSelector !== '' || parsed.fieldSelector !== ''
+  return parsed.labelSelector !== '' || parsed.fieldSelector !== '' || parsed.where.length > 0
 }
 
 /**
@@ -219,7 +312,7 @@ export function isFilterTerm(token: string): boolean {
  */
 export function freeTextOf(input: string): string {
   return tokenizeSearch(input)
-    .filter((t) => !isFilterTerm(t))
+    .filter((t) => !isFilterTerm(t) && !splitWhereTerm(t))
     .join(' ')
 }
 
@@ -244,5 +337,63 @@ export function addQueryTerm(query: SearchQuery, term: string): SearchQuery {
     q: query.q,
     labelSelector: join(query.labelSelector, parsed.labelSelector),
     fieldSelector: join(query.fieldSelector, parsed.fieldSelector),
+    where: [...(query.where ?? []), ...parsed.where],
   }
+}
+
+/** What the table is showing, which is what a predicate may talk about. */
+export interface PredicateColumn {
+  key: string
+  type?: string
+}
+
+const ORDERING_OPS: WhereOp[] = ['>', '>=', '<', '<=']
+const DURATION_RE = /^\d+(\.\d+)?(s|m|h|d|w)$/
+
+/**
+ * Why a predicate cannot be applied, or undefined if it can.
+ *
+ * The server refuses these too, and its refusal is the authority — this is
+ * the same judgement made early enough to answer in the search bar instead
+ * of replacing the page with an error. Checking here is what keeps a typo a
+ * correction rather than a broken screen.
+ */
+export function whereProblem(
+  token: string,
+  columns: PredicateColumn[] | undefined,
+): string | undefined {
+  const parsed = parseWhereTerm(token)
+  if (!parsed) return undefined
+  // Nothing to check against until the first page of results has arrived.
+  if (!columns || columns.length === 0) return undefined
+
+  const col = columns.find((c) => c.key === parsed.column)
+  if (!col) {
+    const names = columns
+      .map((c) => c.key)
+      .filter((k) => !k.startsWith('_'))
+      .sort()
+    return `There is no ${parsed.column} column here. Try: ${names.join(', ')}.`
+  }
+
+  if (!ORDERING_OPS.includes(parsed.op)) {
+    try {
+      new RegExp(parsed.value)
+    } catch {
+      return `${parsed.value} is not a valid pattern.`
+    }
+    return undefined
+  }
+
+  if (col.type === 'number') {
+    return Number.isFinite(Number(parsed.value)) || /^\d+(\.\d+)?[a-zA-Z]+$/.test(parsed.value)
+      ? undefined
+      : `${parsed.column} is a number, and ${parsed.value} is not one.`
+  }
+  if (col.type === 'age') {
+    return DURATION_RE.test(parsed.value)
+      ? undefined
+      : `${parsed.value} is not a duration. Try 30s, 5m, 2h, 3d or 1w.`
+  }
+  return `${parsed.op} cannot order ${parsed.column}, which is text. Use =~ to match a pattern.`
 }

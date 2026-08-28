@@ -257,7 +257,8 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
   const refetchTimer = useRef<number | undefined>(undefined)
 
   // The watch carries the narrowing filters so a filtered page is not woken by
-  // every change elsewhere in scope; sort and paging stay REST-only.
+  // every change elsewhere in scope — and, for the column predicates, is not
+  // sent the rows the page has just excluded. Sort and paging stay REST-only.
   const url = ref
     ? wsURL(
         `/clusters/${ref.cluster}/ws/watch/${groupSegment(ref.group)}/${ref.version}/${ref.resource}`,
@@ -266,6 +267,7 @@ export function useLiveList(ref: ResourceRef | null, params: ListParams): LiveLi
           q: params.q,
           labelSelector: params.labelSelector,
           fieldSelector: params.fieldSelector,
+          where: params.where,
         },
       )
     : null
@@ -421,6 +423,7 @@ export function useFacets(
           scope?.q ?? '',
           scope?.labelSelector ?? '',
           scope?.fieldSelector ?? '',
+          (scope?.where ?? []).join('\u0000'),
         ]
       : ['facets', 'none'],
     queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, scope, signal),

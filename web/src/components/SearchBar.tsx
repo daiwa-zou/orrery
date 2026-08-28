@@ -6,6 +6,9 @@ import {
   addQueryTerm,
   freeTextOf,
   isFilterTerm,
+  splitWhereTerm,
+  whereProblem,
+  type PredicateColumn,
   parseSearchInput,
   queryTerms,
   removeQueryTerm,
@@ -18,14 +21,40 @@ import {
 interface Suggestion {
   /** Replacement for the token being typed. */
   token: string
-  /** What is inserted ends with "=" → keep suggesting values for it. */
-  kind: 'label' | 'field' | 'value'
+  /** What is inserted ends with an operator → keep suggesting values for it. */
+  kind: 'label' | 'field' | 'value' | 'column'
   display: string
 }
 
 const MAX_SUGGESTIONS = 8
 
-function buildSuggestions(token: string, facets: FacetsResponse | undefined): Suggestion[] {
+/** Durations worth offering once an age comparison has been started. */
+const AGE_VALUES = ['5m', '1h', '6h', '1d', '7d', '30d']
+
+/**
+ * The operator to offer with a column, chosen by what its type can answer:
+ * ordering for the things that have a magnitude, a pattern for the rest.
+ */
+function columnOp(type: string | undefined): string {
+  return type === 'number' || type === 'age' ? '>' : '=~'
+}
+
+function buildSuggestions(
+  token: string,
+  facets: FacetsResponse | undefined,
+  columns: PredicateColumn[] | undefined,
+): Suggestion[] {
+  // Value position for a predicate whose operator is typed but whose value is
+  // not. Only age has a small, guessable vocabulary; a number or a pattern
+  // does not, and offering nothing is better than offering noise.
+  const started = splitWhereTerm(token)
+  if (started?.value === '') {
+    const col = columns?.find((c) => c.key === started.column)
+    if (col?.type === 'age') {
+      return AGE_VALUES.map((v) => ({ token: `${token}${v}`, kind: 'value', display: v }))
+    }
+    return []
+  }
   if (!facets) return []
   const term = /^([^=!\s]+)(!=|==?)(.*)$/.exec(token)
 
@@ -51,8 +80,25 @@ function buildSuggestions(token: string, facets: FacetsResponse | undefined): Su
   const labels = facets.labels
     .filter((f) => match(f.key))
     .map((f): Suggestion => ({ token: `${f.key}=`, kind: 'label', display: f.key }))
-    .slice(0, MAX_SUGGESTIONS - Math.min(fields.length, 2))
-  return [...labels, ...fields].slice(0, MAX_SUGGESTIONS)
+
+  // Columns are how anyone finds out that restarts>3 and age<1h are things
+  // they can write at all. The ones that can be *ordered* come first: a
+  // pattern on a name is a familiar idea, where comparing a magnitude is the
+  // capability nobody will guess is there. `_labels` is a rendering detail,
+  // not a column anyone can compare.
+  const cols = (columns ?? [])
+    .filter((c) => !c.key.startsWith('_') && match(c.key))
+    .map((c): Suggestion => {
+      const op = columnOp(c.type)
+      return { token: `${c.key}${op}`, kind: 'column', display: `${c.key}${op}` }
+    })
+    .sort((a, b) => Number(a.token.endsWith('=~')) - Number(b.token.endsWith('=~')))
+
+  const room = MAX_SUGGESTIONS - Math.min(fields.length, 2) - Math.min(cols.length, 3)
+  return [...labels.slice(0, Math.max(room, 1)), ...fields.slice(0, 2), ...cols.slice(0, 3)].slice(
+    0,
+    MAX_SUGGESTIONS,
+  )
 }
 
 /**
@@ -65,6 +111,7 @@ export function SearchBar({
   query,
   onCommit,
   facets,
+  columns,
   onActivate,
   onScopeChange,
   placeholder = 'Search or filter…',
@@ -72,6 +119,12 @@ export function SearchBar({
   query: SearchQuery
   onCommit: (next: SearchQuery) => void
   facets?: FacetsResponse
+  /**
+   * The columns of the table being listed, which is what a predicate may
+   * compare. Absent until the first page arrives, and a predicate is simply
+   * not checked until then.
+   */
+  columns?: PredicateColumn[]
   /** Called on first focus so facet loading can be lazy. */
   onActivate?: () => void
   /**
@@ -114,11 +167,16 @@ export function SearchBar({
     const next = freeTextOf(draft)
     const trailing = trailingToken(draft)
     const t = window.setTimeout(() => {
+      const bad = whereProblem(trailing, columns)
+      if (bad) {
+        setProblems([{ term: trailing, reason: bad }])
+        return
+      }
       setProblems(parseSearchInput(trailing).problems)
       if (next !== query.q) onCommit({ ...query, q: next })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [draft, query, onCommit])
+  }, [draft, query, onCommit, columns])
 
   // The box's cross clears the box. It used to clear everything, which was
   // right when the box held everything; now that the applied filters live in
@@ -139,19 +197,35 @@ export function SearchBar({
   const promote = useCallback(() => {
     const term = trailingToken(draftRef.current)
     if (!isFilterTerm(term)) return false
+    // A predicate naming a column that is not there, or comparing one that
+    // cannot be ordered, is refused here rather than sent — the server would
+    // answer 400 and replace the whole page with an error, which is a harsh
+    // response to a typo.
+    const bad = whereProblem(term, columns)
+    if (bad) {
+      setProblems([{ term, reason: bad }])
+      return false
+    }
     const rest = draftRef.current.slice(0, draftRef.current.length - term.length)
     setDraft(rest)
     setProblems([])
     onCommit(addQueryTerm({ ...query, q: freeTextOf(rest) }, term))
     return true
-  }, [onCommit, query])
+  }, [onCommit, query, columns])
 
   // The suggestions are drawn from what is already filtering. That is exactly
   // the committed query now: the term being completed has not been promoted
   // yet, so it cannot narrow the vocabulary it is asking for.
+  const whereKey = (query.where ?? []).join('\u0000')
   const scope = useMemo<SearchQuery>(
-    () => ({ q: query.q, labelSelector: query.labelSelector, fieldSelector: query.fieldSelector }),
-    [query.q, query.labelSelector, query.fieldSelector],
+    () => ({
+      q: query.q,
+      labelSelector: query.labelSelector,
+      fieldSelector: query.fieldSelector,
+      where: query.where ?? [],
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [query.q, query.labelSelector, query.fieldSelector, whereKey],
   )
   const reportedScope = useRef(scope)
   useEffect(() => {
@@ -161,8 +235,8 @@ export function SearchBar({
   }, [scope, onScopeChange])
 
   const suggestions = useMemo(
-    () => (open ? buildSuggestions(token, facets) : []),
-    [open, token, facets],
+    () => (open ? buildSuggestions(token, facets, columns) : []),
+    [open, token, facets, columns],
   )
 
   useEffect(() => {
@@ -175,10 +249,10 @@ export function SearchBar({
         0,
         draftRef.current.length - trailingToken(draftRef.current).length,
       )
-      // A key still needs its value, so it stays in the box with the dropdown
-      // open on the values. A finished term has nothing left to type and goes
-      // straight to the chips.
-      if (s.token.endsWith('=')) {
+      // Anything ending in an operator still needs its value, so it stays in
+      // the box with the dropdown open. A finished term has nothing left to
+      // type and goes straight to the chips.
+      if (/[=~<>]$/.test(s.token)) {
         setDraft(head + s.token)
         setOpen(true)
         inputRef.current?.focus()

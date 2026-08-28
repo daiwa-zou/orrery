@@ -9,6 +9,10 @@ import {
   removeQueryTerm,
   tokenizeSearch,
   trailingToken,
+  parseWhereTerm,
+  sameQuery,
+  whereProblem,
+  type SearchQuery,
 } from './searchQuery'
 
 describe('tokenizeSearch', () => {
@@ -132,6 +136,7 @@ describe('composeSearchInput', () => {
       q: 'web',
       labelSelector: 'app=web,tier!=cache',
       fieldSelector: 'status.phase=Running',
+    where: [],
     }
     const text = composeSearchInput(query)
     expect(text).toBe('app=web tier!=cache status.phase=Running web')
@@ -139,12 +144,12 @@ describe('composeSearchInput', () => {
   })
 
   it('keeps set expressions intact', () => {
-    const query = { q: '', labelSelector: 'app in (a,b)', fieldSelector: '' }
+    const query = { q: '', labelSelector: 'app in (a,b)', fieldSelector: '', where: [] }
     expect(parseSearchInput(composeSearchInput(query))).toMatchObject(query)
   })
 
   it('composes an empty query to an empty string', () => {
-    expect(composeSearchInput({ q: '', labelSelector: '', fieldSelector: '' })).toBe('')
+    expect(composeSearchInput({ q: '', labelSelector: '', fieldSelector: '', where: [] })).toBe('')
   })
 })
 
@@ -153,6 +158,7 @@ describe('queryTerms', () => {
     q: 'web frontend',
     labelSelector: 'app=web,tier!=cache,role in (a,b)',
     fieldSelector: 'status.phase=Running',
+    where: [],
   }
 
   it('lists selectors before free text, each tagged with where it came from', () => {
@@ -167,11 +173,11 @@ describe('queryTerms', () => {
   })
 
   it('is empty for an empty query', () => {
-    expect(queryTerms({ q: '', labelSelector: '', fieldSelector: '' })).toEqual([])
+    expect(queryTerms({ q: '', labelSelector: '', fieldSelector: '', where: [] })).toEqual([])
   })
 
   it('keeps a set expression whole rather than splitting it at its comma', () => {
-    const terms = queryTerms({ q: '', labelSelector: 'role in (a,b)', fieldSelector: '' })
+    const terms = queryTerms({ q: '', labelSelector: 'role in (a,b)', fieldSelector: '', where: [] })
     expect(terms).toEqual([{ kind: 'label', term: 'role in (a,b)' }])
   })
 
@@ -186,6 +192,7 @@ describe('removeQueryTerm', () => {
     q: 'web frontend',
     labelSelector: 'app=web,tier!=cache',
     fieldSelector: 'status.phase=Running',
+    where: [],
   }
 
   it('drops a label term and leaves the rest alone', () => {
@@ -193,6 +200,7 @@ describe('removeQueryTerm', () => {
       q: 'web frontend',
       labelSelector: 'tier!=cache',
       fieldSelector: 'status.phase=Running',
+    where: [],
     })
   })
 
@@ -207,16 +215,17 @@ describe('removeQueryTerm', () => {
   })
 
   it('does not remove a matching string from the wrong kind', () => {
-    const ambiguous = { q: 'app=web', labelSelector: 'app=web', fieldSelector: '' }
+    const ambiguous = { q: 'app=web', labelSelector: 'app=web', fieldSelector: '', where: [] }
     expect(removeQueryTerm(ambiguous, { kind: 'label', term: 'app=web' })).toEqual({
       q: 'app=web',
       labelSelector: '',
       fieldSelector: '',
+    where: [],
     })
   })
 
   it('removing every term leaves a query that composes to an empty string', () => {
-    let next: typeof query = query
+    let next: SearchQuery = query
     for (const term of queryTerms(query)) next = removeQueryTerm(next, term)
     expect(composeSearchInput(next)).toBe('')
   })
@@ -265,13 +274,14 @@ describe('trailingToken', () => {
 })
 
 describe('addQueryTerm', () => {
-  const empty = { q: '', labelSelector: '', fieldSelector: '' }
+  const empty = { q: '', labelSelector: '', fieldSelector: '', where: [] }
 
   it('routes a label term to the label selector', () => {
     expect(addQueryTerm(empty, 'app=web')).toEqual({
       q: '',
       labelSelector: 'app=web',
       fieldSelector: '',
+    where: [],
     })
   })
 
@@ -280,31 +290,156 @@ describe('addQueryTerm', () => {
       q: '',
       labelSelector: '',
       fieldSelector: 'status.phase=Running',
+    where: [],
     })
   })
 
   it('appends rather than replacing, and leaves free text alone', () => {
-    const start = { q: 'nginx', labelSelector: 'app=web', fieldSelector: '' }
+    const start = { q: 'nginx', labelSelector: 'app=web', fieldSelector: '', where: [] }
     expect(addQueryTerm(start, 'tier!=cache')).toEqual({
       q: 'nginx',
       labelSelector: 'app=web,tier!=cache',
       fieldSelector: '',
+    where: [],
     })
   })
 
   it('adding then removing a term is a round trip', () => {
-    const start = { q: '', labelSelector: 'app=web', fieldSelector: '' }
+    const start = { q: '', labelSelector: 'app=web', fieldSelector: '', where: [] }
     const added = addQueryTerm(start, 'status.phase=Running')
     expect(removeQueryTerm(added, { kind: 'field', term: 'status.phase=Running' })).toEqual(start)
   })
 
   it('every added term shows up as its own chip', () => {
-    let q = empty
+    let q: SearchQuery = empty
     for (const t of ['app=web', 'tier!=cache', 'status.phase=Running']) q = addQueryTerm(q, t)
     expect(queryTerms(q).map((t) => t.term)).toEqual([
       'app=web',
       'tier!=cache',
       'status.phase=Running',
     ])
+  })
+})
+
+describe('column predicates', () => {
+  it('reads every operator, longest first', () => {
+    expect(parseWhereTerm('restarts>=3')).toEqual({ column: 'restarts', op: '>=', value: '3' })
+    expect(parseWhereTerm('restarts>3')).toEqual({ column: 'restarts', op: '>', value: '3' })
+    expect(parseWhereTerm('age<=1h')).toEqual({ column: 'age', op: '<=', value: '1h' })
+    expect(parseWhereTerm('name=~^web')).toEqual({ column: 'name', op: '=~', value: '^web' })
+    expect(parseWhereTerm('name!~canary')).toEqual({ column: 'name', op: '!~', value: 'canary' })
+  })
+
+  // The whole reason the two languages can share one box: a selector's
+  // operators must not be read as a predicate's.
+  it('leaves selector terms alone', () => {
+    for (const t of ['app=web', 'tier!=cache', '!canary', 'app in (a,b)', 'status.phase=Running']) {
+      expect(parseWhereTerm(t)).toBeUndefined()
+    }
+  })
+
+  it('is not fooled by an operator inside a label value', () => {
+    // `app=a>b` is a label term with an illegal value, not a predicate on a
+    // column called "app=a" — saying so would send the reader after the
+    // wrong mistake.
+    expect(parseWhereTerm('app=a>b')).toBeUndefined()
+  })
+
+  it('needs both a column and a value', () => {
+    expect(parseWhereTerm('>3')).toBeUndefined()
+    expect(parseWhereTerm('restarts>')).toBeUndefined()
+  })
+
+  it('routes predicates to where, leaving the selectors untouched', () => {
+    expect(parseSearchInput('app=web restarts>3 nginx')).toMatchObject({
+      labelSelector: 'app=web',
+      where: ['restarts>3'],
+      q: 'nginx',
+    })
+  })
+
+  it('gives each predicate its own chip and removes it by value', () => {
+    const query = parseSearchInput('restarts>3 name=~^web-')
+    expect(queryTerms(query).filter((t) => t.kind === 'where').map((t) => t.term)).toEqual([
+      'restarts>3',
+      'name=~^web-',
+    ])
+    expect(removeQueryTerm(query, { kind: 'where', term: 'restarts>3' }).where).toEqual([
+      'name=~^web-',
+    ])
+  })
+
+  it('does not search for a predicate that is still being written', () => {
+    // Picking `age>` from the dropdown must not filter the list down to the
+    // objects whose name contains the text "age>", which is none of them.
+    expect(freeTextOf('age>')).toBe('')
+    expect(freeTextOf('nginx restarts>')).toBe('nginx')
+    expect(parseWhereTerm('age>')).toBeUndefined()
+  })
+
+  it('counts as a filter term, so it is promoted to a chip like any other', () => {
+    expect(isFilterTerm('restarts>3')).toBe(true)
+    expect(isFilterTerm('name=~^web-')).toBe(true)
+    expect(freeTextOf('nginx restarts>3')).toBe('nginx')
+  })
+
+  it('round-trips through the composed input', () => {
+    const query = parseSearchInput('app=web restarts>3 name=~^web- nginx')
+    expect(parseSearchInput(composeSearchInput(query))).toMatchObject({
+      labelSelector: 'app=web',
+      where: ['restarts>3', 'name=~^web-'],
+      q: 'nginx',
+    })
+  })
+
+  it('two queries differing only by a predicate are not the same query', () => {
+    const a = parseSearchInput('restarts>3')
+    const b = parseSearchInput('restarts>4')
+    expect(sameQuery(a, b)).toBe(false)
+    expect(sameQuery(a, parseSearchInput('restarts>3'))).toBe(true)
+  })
+})
+
+describe('whereProblem', () => {
+  const columns = [
+    { key: 'name', type: 'text' },
+    { key: 'restarts', type: 'number' },
+    { key: 'age', type: 'age' },
+  ]
+
+  it('accepts what the server would accept', () => {
+    for (const t of ['restarts>3', 'age<1h', 'name=~^web-', 'name!~canary', 'age>=30s']) {
+      expect(whereProblem(t, columns)).toBeUndefined()
+    }
+  })
+
+  it('names the columns that do exist when one does not', () => {
+    const msg = whereProblem('restart>1', columns)
+    expect(msg).toMatch(/no restart column/)
+    expect(msg).toMatch(/restarts/)
+  })
+
+  it('refuses ordering a text column, and says what would work', () => {
+    expect(whereProblem('name>abc', columns)).toMatch(/=~/)
+  })
+
+  it('refuses a value the column cannot hold', () => {
+    expect(whereProblem('restarts>abc', columns)).toMatch(/is a number/)
+    expect(whereProblem('age>banana', columns)).toMatch(/not a duration/)
+  })
+
+  it('refuses a pattern that will not compile', () => {
+    expect(whereProblem('name=~[unclosed', columns)).toMatch(/not a valid pattern/)
+  })
+
+  // Before the first page arrives there is nothing to check against, and
+  // guessing would reject terms that are perfectly good.
+  it('withholds judgement until the columns are known', () => {
+    expect(whereProblem('restarts>3', undefined)).toBeUndefined()
+    expect(whereProblem('anything>3', [])).toBeUndefined()
+  })
+
+  it('has no opinion about a term that is not a predicate', () => {
+    expect(whereProblem('app=web', columns)).toBeUndefined()
   })
 })
