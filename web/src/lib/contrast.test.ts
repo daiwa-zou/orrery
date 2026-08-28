@@ -111,3 +111,46 @@ describe('DataTable rows keep their focus ring', () => {
     expect(source).toContain("e.key === 'Enter'")
   })
 })
+
+/**
+ * Text on the code and terminal grounds.
+ *
+ * Those two surfaces are the same in both palettes — a log well inverted to
+ * white would cost more legibility than the consistency gains — so their ink
+ * cannot be the palette's, which does invert. Pairing them is what made the
+ * status JSON on a detail page unreadable in daylight while looking fine at
+ * night: light-theme ink-muted on the code ground is 2.44:1, and the log
+ * viewer's own error lines were 3.02:1.
+ */
+describe('ink on the code surfaces', () => {
+  const { dark, light } = themeTokens()
+  const inks = ['code-ink', 'code-ink-muted', 'code-ink-faint', 'code-danger', 'code-warn']
+
+  it('found the tokens in both blocks', () => {
+    for (const name of [...inks, 'code', 'term']) {
+      expect(dark[name], `dark ${name}`).toMatch(/^#/)
+      expect(light[name], `light ${name}`).toMatch(/^#/)
+    }
+  })
+
+  it('does not invert them, because the ground they sit on does not', () => {
+    for (const name of [...inks, 'code', 'term']) {
+      expect(light[name], name).toBe(dark[name])
+    }
+  })
+
+  // WCAG 2.2 §1.4.3 asks 4.5:1 for body text, and every one of these is body
+  // text: log lines, a status object, a filter's empty state.
+  it.each(inks)('%s clears 4.5:1 on both dark grounds', (name) => {
+    for (const ground of ['code', 'term']) {
+      const ratio = contrast(parseHex(dark[name]), parseHex(dark[ground]))
+      expect(ratio, `${name} on ${ground} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  // The pairing that was there, kept as the reason these tokens exist.
+  it('is what the palette ink could not do', () => {
+    expect(contrast(parseHex(light['ink-muted']), parseHex(light['code']))).toBeLessThan(3)
+    expect(contrast(parseHex(light['danger']), parseHex(light['code']))).toBeLessThan(4.5)
+  })
+})

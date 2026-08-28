@@ -342,8 +342,11 @@ export function StatusSection({ status }: { status?: Record<string, unknown> }) 
         </table>
       )}
 
+      {/* code-ink-muted, not ink-muted: this ground stays dark in both
+          palettes, so its text has to as well. The palette's own muted ink is
+          2.44:1 here in the light theme. */}
       {Object.keys(rest).length > 0 && (
-        <pre className="max-h-80 overflow-auto bg-code p-3 font-mono text-xs text-ink-muted">
+        <pre className="max-h-80 overflow-auto bg-code p-3 font-mono text-xs text-code-ink-muted">
           {JSON.stringify(rest, null, 2)}
         </pre>
       )}
