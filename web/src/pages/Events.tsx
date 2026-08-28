@@ -108,6 +108,10 @@ export function Events() {
   const stalled = stalledReason(events)
   if (stalled) return <ErrorState error={stalled} retry={refetch} />
 
+  // The server now reports how many matched rather than how many fitted, so
+  // the two disagreeing is exactly the signal that the feed was truncated.
+  const capped = !!data && data.total > rows.length
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2">
@@ -116,8 +120,25 @@ export function Events() {
         </h1>
 
         {data && (
-          <span className="text-xs text-ink-faint tabular-nums">
-            {rows.length.toLocaleString()} shown
+          <span
+            className="text-xs text-ink-faint tabular-nums"
+            title={
+              capped
+                ? `${data.total.toLocaleString()} events match. The feed is capped at ${rows.length.toLocaleString()}; narrow the filter to reach the older ones.`
+                : undefined
+            }
+          >
+            {/* Saying only "500 shown" of a capped feed lets it read as the
+                whole answer. The rows are newest-first, so what was dropped is
+                precisely what the reader would have scrolled to find. */}
+            {capped ? (
+              <>
+                {rows.length.toLocaleString()} of {data.total.toLocaleString()} shown, newest
+                first
+              </>
+            ) : (
+              <>{rows.length.toLocaleString()} shown</>
+            )}
             {namespace && <> in {namespace}</>}
           </span>
         )}

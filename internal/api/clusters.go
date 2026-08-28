@@ -276,11 +276,17 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 		return strings.Compare(asString(rows[j]["lastSeen"]), asString(rows[i]["lastSeen"])) < 0
 	})
 	limit := queryInt(r, "limit", 200, 1, 2000)
+	// Total counts what matched, not what fitted. Reporting the truncated
+	// length as the total makes a capped feed describe itself as complete,
+	// and the reader has no way left to discover that older events were
+	// dropped — the rows are sorted newest-first, so what falls off the end
+	// is exactly what they would have had to scroll to find.
+	matched := len(rows)
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
 	writeJSON(w, http.StatusOK, listResponse{
-		Items: &rows, Columns: set.columns, Total: len(rows),
+		Items: &rows, Columns: set.columns, Total: matched,
 		Page: 1, PageSize: limit, Resource: metaOf(eventRes),
 	})
 }
