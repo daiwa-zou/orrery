@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { FacetsResponse } from '../api/types'
+import { TextInput } from './primitives'
 import {
   composeSearchInput,
   parseSearchInput,
@@ -145,7 +146,7 @@ export function SearchBar({
 
   return (
     <div className="relative w-full max-w-md min-w-56">
-      <input
+      <TextInput
         ref={inputRef}
         value={text}
         onChange={(e) => {
@@ -164,7 +165,7 @@ export function SearchBar({
         aria-autocomplete="list"
         role="combobox"
         title={'Free text matches name, namespace and labels.\nFilter terms: app=web, tier!=cache, !canary, app in (web,api), status.phase=Running'}
-        className="w-full bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-ink ring-1 ring-border placeholder:text-ink-faint"
+        className="w-full"
       />
       {open && suggestions.length > 0 && (
         <ul

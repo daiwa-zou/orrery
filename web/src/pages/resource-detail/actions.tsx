@@ -7,10 +7,13 @@ import {
   Age,
   Badge,
   Button,
+  Checkbox,
   ErrorState,
   GatedButton,
   Modal,
+  Select,
   Spinner,
+  TextInput,
 } from '../../components/primitives'
 import { useToast } from '../../components/Toast'
 
@@ -169,30 +172,29 @@ export function TaintsButton({
           ))}
         </ul>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
+          <TextInput
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder="key"
             aria-label="Taint key"
-            className="w-40 bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+            className="w-40 font-mono"
           />
-          <input
+          <TextInput
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder="value (optional)"
             aria-label="Taint value"
-            className="w-36 bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border"
+            className="w-36 font-mono"
           />
-          <select
+          <Select
             value={effect}
             onChange={(e) => setEffect(e.target.value)}
             aria-label="Taint effect"
-            className="bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
           >
             <option>NoSchedule</option>
             <option>PreferNoSchedule</option>
             <option>NoExecute</option>
-          </select>
+          </Select>
           <Button
             size="sm"
             disabled={!key.trim()}
@@ -554,19 +556,11 @@ export function DrainButton({
         </p>
         <div className="space-y-2 text-sm">
           <label className="flex items-center gap-2 text-ink-muted">
-            <input
-              type="checkbox"
-              checked={ignoreDaemonSets}
-              onChange={(e) => setIgnoreDaemonSets(e.target.checked)}
-            />
+            <Checkbox checked={ignoreDaemonSets} onChange={(e) => setIgnoreDaemonSets(e.target.checked)} />
             Ignore DaemonSet-managed pods
           </label>
           <label className="flex items-center gap-2 text-ink-muted">
-            <input
-              type="checkbox"
-              checked={deleteEmptyDirData}
-              onChange={(e) => setDeleteEmptyDirData(e.target.checked)}
-            />
+            <Checkbox checked={deleteEmptyDirData} onChange={(e) => setDeleteEmptyDirData(e.target.checked)} />
             Evict pods using emptyDir volumes (their data is lost)
           </label>
         </div>

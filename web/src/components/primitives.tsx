@@ -1,10 +1,58 @@
 import clsx from 'clsx'
-import { useEffect, useId, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useRef,
+  useSyncExternalStore,
+  type ComponentPropsWithRef,
+  type ReactNode,
+} from 'react'
 import { age as formatAge, toneFor, type Tone } from '../lib/format'
 
 /* Small, shared building blocks. Keeping them in one file makes the visual
    language easy to keep consistent — every badge, button and empty state in
    the app is defined here. */
+
+/**
+ * One control-size scale for the whole app.
+ *
+ * The height is stated outright rather than left to fall out of padding,
+ * because a padded control's height also depends on the line-height it
+ * inherits — and an input inherits a different one from the buttons beside
+ * it. That is how the resource toolbar came to render a 24px button next to a
+ * 28px icon button next to a 30.75px search field, all nominally "small".
+ * With a fixed height the three agree by construction, and a change to the
+ * scale moves every control at once.
+ *
+ * `sm` (28px) is the working size — toolbars, dense forms, anything inline.
+ * `md` (32px) is for controls that stand alone and want the extra weight.
+ */
+export type ControlSize = 'sm' | 'md'
+
+const CONTROL_BOX: Record<ControlSize, string> = {
+  sm: 'h-7 text-xs',
+  md: 'h-8 text-sm',
+}
+
+/** Horizontal padding for controls carrying text. */
+const CONTROL_PAD: Record<ControlSize, string> = {
+  sm: 'px-2.5',
+  md: 'px-3',
+}
+
+/** Icon-only controls are square, so they keep the same footprint. */
+const CONTROL_SQUARE: Record<ControlSize, string> = {
+  sm: 'w-7',
+  md: 'w-8',
+}
+
+/**
+ * The shared field skin. Inputs and selects are outlined with a ring rather
+ * than a border so the drawn edge costs no layout: a ringed field and a plain
+ * one of the same size line up exactly, which a 1px border would spoil.
+ */
+const FIELD_SKIN =
+  'min-w-0 bg-surface-2 text-ink ring-1 ring-border placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-45'
 
 /** The four "+" registration marks of a `.blueprint` frame. */
 export function Corners() {
@@ -119,7 +167,7 @@ export function Button({
   children: ReactNode
   onClick?: () => void
   variant?: 'default' | 'primary' | 'danger' | 'ghost'
-  size?: 'sm' | 'md'
+  size?: ControlSize
   disabled?: boolean
   title?: string
   type?: 'button' | 'submit'
@@ -141,13 +189,8 @@ export function Button({
         'inline-flex items-center justify-center gap-1.5 font-condensed font-semibold whitespace-nowrap transition-colors',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         'disabled:cursor-not-allowed disabled:opacity-45',
-        icon
-          ? size === 'sm'
-            ? 'p-1.5'
-            : 'p-2'
-          : size === 'sm'
-            ? 'px-2.5 py-1 text-xs'
-            : 'px-3.5 py-1.5 text-sm',
+        CONTROL_BOX[size],
+        icon ? CONTROL_SQUARE[size] : CONTROL_PAD[size],
         {
           'bg-transparent text-ink ring-1 ring-border hover:bg-ink/7': variant === 'default',
           'bg-accent text-canvas ring-1 ring-accent hover:brightness-110': variant === 'primary',
@@ -185,6 +228,68 @@ export function GatedButton({
     <span className="inline-flex" title={allowed ? title : deniedTitle}>
       <Button {...rest} disabled={disabled || !allowed} />
     </span>
+  )
+}
+
+/**
+ * A text field on the shared control scale. Width is the caller's business —
+ * a filter box and a namespace picker want different ones — but height, type
+ * size and skin are not, so a field always matches the buttons beside it.
+ */
+export function TextInput({
+  size = 'sm',
+  className,
+  ...rest
+}: { size?: ControlSize } & Omit<ComponentPropsWithRef<'input'>, 'size'>) {
+  return (
+    <input
+      {...rest}
+      className={clsx(CONTROL_BOX[size], CONTROL_PAD[size], FIELD_SKIN, className)}
+    />
+  )
+}
+
+/**
+ * A native select on the same scale. Native is deliberate: it keeps the
+ * platform's own keyboard handling and its long-list behaviour, which a
+ * hand-rolled listbox would have to reimplement badly.
+ */
+export function Select({
+  size = 'sm',
+  className,
+  children,
+  ...rest
+}: { size?: ControlSize } & Omit<ComponentPropsWithRef<'select'>, 'size'>) {
+  return (
+    <select
+      {...rest}
+      className={clsx(CONTROL_BOX[size], CONTROL_PAD[size], FIELD_SKIN, className)}
+    >
+      {children}
+    </select>
+  )
+}
+
+/**
+ * A checkbox at one fixed size. The unstyled default is drawn by the platform
+ * and comes out a different size on each, which is enough to knock a row of
+ * toolbar labels out of alignment.
+ */
+export function Checkbox({
+  tone = 'accent',
+  className,
+  ...rest
+}: { tone?: 'accent' | 'warn' } & ComponentPropsWithRef<'input'>) {
+  return (
+    <input
+      type="checkbox"
+      {...rest}
+      className={clsx(
+        'block size-3.5 shrink-0',
+        tone === 'warn' ? 'accent-warn' : 'accent-accent',
+        className,
+      )}
+    />
   )
 }
 
