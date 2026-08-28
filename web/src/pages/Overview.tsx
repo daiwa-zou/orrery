@@ -57,7 +57,7 @@ function CountTile({
 }) {
   if (!summary || summary.forbidden || summary.unavailable) {
     return (
-      <div className="blueprint bg-surface px-3 py-2.5">
+      <div className="blueprint flex h-full flex-col bg-surface px-3 py-2.5">
         <Corners />
         <p className="text-[11px] tracking-[.06em] text-ink-faint uppercase">{label}</p>
         {/* "you may not" and "we could not" are different answers; showing
@@ -74,14 +74,14 @@ function CountTile({
     .sort((a, b) => b[1] - a[1])
 
   const body = (
-    <div className="blueprint bg-surface px-3 py-2.5 transition-colors hover:border-accent-text/45">
+    <div className="blueprint flex h-full flex-col bg-surface px-3 py-2.5 transition-colors hover:border-accent-text/45">
       <Corners />
       <p className="text-[11px] tracking-[.06em] text-ink-faint uppercase">{label}</p>
       <p className="mt-1 font-condensed text-[27px] leading-none font-semibold tabular-nums text-ink">
         {summary.total.toLocaleString()}
       </p>
       {entries.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-auto flex flex-wrap gap-1 pt-2.5">
           {entries.slice(0, 4).map(([status, n]) => (
             <Badge key={status} tone={toneFor(status)}>
               {n} {status}
@@ -93,7 +93,7 @@ function CountTile({
   )
 
   return to ? (
-    <Link to={to} className="block">
+    <Link to={to} className="block h-full">
       {body}
     </Link>
   ) : (
@@ -162,7 +162,7 @@ function UsageBar({ label, used, total, format, thin }: {
         <div className={`h-full ${tone} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
       </div>
       {thin && (
-        <span className="w-11 shrink-0 text-right font-mono text-[10.5px] text-ink-faint">
+        <span className="w-14 shrink-0 text-right font-mono text-[10.5px] whitespace-nowrap text-ink-faint">
           {format(used)}
         </span>
       )}
