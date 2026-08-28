@@ -19,10 +19,13 @@ import {
   addSaved,
   COLUMNS_KEY,
   columnsIn,
+  describeSaved,
   isSavedIn,
   removeColumn,
   removeSaved,
   SAVED_KEY,
+  savedIn,
+  savedLabel,
   type SavedSearch,
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
@@ -31,6 +34,7 @@ import {
   Button,
   ErrorState,
   Eyebrow,
+  Field,
   GatedButton,
   Loading,
   Modal,
@@ -325,7 +329,8 @@ export function ResourceList() {
   const facets = useFacets(ref, namespace, searchActive, facetScope)
 
   // A starred view is the resource plus the narrowing that made it useful —
-  // "the failing pods in staging" rather than just "pods".
+  // "the failing pods in staging" rather than just "pods". That narrowing is
+  // the selectors, which this had been leaving behind.
   const savedView = useMemo<SavedSearch | null>(
     () =>
       meta
@@ -338,9 +343,12 @@ export function ResourceList() {
             namespaced: meta.namespaced,
             namespace,
             q,
+            labelSelector,
+            fieldSelector,
+            name: '',
           }
         : null,
-    [meta, cluster, group, version, resource, namespace, q],
+    [meta, cluster, group, version, resource, namespace, q, labelSelector, fieldSelector],
   )
 
   // Both of these are read from localStorage during render rather than copied
@@ -369,10 +377,34 @@ export function ResourceList() {
     [savedRaw, savedView],
   )
 
+  // Saving asks for a name; unsaving does not ask anything. Naming is what
+  // makes a list of saved views readable — "Failing web pods" rather than six
+  // entries all called Pods — and the field is prefilled with what the view
+  // selects, so it stays one keystroke for anyone who does not care.
+  const [naming, setNaming] = useState<string | null>(null)
   const toggleStar = () => {
     if (!savedView) return
-    if (starred) removeSaved(savedView)
-    else addSaved(savedView)
+    if (starred) {
+      // The name lives in the stored copy, not in the one built from this
+      // page, so say what the reader called it rather than re-describing it.
+      const stored = savedIn(savedRaw, savedView)
+      removeSaved(savedView)
+      toast.push({ tone: 'ok', title: `Removed “${savedLabel(stored ?? savedView)}”` })
+      return
+    }
+    setNaming(describeSaved(savedView))
+  }
+
+  const confirmSave = () => {
+    if (!savedView || naming === null) return
+    const named = { ...savedView, name: naming.trim() }
+    addSaved(named)
+    setNaming(null)
+    toast.push({
+      tone: 'ok',
+      title: `Saved “${savedLabel(named)}”`,
+      description: 'Find it in the command palette with ⌘K.',
+    })
   }
 
   const onLabelClick = useCallback(
@@ -578,24 +610,6 @@ export function ResourceList() {
 
         <LiveIndicator state={live} />
 
-        {savedView && (
-          <Button
-            size="sm"
-            icon
-            onClick={toggleStar}
-            aria-pressed={starred}
-            title={
-              starred
-                ? 'Remove this view from the command palette'
-                : 'Save this view — resource, namespace and search — to the command palette'
-            }
-            aria-label={starred ? 'Unstar this view' : 'Star this view'}
-            className={starred ? 'text-accent-text' : 'text-ink-faint hover:text-ink'}
-          >
-            {starred ? '★' : '☆'}
-          </Button>
-        )}
-
         {data && (
           <span className="text-xs text-ink-faint tabular-nums">
             {data.total.toLocaleString()} total
@@ -613,6 +627,23 @@ export function ResourceList() {
           onScopeChange={setFacetScope}
           placeholder="Search, or add a filter — app=web"
         />
+        {savedView && (
+          <Button
+            size="sm"
+            icon
+            variant={starred ? 'primary' : 'default'}
+            onClick={toggleStar}
+            aria-pressed={starred}
+            title={
+              starred
+                ? 'Remove this view from your saved views'
+                : 'Save this view — resource, namespace and every filter — to the command palette'
+            }
+            aria-label={starred ? 'Remove this saved view' : 'Save this view'}
+          >
+            {starred ? '★' : '☆'}
+          </Button>
+        )}
         <ColumnPicker
           chosen={labelColumns}
           available={(facets.data?.labels ?? []).map((f) => f.key)}
@@ -825,6 +856,71 @@ export function ResourceList() {
           onPageSize={(s) => update({ pageSize: String(s), page: '1' })}
         />
       )}
+
+      <Modal
+        open={naming !== null}
+        title="Save this view"
+        onClose={() => setNaming(null)}
+        footer={
+          <>
+            <Button size="sm" onClick={() => setNaming(null)}>
+              Cancel
+            </Button>
+            <Button size="sm" variant="primary" onClick={confirmSave}>
+              Save view
+            </Button>
+          </>
+        }
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            confirmSave()
+          }}
+        >
+          <label className="block text-[13px] text-ink-muted">
+            Name
+            <TextInput
+              size="md"
+              autoFocus
+              value={naming ?? ''}
+              onChange={(e) => setNaming(e.target.value)}
+              className="mt-1.5 w-full"
+              aria-label="Name for this saved view"
+            />
+          </label>
+        </form>
+
+        {/* Showing what is captured is the point: the filters were being
+            dropped before, and a reader has no other way to tell whether the
+            star kept them. */}
+        <Eyebrow as="p" className="mt-4 mb-1.5">
+          What gets saved
+        </Eyebrow>
+        <dl className="text-[13px]">
+          <Field label="Resource">{meta?.kind ?? resource}</Field>
+          <Field label="Namespace">
+            {namespace || <span className="text-ink-faint">All namespaces</span>}
+          </Field>
+          <Field label="Filters">
+            {activeTerms.length === 0 ? (
+              <span className="text-ink-faint">None</span>
+            ) : (
+              <span className="flex flex-wrap gap-1.5">
+                {activeTerms.map((t) => (
+                  <span
+                    key={`${t.kind}:${t.term}`}
+                    className="inline-flex items-center rounded-full bg-accent/15 px-2.5 py-0.5 font-mono text-[11px] text-ink-muted ring-1 ring-accent/45"
+                  >
+                    {t.term}
+                  </span>
+                ))}
+              </span>
+            )}
+          </Field>
+          <Field label="Search text">{q || <span className="text-ink-faint">None</span>}</Field>
+        </dl>
+      </Modal>
 
       <Modal
         open={!!pendingBulk}
