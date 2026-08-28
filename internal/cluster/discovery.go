@@ -231,7 +231,16 @@ func (d *DiscoveryCache) Resolve(ctx context.Context, group, version, resource s
 		return APIResource{}, &UnknownResourceError{Group: group, Version: version, Resource: resource}
 	}
 	if err := d.refresh(ctx); err != nil {
-		return APIResource{}, &UnknownResourceError{Group: group, Version: version, Resource: resource}
+		// A refresh that failed has not established anything about the
+		// resource. UnknownResourceError says "this cluster does not serve
+		// X" and reaches the reader as a 404, and it would be saying that on
+		// the strength of a cache already known to be stale — which is why the
+		// refresh was attempted — plus a lookup that never happened. Whoever
+		// just ran kubectl apply then goes and debugs a CRD they installed
+		// perfectly well, which is the several confusing minutes this whole
+		// refresh-on-miss path exists to prevent.
+		return APIResource{}, fmt.Errorf(
+			"could not confirm whether %q is served by this cluster: %w", resource, err)
 	}
 	if ar, ok := d.lookup(group, version, resource); ok {
 		return ar, nil
