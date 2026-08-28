@@ -8,7 +8,6 @@ import { EventSearchBar } from '../components/EventSearchBar'
 import { RefreshIcon } from '../components/icons'
 import {
   Age,
-  Badge,
   Button,
   ErrorState,
   Eyebrow,
@@ -16,6 +15,7 @@ import {
   Loading,
   Spinner,
 } from '../components/primitives'
+import { namespacesIn, scopeIsEmpty, withNamespaces } from '../lib/scope'
 import {
   addWhereTerm,
   removeWhereTerm,
@@ -26,6 +26,8 @@ import {
 
 /** "Only the things that went wrong", as a term the reader can also remove. */
 const WARNINGS_TERM = valueTerm('type', 'Warning')
+/** Its opposite, for the tally beside it. */
+const NORMAL_TERM = valueTerm('type', 'Normal')
 
 /**
  * Cluster-wide event feed. The per-object feed lives on the detail page; this
@@ -41,7 +43,11 @@ export function Events() {
   // reorder mid-comparison cost more than the freshness gains.
   const [live, setLive] = useState(true)
 
-  const namespace = params.get('namespace') ?? ''
+  const namespaces = namespacesIn(params)
+  // Every box unticked: nothing is asked of the server, because there is
+  // nothing to ask about. An empty feed with no explanation would read as a
+  // quiet cluster, which is the one thing this page must never imply.
+  const noNamespaces = scopeIsEmpty(params)
   // The search lives in the URL like every other list filter, so a narrowed
   // event view can be shared or revisited; it is applied server-side, before
   // the limit, so matches beyond the newest 500 events still surface.
@@ -82,9 +88,9 @@ export function Events() {
   }, [params, setParams])
 
   const events = useEvents(
-    cluster,
+    noNamespaces ? undefined : cluster,
     {
-      namespace: namespace || undefined,
+      namespace: namespaces.length ? namespaces : undefined,
       q: q || undefined,
       where: whereTerms.length ? whereTerms : undefined,
       limit: 500,
@@ -110,10 +116,12 @@ export function Events() {
   const rows = useMemo(() => data?.items ?? [], [data])
   const summary = useMemo(() => summarizeEvents(rows), [rows])
   const warningsOnly = whereTerms.includes(WARNINGS_TERM)
+  const normalOnly = whereTerms.includes(NORMAL_TERM)
   const filtering = q !== '' || whereTerms.length > 0
 
-  const toggleWarnings = () =>
-    commit(warningsOnly ? removeWhereTerm(query, WARNINGS_TERM) : addWhereTerm(query, WARNINGS_TERM))
+  /** The type tallies are the filter for their own type. */
+  const toggleType = (term: string) =>
+    commit(whereTerms.includes(term) ? removeWhereTerm(query, term) : addWhereTerm(query, term))
 
   const openInvolved = (row: Row) => {
     const path = objectPath(cluster!, byKind, String(row.object ?? ''), row.namespace)
@@ -144,17 +152,23 @@ export function Events() {
             what is on screen: a paused feed mistaken for a current one is the
             whole risk of offering the button at all. */}
         <LiveIndicator
-          state={live ? 'live' : 'paused'}
+          // With no namespace selected there is no feed to refresh, and a badge
+          // reading "live" over an empty page claims a stream that is not
+          // running. Static is what it is, and the toggle goes with it — there
+          // is nothing to hold still.
+          state={noNamespaces ? 'off' : live ? 'live' : 'paused'}
           detail={
-            live ? undefined : (
+            noNamespaces || live ? undefined : (
               <Age timestamp={dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined} />
             )
           }
-          onToggle={() => setLive((on) => !on)}
+          onToggle={noNamespaces ? undefined : () => setLive((on) => !on)}
           title={
-            live
-              ? 'Refreshing every 15 seconds. Pause to hold the rows still while you read.'
-              : 'Paused. Nothing moves until you refresh or resume.'
+            noNamespaces
+              ? 'Nothing is being fetched: no namespaces are selected'
+              : live
+                ? 'Refreshing every 15 seconds. Pause to hold the rows still while you read.'
+                : 'Paused. Nothing moves until you refresh or resume.'
           }
         />
 
@@ -178,7 +192,7 @@ export function Events() {
             ) : (
               <>{rows.length.toLocaleString()} shown</>
             )}
-            {namespace && <> in {namespace}</>}
+            {namespaces.length > 0 && <> in {namespaces.join(', ')}</>}
           </span>
         )}
         {isFetching && !isLoading && <Spinner className="size-3.5" />}
@@ -186,22 +200,6 @@ export function Events() {
         <div className="flex-1" />
 
         <EventSearchBar query={query} onCommit={commit} columns={columns} rows={rows} />
-
-        {/* Primary-when-on, beside the search box: the same shape every list
-            toggle in this console has. */}
-        <Button
-          size="sm"
-          variant={warningsOnly ? 'primary' : 'default'}
-          aria-pressed={warningsOnly}
-          title={
-            warningsOnly
-              ? 'Showing warnings only; click to include Normal events'
-              : 'Show only Warning events'
-          }
-          onClick={toggleWarnings}
-        >
-          Warnings
-        </Button>
 
         <Button
           size="sm"
@@ -261,14 +259,36 @@ export function Events() {
           >
             {capped ? `In the ${rows.length.toLocaleString()} shown` : 'In view'}
           </Eyebrow>
+          {/* The tallies are the type filter. They were a readout beside a
+              "Warnings" button that did the same thing from the other end of
+              the toolbar — two controls for one filter, and the one that read
+              like a control was the one you could not click. */}
           <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
             {summary.warnings > 0 && (
-              <Badge tone="warn" title="Warning events among the rows shown">
+              <button
+                type="button"
+                aria-pressed={warningsOnly}
+                title={
+                  warningsOnly
+                    ? 'Stop showing only warnings'
+                    : 'Show only the Warning events'
+                }
+                onClick={() => toggleType(WARNINGS_TERM)}
+                className={typeChipClass(warningsOnly, 'warn')}
+              >
                 {summary.warnings.toLocaleString()} warning
-              </Badge>
+              </button>
             )}
             {summary.normal > 0 && (
-              <span className="text-ink-faint">{summary.normal.toLocaleString()} normal</span>
+              <button
+                type="button"
+                aria-pressed={normalOnly}
+                title={normalOnly ? 'Stop showing only normal events' : 'Show only the Normal events'}
+                onClick={() => toggleType(NORMAL_TERM)}
+                className={typeChipClass(normalOnly, 'idle')}
+              >
+                {summary.normal.toLocaleString()} normal
+              </button>
             )}
           </span>
           <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
@@ -306,9 +326,24 @@ export function Events() {
             columns={columns}
             rows={rows}
             onRowClick={openInvolved}
-            emptyTitle={filtering ? 'No matches' : 'No recent events'}
+            emptyTitle={
+              noNamespaces ? 'No namespaces selected' : filtering ? 'No matches' : 'No recent events'
+            }
             emptyDescription={
-              filtering ? (
+              noNamespaces ? (
+                <>
+                  Every namespace is unticked, so nothing was asked for. Tick one
+                  in the namespace picker, or{' '}
+                  <button
+                    type="button"
+                    className="text-accent-text underline underline-offset-2 hover:text-accent-text-hover"
+                    onClick={() => setParams(withNamespaces(params, []), { replace: true })}
+                  >
+                    show every namespace
+                  </button>
+                  .
+                </>
+              ) : filtering ? (
                 <>
                   Nothing in this cluster's events matches the search.{' '}
                   <button
@@ -329,6 +364,15 @@ export function Events() {
       </div>
     </div>
   )
+}
+
+/** A type tally, which is also the filter for that type. */
+function typeChipClass(applied: boolean, tone: 'warn' | 'idle'): string {
+  const base =
+    'inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-[11px] ring-1 transition-colors'
+  if (applied) return `${base} bg-accent/20 text-ink ring-accent/45`
+  if (tone === 'warn') return `${base} bg-warn/12 text-warn ring-warn/30 hover:bg-warn/20`
+  return `${base} bg-canvas text-ink-muted ring-border hover:text-ink hover:ring-border-strong`
 }
 
 /** A reason chip, toned by whether that reason is carrying warnings. */
