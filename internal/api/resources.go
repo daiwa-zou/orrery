@@ -937,6 +937,43 @@ func (a *API) deleteResource(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "name": name, "namespace": namespace})
 }
 
+// yamlForView renders an object the way someone wants to read it.
+//
+// metadata.managedFields is dropped. It is bookkeeping the API server writes —
+// one entry per controller that has ever touched the object, each enumerating
+// every field it owns — and on anything managed by Helm or Argo it runs to
+// hundreds of lines standing between the reader and the spec. kubectl stopped
+// printing it by default in 1.21 for the same reason, and the editor above
+// this already tells people it is not here.
+//
+// Nothing else is removed. resourceVersion, uid and creationTimestamp look
+// like noise too, but they are not: this YAML is also what the editor sends
+// back, and resourceVersion in particular is what makes that write fail on a
+// conflict rather than silently clobber someone else's change.
+//
+// The copy is deliberate. The object handed in is the one in the informer
+// cache, shared with every other reader.
+func yamlForView(obj *unstructured.Unstructured) ([]byte, error) {
+	src := obj.Object
+	if meta, ok := src["metadata"].(map[string]any); ok {
+		if _, has := meta["managedFields"]; has {
+			trimmedMeta := make(map[string]any, len(meta))
+			for k, v := range meta {
+				if k != "managedFields" {
+					trimmedMeta[k] = v
+				}
+			}
+			trimmed := make(map[string]any, len(src))
+			for k, v := range src {
+				trimmed[k] = v
+			}
+			trimmed["metadata"] = trimmedMeta
+			src = trimmed
+		}
+	}
+	return yaml.Marshal(src)
+}
+
 // writeObjectYAML serves an object as YAML when the caller asked for
 // format=yaml, and reports whether it did. Shared by the read path and by
 // dry-run writes, which the editor diffs as text.
@@ -944,7 +981,7 @@ func (a *API) writeObjectYAML(w http.ResponseWriter, r *http.Request, obj *unstr
 	if r.URL.Query().Get("format") != "yaml" {
 		return false
 	}
-	raw, err := yaml.Marshal(obj.Object)
+	raw, err := yamlForView(obj)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return true
