@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { wsURL } from '../api/client'
+import { ATTACH_RETRIES, ATTACH_RETRY_MS, shouldRetryAttach } from '../lib/debugContainer'
 import { Badge } from './primitives'
 
 interface TerminalProps {
@@ -23,10 +24,19 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
   const hostRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
   const [message, setMessage] = useState<string>()
+  // Bumped to reconnect. The count lives in a ref keyed by the target so that
+  // switching containers starts fresh without costing an extra connect.
+  const [reconnect, setReconnect] = useState(0)
+  const retriesRef = useRef({ target: '', count: 0 })
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+
+    const target = `${cluster}/${namespace}/${pod}/${container}`
+    if (retriesRef.current.target !== target) {
+      retriesRef.current = { target, count: 0 }
+    }
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
@@ -63,6 +73,10 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
     // Guards against the old socket's async close event overwriting the new
     // session's status after a container switch.
     let stale = false
+    // Set once a retry is scheduled, so the close that follows the error does
+    // not report the session as ended while we are still trying.
+    let retrying = false
+    let retryTimer: number | undefined
 
     socket.onopen = () => {
       if (stale) return
@@ -82,11 +96,26 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
         case 'stdout':
           term.write(msg.data ?? '')
           break
-        case 'error':
+        case 'error': {
+          const text = msg.message ?? 'stream error'
+          if (shouldRetryAttach(text, retriesRef.current.count)) {
+            retriesRef.current.count += 1
+            retrying = true
+            setStatus('connecting')
+            term.write(
+              `\r\n\x1b[90mcontainer not ready — retrying ` +
+                `(${retriesRef.current.count}/${ATTACH_RETRIES})\x1b[0m\r\n`,
+            )
+            retryTimer = window.setTimeout(() => {
+              if (!stale) setReconnect((n) => n + 1)
+            }, ATTACH_RETRY_MS)
+            break
+          }
           setStatus('error')
-          setMessage(msg.message)
-          term.write(`\r\n\x1b[31m${msg.message ?? 'stream error'}\x1b[0m\r\n`)
+          setMessage(text)
+          term.write(`\r\n\x1b[31m${text}\x1b[0m\r\n`)
           break
+        }
         case 'exit':
           setStatus('closed')
           term.write('\r\n\x1b[90m— session ended —\x1b[0m\r\n')
@@ -95,10 +124,10 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
     }
 
     socket.onerror = () => {
-      if (!stale) setStatus('error')
+      if (!stale && !retrying) setStatus('error')
     }
     socket.onclose = () => {
-      if (!stale) setStatus((s) => (s === 'error' ? s : 'closed'))
+      if (!stale && !retrying) setStatus((s) => (s === 'error' ? s : 'closed'))
     }
 
     const dataSub = term.onData((data) => {
@@ -120,6 +149,7 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       stale = true
       observer.disconnect()
       window.clearTimeout(resizeTimer)
+      window.clearTimeout(retryTimer)
       dataSub.dispose()
       // Detach before disposing the terminal: a message dispatched between
       // close() and dispose() would write to a disposed instance.
@@ -127,7 +157,7 @@ export function Terminal({ cluster, namespace, pod, container }: TerminalProps) 
       socket.close()
       term.dispose()
     }
-  }, [cluster, namespace, pod, container])
+  }, [cluster, namespace, pod, container, reconnect])
 
   return (
     <div className="flex h-full flex-col">

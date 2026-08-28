@@ -15,12 +15,13 @@ import { HEALTH_TONE, navLabel } from '../lib/format'
 import {
   currentTheme,
   navStateKey,
-  readJSON,
   recordRecent,
   setTheme,
+  stringArrayIn,
   writeJSON,
   type Theme,
 } from '../lib/storage'
+import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
 import { Badge, Button, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
@@ -531,23 +532,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return titles
   }, [nav])
 
-  const [openSections, setOpenSections] = useState<string[]>(defaultOpen)
-
-  // Open state is per cluster, because the resources differ between them.
-  useEffect(() => {
-    if (!cluster) return
-    setOpenSections(readJSON<string[]>(navStateKey(cluster), defaultOpen))
-  }, [cluster, defaultOpen])
+  // Open state is per cluster, because the resources differ between them, and
+  // it is read during render rather than copied into state by an effect: an
+  // effect runs after paint, so the sidebar would draw once with the default
+  // sections open and then rearrange itself into the stored shape.
+  const navKey = navStateKey(cluster ?? '')
+  const navRaw = useStoredRaw(navKey)
+  const openSections = useMemo(
+    () => (cluster ? stringArrayIn(navRaw, defaultOpen) : defaultOpen),
+    [navRaw, cluster, defaultOpen],
+  )
 
   const toggleSection = useCallback(
     (title: string) => {
-      setOpenSections((prev) => {
-        const next = prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]
-        if (cluster) writeJSON(navStateKey(cluster), next)
-        return next
-      })
+      if (!cluster) return
+      const next = openSections.includes(title)
+        ? openSections.filter((t) => t !== title)
+        : [...openSections, title]
+      // The write is the state change: it notifies, and the value above is
+      // recomputed from the store.
+      writeJSON(navKey, next)
     },
-    [cluster],
+    [cluster, navKey, openSections],
   )
 
   // Whatever you are looking at is always visible, whatever the stored state
