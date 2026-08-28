@@ -407,7 +407,9 @@ export function useLiveResource(ref: ResourceRef | null): LiveObjectState {
  */
 export function useFacets(
   ref: ResourceRef | null,
-  namespace: string,
+  /** The namespace scope. Facets are drawn from the objects in it, so the
+   *  vocabulary the search bar offers matches the list beneath it. */
+  namespaces: string[],
   enabled: boolean,
   scope?: SearchQuery,
 ) {
@@ -419,14 +421,15 @@ export function useFacets(
           ref.group,
           ref.version,
           ref.resource,
-          namespace,
+          namespaces.join('\u0000'),
           scope?.q ?? '',
           scope?.labelSelector ?? '',
           scope?.fieldSelector ?? '',
           (scope?.where ?? []).join('\u0000'),
         ]
       : ['facets', 'none'],
-    queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, scope, signal),
+    queryFn: ({ signal }) =>
+      api.facets(ref!, namespaces.length ? namespaces : undefined, scope, signal),
     enabled: !!ref && enabled,
     staleTime: 30_000,
     placeholderData: (previous) => previous,
@@ -437,7 +440,7 @@ export function useFacets(
 export function useEvents(
   cluster: string | undefined,
   filter: {
-    namespace?: string
+    namespace?: string[]
     q?: string
     involvedName?: string
     involvedKind?: string

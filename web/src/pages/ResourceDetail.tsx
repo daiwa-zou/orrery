@@ -206,7 +206,8 @@ function ResourceDetailInner() {
   })
 
   const events = useEvents(cluster, {
-    namespace: ns,
+    // This object's own namespace, which is the only one its events are in.
+    namespace: ns ? [ns] : undefined,
     involvedName: name,
     involvedKind: obj?.kind,
     involvedUID: obj?.metadata.uid,

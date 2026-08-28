@@ -21,6 +21,16 @@ import {
   writeJSON,
   type Theme,
 } from '../lib/storage'
+import {
+  namespaceSearch,
+  namespacesIn,
+  onlyNamespace,
+  scopeIsEmpty,
+  scopeDescription,
+  scopeLabel,
+  toggleNamespace,
+  withNamespaces,
+} from '../lib/scope'
 import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
 import { Button, Eyebrow, Listbox, Spinner, type ListboxItem } from './primitives'
@@ -165,24 +175,40 @@ function ClusterSwitcher({ current }: { current?: string }) {
 }
 
 /** The neutral first row: no namespace filter at all. */
-const ALL_NAMESPACES = '\u0000all'
-
 function NamespacePicker({ cluster }: { cluster: string }) {
   const { names } = useNamespaces(cluster)
   const [params, setParams] = useSearchParams()
   const labelId = useId()
-  const current = params.get('namespace') ?? ''
 
-  // "All namespaces" is a row like any other, and it needs a value that no
-  // namespace can have — '' would make the row that clears the filter
-  // indistinguishable from no row being selected.
+  const scope = namespacesIn(params)
+  const empty = scopeIsEmpty(params)
+  /**
+   * What is ticked.
+   *
+   * No parameter means everywhere, so everywhere is what the boxes show: the
+   * list opens with all of them ticked, and narrowing is unticking. Drawing
+   * that state as nothing ticked would read as "no namespaces selected" for
+   * the state that is showing every one of them — and unticking all of them is
+   * its own state, which shows nothing.
+   */
+  const ticked = empty ? [] : scope.length > 0 ? scope : names
+  const selected = useMemo(
+    () => new Set(ticked),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ticked.join('\u0000')],
+  )
+
+  // Namespaces only. "All namespaces" used to lead the list, from when this
+  // was a single-select and picking one row was the only way to change the
+  // scope; with checkboxes and a Clear beneath them it was a third way to do
+  // what Clear does, and the one row in the list that was not a namespace.
   const items = useMemo(
-    (): ListboxItem[] => [
-      { value: ALL_NAMESPACES, label: 'All namespaces' },
-      ...names.map((n) => ({ value: n, label: n })),
-    ],
+    (): ListboxItem[] => names.map((n) => ({ value: n, label: n })),
     [names],
   )
+
+  const commit = (next: string[], none = false) =>
+    setParams(withNamespaces(params, next, none), { replace: true })
 
   return (
     <div>
@@ -191,38 +217,64 @@ function NamespacePicker({ cluster }: { cluster: string }) {
       </Eyebrow>
       <Listbox
         items={items}
-        value={current === '' ? ALL_NAMESPACES : current}
+        selected={selected}
         labelledBy={labelId}
         // The one place the word "namespace" appears is now the one control
         // named after it: the rows set the scope, and the row under them goes
         // to the namespaces themselves — status, labels, the ones that are
-        // stuck Terminating, and the actions that operate on them. That used
-        // to be a separate nav item four rows below this box, saying the same
-        // word for a different thing.
+        // stuck Terminating, and the actions that operate on them.
         footer={
-          <Link
-            to={`/c/${cluster}/r/core/v1/namespaces`}
-            className="flex items-center justify-between px-3 py-2 text-[13px] text-accent-text transition-colors hover:bg-surface-2 hover:text-accent-text-hover"
-          >
-            Manage namespaces
-            <span aria-hidden>→</span>
-          </Link>
+          <div className="text-[13px]">
+            {/* Two rows rather than one: this popup is as wide as a 250px
+                sidebar, and three controls on a line wrap into each other. */}
+            <div className="flex items-center gap-3 border-b border-border px-3 py-1.5 text-[12px]">
+              {/* One control, because with everything ticked by default
+                  "select all" and "clear the selection" are the same state:
+                  both show every namespace. This is the way back to it. */}
+              <button
+                type="button"
+                onClick={() => commit([])}
+                disabled={scope.length === 0 && !empty}
+                title="Show every namespace you may read"
+                className="text-ink-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Select all
+              </button>
+              <span className="ml-auto text-[11px] text-ink-faint tabular-nums">
+                {ticked.length} of {names.length}
+              </span>
+            </div>
+            <Link
+              to={`/c/${cluster}/r/core/v1/namespaces`}
+              className="flex items-center justify-between px-3 py-2 text-accent-text transition-colors hover:bg-surface-2 hover:text-accent-text-hover"
+            >
+              Manage namespaces
+              <span aria-hidden>→</span>
+            </Link>
+          </div>
         }
         onSelect={(value) => {
-          const next = new URLSearchParams(params)
-          if (value === ALL_NAMESPACES) next.delete('namespace')
-          else next.set('namespace', value)
-          // Changing scope invalidates the page you were on. Replace, like
-          // every other filter control, so Back leaves the page rather than
-          // replaying each namespace hop.
-          next.delete('page')
-          setParams(next, { replace: true })
+          const next = toggleNamespace(ticked, value)
+          // Every namespace ticked is the default, and it travels as no
+          // parameter at all: a shorter link, and one that keeps meaning
+          // "everywhere" after a namespace is created tomorrow.
+          if (next.length === names.length) return commit([])
+          // None ticked is a state of its own, and it shows nothing. It has to
+          // be spelled, or it would be indistinguishable from the default and
+          // the boxes would spring back to all under the reader's hands.
+          if (next.length === 0) return commit([], true)
+          commit(next)
         }}
       >
         {/* "All", not "All namespaces": the eyebrow above already said the
             word, and the row inside the list still says it in full where it
             has to stand on its own. */}
-        <span className="block truncate text-sm text-ink">{current || 'All'}</span>
+        <span
+          className={clsx('block truncate text-sm', empty ? 'text-warn' : 'text-ink')}
+          title={scopeDescription(scope, empty)}
+        >
+          {scopeLabel(scope, empty)}
+        </span>
       </Listbox>
     </div>
   )
@@ -238,7 +290,8 @@ function NavGroup({
   title,
   items,
   cluster,
-  namespace,
+  namespaces,
+  noNamespaces,
   open,
   onToggle,
   showGroup,
@@ -247,7 +300,10 @@ function NavGroup({
   title: string
   items: NavItem[]
   cluster: string
-  namespace: string
+  /** The namespace scope, carried onto every namespaced link in the group. */
+  namespaces: string[]
+  /** Whether that scope is the deliberate nothing, which links carry too. */
+  noNamespaces?: boolean
   open: boolean
   onToggle: () => void
   /** Appends the API group to each row — needed where kinds are unfamiliar. */
@@ -279,7 +335,9 @@ function NavGroup({
           {items.map((item) => {
             const groupSeg = groupSegment(item.group)
             const to = `/c/${cluster}/r/${groupSeg}/${item.version}/${item.resource}`
-            const search = item.namespaced && namespace ? `?namespace=${namespace}` : ''
+            // Cluster-scoped resources carry no scope: the picker does not
+            // apply to them, and appending it would imply otherwise.
+            const search = item.namespaced ? namespaceSearch(namespaces, noNamespaces) : ''
             // Dimmed, not hidden: hiding makes "where did Pods go?" support
             // tickets, and a namespace-scoped user may still see partial
             // results in a narrower scope than the one just checked.
@@ -291,7 +349,11 @@ function NavGroup({
                   to={to + search}
                   title={
                     denied
-                      ? `You cannot list ${item.kind} ${namespace ? `in ${namespace}` : 'cluster-wide'}`
+                      ? `You cannot list ${item.kind} ${
+                          namespaces.length > 0
+                            ? `in ${namespaces.join(', ')}`
+                            : 'cluster-wide'
+                        }`
                       : showGroup
                         ? `${item.kind} · ${item.group || 'core'}`
                         : item.kind
@@ -463,7 +525,11 @@ const AUTO_OPEN_CUSTOM_LIMIT = 8
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { cluster } = useParams<{ cluster: string }>()
   const [params] = useSearchParams()
-  const namespace = params.get('namespace') ?? ''
+  const namespaces = namespacesIn(params)
+  const noNamespaces = scopeIsEmpty(params)
+  // The single namespace, for the panes that can only take one — the command
+  // palette's jump targets, and the access checks that ask about one scope.
+  const namespace = onlyNamespace(namespaces) ?? ''
   const { data: discovery, isLoading: discoveryLoading } = useDiscovery(cluster)
 
   const nav = useMemo(() => buildNav(discovery), [discovery])
@@ -600,7 +666,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Overview
               </NavLink>
               <NavLink
-                to={`/c/${cluster}/events${namespace ? `?namespace=${namespace}` : ''}`}
+                to={`/c/${cluster}/events${namespaceSearch(namespaces, noNamespaces)}`}
                 className={sidebarLinkClass}
               >
                 Events
@@ -630,7 +696,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     title={section.title}
                     items={section.items}
                     cluster={cluster}
-                    namespace={namespace}
+                    namespaces={namespaces}
+                    noNamespaces={noNamespaces}
                     open={isOpen(section.title)}
                     onToggle={() => toggleSection(section.title)}
                     listAccess={listAccess}
@@ -641,7 +708,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   title={CUSTOM_SECTION}
                   items={nav.custom}
                   cluster={cluster}
-                  namespace={namespace}
+                  namespaces={namespaces}
+                  noNamespaces={noNamespaces}
                   open={isOpen(CUSTOM_SECTION)}
                   onToggle={() => toggleSection(CUSTOM_SECTION)}
                   showGroup
@@ -652,7 +720,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   title={ALL_SECTION}
                   items={nav.rest}
                   cluster={cluster}
-                  namespace={namespace}
+                  namespaces={namespaces}
+                  noNamespaces={noNamespaces}
                   open={isOpen(ALL_SECTION)}
                   onToggle={() => toggleSection(ALL_SECTION)}
                   showGroup

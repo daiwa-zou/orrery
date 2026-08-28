@@ -528,6 +528,7 @@ const TYPE_AHEAD_MS = 700
 export function Listbox({
   items,
   value,
+  selected,
   onSelect,
   ariaLabel,
   labelledBy,
@@ -535,8 +536,14 @@ export function Listbox({
   children,
 }: {
   items: ListboxItem[]
-  /** The selected value; '' when the list has a neutral first row. */
-  value: string
+  /** The selected value in single-select mode; ignored when `selected` is given. */
+  value?: string
+  /**
+   * The selected values, which turns the list multi-select: rows carry
+   * checkboxes, choosing one toggles it, and the popup stays open because the
+   * next thing a reader does is choose another.
+   */
+  selected?: ReadonlySet<string>
   onSelect: (value: string) => void
   ariaLabel?: string
   /** Id of an existing label, for a control that already has one on screen. */
@@ -569,8 +576,12 @@ export function Listbox({
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [open, activeIndex])
 
+  const multi = selected !== undefined
+  const isChosen = (item: ListboxItem) =>
+    multi ? selected.has(item.value) : item.value === value
+
   const openList = () => {
-    const at = items.findIndex((i) => i.value === value)
+    const at = items.findIndex((i) => isChosen(i))
     setActiveIndex(at >= 0 ? at : 0)
     setOpen(true)
   }
@@ -581,7 +592,10 @@ export function Listbox({
   }
 
   const choose = (item: ListboxItem) => {
-    close()
+    // Single-select closes: the choice is made. Multi-select does not, because
+    // picking two namespaces is one action to the reader and reopening the
+    // list between them is the console counting differently.
+    if (!multi) close()
     onSelect(item.value)
   }
 
@@ -685,6 +699,7 @@ export function Listbox({
             aria-labelledby={labelledBy}
             tabIndex={-1}
             aria-activedescendant={items[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
+            aria-multiselectable={multi || undefined}
             onKeyDown={onKeyDown}
             className="max-h-96 overflow-auto py-1 outline-none"
           >
@@ -693,16 +708,32 @@ export function Listbox({
                 key={item.value}
                 id={`${listboxId}-${i}`}
                 role="option"
-                aria-selected={item.value === value}
+                aria-selected={isChosen(item)}
                 data-active={i === activeIndex}
                 onMouseMove={() => setActiveIndex(i)}
                 onClick={() => choose(item)}
                 className={clsx(
                   'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
                   i === activeIndex && 'bg-surface-2',
-                  item.value === value && 'bg-accent-soft',
+                  isChosen(item) && 'bg-accent-soft',
                 )}
               >
+                {multi && (
+                  // Drawn rather than an <input>: the row is the control, and a
+                  // real checkbox inside it would take a second click target
+                  // and its own focus stop for the same one choice.
+                  <span
+                    aria-hidden
+                    className={clsx(
+                      'mt-[3px] grid size-3.5 shrink-0 place-items-center text-[10px] ring-1',
+                      isChosen(item)
+                        ? 'bg-accent text-canvas ring-accent'
+                        : 'ring-border-strong',
+                    )}
+                  >
+                    {isChosen(item) ? '✓' : ''}
+                  </span>
+                )}
                 {item.content ?? <span className="truncate text-[13px] text-ink">{item.label}</span>}
               </li>
             ))}

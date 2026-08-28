@@ -119,7 +119,9 @@ function nsSegment(namespace?: string): string {
 }
 
 export interface ListParams {
-  namespace?: string
+  /** The namespace scope; repeated in the query string, one per namespace.
+   *  Absent or empty means everywhere the caller may read. */
+  namespace?: string[]
   q?: string
   labelSelector?: string
   fieldSelector?: string
@@ -313,7 +315,7 @@ export const api = {
    */
   facets: (
     ref: ResourceRef,
-    namespace: string | undefined,
+    namespace: string[] | undefined,
     scope: SearchQuery | undefined,
     signal?: AbortSignal,
   ) =>
@@ -421,7 +423,7 @@ export const api = {
   events: (
     cluster: string,
     params: {
-      namespace?: string
+      namespace?: string[]
       q?: string
       involvedName?: string
       involvedKind?: string
@@ -429,6 +431,7 @@ export const api = {
       warningsOnly?: boolean
       /** Column predicates over the event table; repeated, one per term. */
       where?: string[]
+      /** The namespace scope; repeated, one per namespace. */
       limit?: number
     },
     signal?: AbortSignal,

@@ -36,7 +36,9 @@ export function WorkloadLogs({ cluster, namespace, workload, selector }: Workloa
     [cluster],
   )
   const params = useMemo(
-    () => ({ namespace, labelSelector: selector, pageSize: 100, sort: 'name' as const }),
+    // A workload's pods are in its own namespace, and nowhere else: a set of
+    // one, not the reader's scope.
+    () => ({ namespace: [namespace], labelSelector: selector, pageSize: 100, sort: 'name' as const }),
     [namespace, selector],
   )
   const { data, isLoading, error, refetch } = useLiveList(ref, params)
