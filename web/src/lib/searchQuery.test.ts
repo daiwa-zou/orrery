@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addQueryTerm,
   composeSearchInput,
+  freeTextOf,
+  isFilterTerm,
   parseSearchInput,
   queryTerms,
   removeQueryTerm,
   tokenizeSearch,
+  trailingToken,
 } from './searchQuery'
 
 describe('tokenizeSearch', () => {
@@ -215,5 +219,92 @@ describe('removeQueryTerm', () => {
     let next: typeof query = query
     for (const term of queryTerms(query)) next = removeQueryTerm(next, term)
     expect(composeSearchInput(next)).toBe('')
+  })
+})
+
+describe('isFilterTerm', () => {
+  it('is true for label, field, negation and set terms', () => {
+    for (const t of ['app=web', 'tier!=cache', '!canary', 'app in (a,b)', 'status.phase=Running']) {
+      expect(isFilterTerm(t)).toBe(true)
+    }
+  })
+
+  it('is false for free text and for something the parser refuses', () => {
+    for (const t of ['web', 'app', '', 'app=We!']) {
+      expect(isFilterTerm(t)).toBe(false)
+    }
+  })
+})
+
+describe('freeTextOf', () => {
+  it('keeps the words and drops the terms', () => {
+    expect(freeTextOf('nginx app=web error status.phase=Running')).toBe('nginx error')
+  })
+
+  it('drops a term the moment it reads as one, so it is never searched as text', () => {
+    expect(freeTextOf('app=')).toBe('')
+    expect(freeTextOf('app=w')).toBe('')
+  })
+
+  it('keeps a half-written term that is not yet a term', () => {
+    expect(freeTextOf('app')).toBe('app')
+  })
+
+  it('keeps text the parser refused, since it is not applied as a filter', () => {
+    expect(freeTextOf('app=We!')).toBe('app=We!')
+  })
+})
+
+describe('trailingToken', () => {
+  it('is the token under the cursor at the end of the input', () => {
+    expect(trailingToken('nginx app=we')).toBe('app=we')
+    expect(trailingToken('nginx ')).toBe('')
+    expect(trailingToken('')).toBe('')
+    expect(trailingToken('one')).toBe('one')
+  })
+})
+
+describe('addQueryTerm', () => {
+  const empty = { q: '', labelSelector: '', fieldSelector: '' }
+
+  it('routes a label term to the label selector', () => {
+    expect(addQueryTerm(empty, 'app=web')).toEqual({
+      q: '',
+      labelSelector: 'app=web',
+      fieldSelector: '',
+    })
+  })
+
+  it('routes a field term to the field selector', () => {
+    expect(addQueryTerm(empty, 'status.phase=Running')).toEqual({
+      q: '',
+      labelSelector: '',
+      fieldSelector: 'status.phase=Running',
+    })
+  })
+
+  it('appends rather than replacing, and leaves free text alone', () => {
+    const start = { q: 'nginx', labelSelector: 'app=web', fieldSelector: '' }
+    expect(addQueryTerm(start, 'tier!=cache')).toEqual({
+      q: 'nginx',
+      labelSelector: 'app=web,tier!=cache',
+      fieldSelector: '',
+    })
+  })
+
+  it('adding then removing a term is a round trip', () => {
+    const start = { q: '', labelSelector: 'app=web', fieldSelector: '' }
+    const added = addQueryTerm(start, 'status.phase=Running')
+    expect(removeQueryTerm(added, { kind: 'field', term: 'status.phase=Running' })).toEqual(start)
+  })
+
+  it('every added term shows up as its own chip', () => {
+    let q = empty
+    for (const t of ['app=web', 'tier!=cache', 'status.phase=Running']) q = addQueryTerm(q, t)
+    expect(queryTerms(q).map((t) => t.term)).toEqual([
+      'app=web',
+      'tier!=cache',
+      'status.phase=Running',
+    ])
   })
 })

@@ -517,7 +517,12 @@ export function ResourceList() {
   // out of a box whose end the reader cannot see. Listing the terms outside
   // it is what makes an active filter legible; the cross is what makes one
   // undoable without retyping the others.
-  const activeTerms = useMemo(() => queryTerms(searchQuery), [searchQuery])
+  // Filter terms only. Free text stays live in the search box, and repeating
+  // it here would be the duplication this row exists to avoid.
+  const activeTerms = useMemo(
+    () => queryTerms(searchQuery).filter((t) => t.kind !== 'text'),
+    [searchQuery],
+  )
 
   // A page past the end is not an empty collection. "No Pod found" there is
   // the same lie the rest of this codebase works to avoid: there are pods,
@@ -578,7 +583,7 @@ export function ResourceList() {
           facets={facets.data}
           onActivate={activateSearch}
           onScopeChange={setFacetScope}
-          placeholder="Search or filter — name, app=web, status.phase=Running"
+          placeholder="Search, or add a filter — app=web"
         />
         <ColumnPicker
           chosen={labelColumns}
@@ -642,7 +647,10 @@ export function ResourceList() {
               onClick={() => commitSearch(removeQueryTerm(searchQuery, t))}
               title={`Remove ${t.term} from the search`}
               aria-label={`Remove ${t.term} from the search`}
-              className="group inline-flex h-7 items-center gap-1.5 bg-surface-2 px-2.5 font-mono text-xs text-ink-muted ring-1 ring-border transition-colors hover:text-ink hover:ring-border-strong"
+              // Rounded, unlike the square controls around it: these are not
+              // controls but the values themselves, and the shape is what
+              // says so at a glance.
+              className="group inline-flex h-7 items-center gap-1.5 rounded-full bg-accent/15 px-3 font-mono text-xs text-ink-muted ring-1 ring-accent/45 transition-colors hover:bg-accent/25 hover:text-ink"
             >
               {t.term}
               <span aria-hidden className="text-ink-faint group-hover:text-danger">
@@ -650,7 +658,9 @@ export function ResourceList() {
               </span>
             </button>
           ))}
-          {activeTerms.length > 1 && (
+          {/* Worth offering only when it does more than the cross beside it:
+              more than one chip, or a chip plus free text in the box. */}
+          {(activeTerms.length > 1 || (activeTerms.length > 0 && q !== '')) && (
             <Button
               size="sm"
               variant="ghost"
