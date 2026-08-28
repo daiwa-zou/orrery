@@ -345,10 +345,12 @@ export function ResourceList() {
             q,
             labelSelector,
             fieldSelector,
+            where: whereTerms,
             name: '',
           }
         : null,
-    [meta, cluster, group, version, resource, namespace, q, labelSelector, fieldSelector],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meta, cluster, group, version, resource, namespace, q, labelSelector, fieldSelector, whereKey],
   )
 
   // Both of these are read from localStorage during render rather than copied
