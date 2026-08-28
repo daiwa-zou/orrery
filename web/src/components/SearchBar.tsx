@@ -3,9 +3,14 @@ import clsx from 'clsx'
 import type { FacetsResponse } from '../api/types'
 import { FilterInput } from './primitives'
 import {
-  composeSearchInput,
+  addQueryTerm,
+  freeTextOf,
+  isFilterTerm,
   parseSearchInput,
+  queryTerms,
+  removeQueryTerm,
   sameQuery,
+  trailingToken,
   type SearchProblem,
   type SearchQuery,
 } from '../lib/searchQuery'
@@ -19,12 +24,6 @@ interface Suggestion {
 }
 
 const MAX_SUGGESTIONS = 8
-
-/** The token being typed: everything after the last whitespace. */
-function activeToken(text: string): { head: string; token: string } {
-  const m = /^(.*?)(\S*)$/s.exec(text)!
-  return { head: m[1], token: m[2] }
-}
 
 function buildSuggestions(token: string, facets: FacetsResponse | undefined): Suggestion[] {
   if (!facets) return []
@@ -83,58 +82,77 @@ export function SearchBar({
   onScopeChange?: (scope: SearchQuery) => void
   placeholder?: string
 }) {
-  const [text, setText] = useState(() => composeSearchInput(query))
+  // The box holds only what is being composed: words to search for, and at
+  // most one filter term part-way through being written. A finished term
+  // leaves for the applied-filters row, so nothing is ever shown in two
+  // places at once.
+  const [draft, setDraft] = useState(() => query.q)
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const problemsId = useId()
   const [problems, setProblems] = useState<SearchProblem[]>([])
-  const textRef = useRef(text)
+  const draftRef = useRef(draft)
   useEffect(() => {
-    textRef.current = text
+    draftRef.current = draft
   })
 
-  // Adopt outside changes (back button, label chips, deep links) — but not
-  // the echo of our own commit, which would reorder what the user typed.
+  // Adopt outside changes to the free text (back button, deep links) without
+  // clobbering typing. Filter terms are not adopted: they live in the chips
+  // now, and writing them back into the box is exactly the duplication this
+  // structure removes.
   useEffect(() => {
-    if (sameQuery(parseSearchInput(textRef.current), query)) return
-    setText(composeSearchInput(query))
-  }, [query.q, query.labelSelector, query.fieldSelector]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (freeTextOf(draftRef.current) === query.q) return
+    setDraft(query.q)
+  }, [query.q]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One 300ms settle drives both the commit and the rejection message, so a
-  // term is never called invalid at a different moment than it would have
-  // been searched for — and `app=web` is not scolded at `app=w`.
+  // Free text applies as you type, because refining a word is iterative and
+  // nobody wants to press Enter to see "ngin" become "nginx". Filter terms do
+  // not: they are promoted at a boundary the reader chooses, so a half-typed
+  // `app=w` is never applied as though it were finished.
   useEffect(() => {
-    const parsed = parseSearchInput(text)
+    const next = freeTextOf(draft)
+    const trailing = trailingToken(draft)
     const t = window.setTimeout(() => {
-      setProblems(parsed.problems)
-      if (parsed.committable && !sameQuery(parsed, query)) onCommit(parsed)
+      setProblems(parseSearchInput(trailing).problems)
+      if (next !== query.q) onCommit({ ...query, q: next })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [text, query, onCommit])
+  }, [draft, query, onCommit])
 
+  // The box's cross clears the box. It used to clear everything, which was
+  // right when the box held everything; now that the applied filters live in
+  // their own row with their own crosses, wiping them from here would be
+  // clearing something the reader cannot even see from this control.
   const clear = useCallback(() => {
     setProblems([])
-    onCommit({ q: '', labelSelector: '', fieldSelector: '' })
-  }, [onCommit])
+    setDraft('')
+    onCommit({ ...query, q: '' })
+  }, [onCommit, query])
 
-  const { head, token } = activeToken(text)
+  const token = trailingToken(draft)
 
-  // Scope the vocabulary by what is already filtering, minus the term under
-  // the cursor. Including that one would narrow the suggestions by the very
-  // thing they are meant to complete: typing `tier=` would ask for the values
-  // of `tier` among objects whose tier is empty, and answer nothing.
-  const scope = useMemo<SearchQuery>(() => {
-    const parsed = parseSearchInput(head)
-    return {
-      q: parsed.q,
-      labelSelector: parsed.labelSelector,
-      fieldSelector: parsed.fieldSelector,
-    }
-  }, [head])
+  /**
+   * Move the finished term out of the box and into the chips. Returns whether
+   * anything moved, so the keystroke that triggered it can be swallowed.
+   */
+  const promote = useCallback(() => {
+    const term = trailingToken(draftRef.current)
+    if (!isFilterTerm(term)) return false
+    const rest = draftRef.current.slice(0, draftRef.current.length - term.length)
+    setDraft(rest)
+    setProblems([])
+    onCommit(addQueryTerm({ ...query, q: freeTextOf(rest) }, term))
+    return true
+  }, [onCommit, query])
 
-  // Trailing whitespace moves `head` without changing the search it denotes,
-  // so report only real changes and leave the caller's query key alone.
+  // The suggestions are drawn from what is already filtering. That is exactly
+  // the committed query now: the term being completed has not been promoted
+  // yet, so it cannot narrow the vocabulary it is asking for.
+  const scope = useMemo<SearchQuery>(
+    () => ({ q: query.q, labelSelector: query.labelSelector, fieldSelector: query.fieldSelector }),
+    [query.q, query.labelSelector, query.fieldSelector],
+  )
   const reportedScope = useRef(scope)
   useEffect(() => {
     if (sameQuery(reportedScope.current, scope)) return
@@ -153,11 +171,26 @@ export function SearchBar({
 
   const accept = useCallback(
     (s: Suggestion) => {
-      setText(head + s.token + (s.token.endsWith('=') ? '' : ' '))
+      const head = draftRef.current.slice(
+        0,
+        draftRef.current.length - trailingToken(draftRef.current).length,
+      )
+      // A key still needs its value, so it stays in the box with the dropdown
+      // open on the values. A finished term has nothing left to type and goes
+      // straight to the chips.
+      if (s.token.endsWith('=')) {
+        setDraft(head + s.token)
+        setOpen(true)
+        inputRef.current?.focus()
+        return
+      }
+      setDraft(head)
+      setProblems([])
+      onCommit(addQueryTerm({ ...query, q: freeTextOf(head) }, s.token))
       setOpen(true)
       inputRef.current?.focus()
     },
-    [head],
+    [onCommit, query],
   )
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -165,6 +198,31 @@ export function SearchBar({
       setOpen(false)
       return
     }
+
+    // Space and Enter are the boundaries that say "this term is finished".
+    // Space only when there is a term to finish, so it stays an ordinary
+    // space while free text is being typed.
+    if ((e.key === ' ' || e.key === 'Enter') && isFilterTerm(token)) {
+      if (!(open && suggestions.length > 0 && e.key === 'Enter')) {
+        e.preventDefault()
+        promote()
+        return
+      }
+    }
+
+    // Backspace on an empty box takes the last chip back for editing, rather
+    // than doing nothing — the usual way out of a filter added by mistake.
+    if (e.key === 'Backspace' && draft === '') {
+      const chips = queryTerms(query).filter((t) => t.kind !== 'text')
+      const last = chips[chips.length - 1]
+      if (last) {
+        e.preventDefault()
+        setDraft(last.term)
+        onCommit(removeQueryTerm(query, last))
+        return
+      }
+    }
+
     if (!open || suggestions.length === 0) {
       if (e.key === 'ArrowDown') setOpen(true)
       return
@@ -194,9 +252,9 @@ export function SearchBar({
   return (
     <FilterInput
       inputRef={inputRef}
-      value={text}
+      value={draft}
       onValueChange={(next) => {
-        setText(next)
+        setDraft(next)
         setOpen(true)
       }}
       onClear={clear}
@@ -206,7 +264,13 @@ export function SearchBar({
         onActivate?.()
         setOpen(true)
       }}
-      onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+      onBlur={() => {
+        // Leaving the box is also a boundary: a finished term should not be
+        // silently abandoned because the reader clicked away instead of
+        // pressing space.
+        promote()
+        window.setTimeout(() => setOpen(false), 150)
+      }}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       aria-label="Search and filter"

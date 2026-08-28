@@ -201,3 +201,48 @@ export function removeQueryTerm(query: SearchQuery, target: QueryTerm): SearchQu
     fieldSelector: target.kind === 'field' ? without(query.fieldSelector) : query.fieldSelector,
   }
 }
+
+/** Whether a token is a selector the server will actually apply. */
+export function isFilterTerm(token: string): boolean {
+  const parsed = parseSearchInput(token)
+  return parsed.labelSelector !== '' || parsed.fieldSelector !== ''
+}
+
+/**
+ * The free-text half of what is in the box.
+ *
+ * The input holds two different things at once — words to search for, and a
+ * filter term part-way through being written — and only the words belong in
+ * `q`. Sending `app=we` as free text while it is still being typed would
+ * search object names for the string "app=we" and find nothing, so a term is
+ * excluded from the moment it reads as one.
+ */
+export function freeTextOf(input: string): string {
+  return tokenizeSearch(input)
+    .filter((t) => !isFilterTerm(t))
+    .join(' ')
+}
+
+/** The last whitespace-separated token, which is the one being typed. */
+export function trailingToken(input: string): string {
+  const m = /(\S*)$/.exec(input)
+  return m ? m[1] : ''
+}
+
+/**
+ * The query with one more term applied.
+ *
+ * Where it lands is decided by the parser rather than by the caller, so a
+ * chip can never end up in the selector the server would reject it from.
+ */
+export function addQueryTerm(query: SearchQuery, term: string): SearchQuery {
+  const parsed = parseSearchInput(term)
+  const join = (existing: string, added: string) =>
+    !added ? existing : existing ? `${existing},${added}` : added
+
+  return {
+    q: query.q,
+    labelSelector: join(query.labelSelector, parsed.labelSelector),
+    fieldSelector: join(query.fieldSelector, parsed.fieldSelector),
+  }
+}
