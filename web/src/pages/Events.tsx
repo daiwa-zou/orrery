@@ -6,7 +6,14 @@ import type { APIResource, Row } from '../api/types'
 import { isCustomGroup } from '../components/nav'
 import { DataTable } from '../components/DataTable'
 import { RefreshIcon } from '../components/icons'
-import { Button, ErrorState, Loading, Spinner } from '../components/primitives'
+import {
+  Button,
+  Checkbox,
+  ErrorState,
+  Loading,
+  Spinner,
+  TextInput,
+} from '../components/primitives'
 import { useDebouncedInput } from '../lib/useDebouncedInput'
 
 /**
@@ -118,23 +125,18 @@ export function Events() {
 
         <div className="flex-1" />
 
-        <label className="flex items-center gap-1.5 text-[12.5px] text-ink-muted">
-          <input
-            type="checkbox"
-            checked={warningsOnly}
-            onChange={toggleWarnings}
-            className="accent-warn"
-          />
+        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+          <Checkbox tone="warn" checked={warningsOnly} onChange={toggleWarnings} />
           Warnings only
         </label>
 
-        <input
+        <TextInput
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
           placeholder="Filter events"
           aria-label="Filter events"
           title="Matches object, reason, message or namespace"
-          className="w-56 bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-56"
         />
         <Button
           size="sm"

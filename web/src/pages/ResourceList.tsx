@@ -23,7 +23,16 @@ import {
   type SavedSearch,
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
-import { Badge, Button, ErrorState, GatedButton, Loading, Modal, Spinner } from '../components/primitives'
+import {
+  Badge,
+  Button,
+  ErrorState,
+  GatedButton,
+  Loading,
+  Modal,
+  Spinner,
+  TextInput,
+} from '../components/primitives'
 import { useToast } from '../components/Toast'
 
 type BulkAction = 'delete' | 'restart'
@@ -104,12 +113,12 @@ function ColumnPicker({
             }}
             className="flex gap-1"
           >
-            <input
+            <TextInput
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="label key, e.g. team"
               aria-label="Label key to add as a column"
-              className="min-w-0 flex-1 border border-border bg-surface-2 px-1.5 py-1 font-mono text-[11.5px] text-ink outline-none focus:border-accent"
+              className="flex-1 font-mono"
             />
             <Button size="sm" type="submit" disabled={!draft.trim()}>
               Add
@@ -521,7 +530,9 @@ export function ResourceList() {
         <LiveIndicator state={live} />
 
         {savedView && (
-          <button
+          <Button
+            size="sm"
+            icon
             onClick={toggleStar}
             aria-pressed={starred}
             title={
@@ -530,13 +541,10 @@ export function ResourceList() {
                 : 'Save this view — resource, namespace and search — to the command palette'
             }
             aria-label={starred ? 'Unstar this view' : 'Star this view'}
-            className={
-              'grid size-6 place-items-center border border-border text-xs transition-colors ' +
-              (starred ? 'text-accent-text' : 'text-ink-faint hover:text-ink')
-            }
+            className={starred ? 'text-accent-text' : 'text-ink-faint hover:text-ink'}
           >
             {starred ? '★' : '☆'}
-          </button>
+          </Button>
         )}
 
         {data && (

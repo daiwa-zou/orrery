@@ -4,7 +4,7 @@ import type { BarCell, Column, Row } from '../api/types'
 import { duration, ratioTone } from '../lib/format'
 import { rowKey, toggleAll, toggleRow } from '../lib/selection'
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
-import { Age, Badge, EmptyState, StatusBadge } from './primitives'
+import { Age, Badge, Button, Checkbox, EmptyState, Select, StatusBadge } from './primitives'
 
 export interface DataTableProps {
   columns: Column[]
@@ -210,10 +210,8 @@ export function DataTable({
           <tr className="border-b border-border text-left">
             {selectable && (
               <th scope="col" className="w-8 px-3 py-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   aria-label={allSelected ? 'Deselect all rows' : 'Select all rows'}
-                  className="block size-3.5 accent-accent"
                   checked={allSelected}
                   ref={(el) => {
                     if (el) el.indeterminate = someSelected && !allSelected
@@ -304,10 +302,8 @@ export function DataTable({
               >
                 {selectable && (
                   <td className="px-3 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       aria-label={`Select ${row.name}`}
-                      className="block size-3.5 accent-accent"
                       checked={isSelected}
                       onChange={() => onSelectedChange!(toggleRow(selected!, key))}
                     />
@@ -382,41 +378,45 @@ export function Pagination({
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1.5">
           <span>Rows</span>
-          <select
+          <Select
             value={pageSize}
             onChange={(e) => onPageSize(Number(e.target.value))}
-            className="border border-border bg-surface-2 px-1.5 py-1 text-ink"
+            aria-label="Rows per page"
           >
             {[25, 50, 100, 250].map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <div className="flex items-center gap-1">
-          <button
+          <Button
+            size="sm"
+            icon
+            variant="ghost"
             aria-label="Previous page"
             title="Previous page"
-            className="p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page - 1)}
             disabled={page <= 1}
           >
             <ChevronLeftIcon className="size-3.5" />
-          </button>
+          </Button>
           <span className="tabular-nums">
             {page} / {pages}
           </span>
-          <button
+          <Button
+            size="sm"
+            icon
+            variant="ghost"
             aria-label="Next page"
             title="Next page"
-            className="p-1 hover:bg-surface-2 disabled:opacity-40"
             onClick={() => onPage(page + 1)}
             disabled={page >= pages}
           >
             <ChevronRightIcon className="size-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

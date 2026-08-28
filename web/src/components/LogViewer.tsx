@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { wsURL } from '../api/client'
 import type { LogMessage } from '../api/types'
 import { DownloadIcon, FollowIcon } from './icons'
-import { Badge, Button, Spinner } from './primitives'
+import { Badge, Button, Checkbox, Select, Spinner, TextInput } from './primitives'
 
 /** How many lines to keep in the DOM. Beyond this the browser, not the
  *  cluster, becomes the bottleneck. */
@@ -218,18 +218,17 @@ export function LogViewer({
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-[7px]">
         {containers.length > 1 && (
-          <select
+          <Select
             value={container}
             onChange={(e) => setContainer(e.target.value)}
             aria-label="Container"
-            className="bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border"
           >
             {containers.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
-          </select>
+          </Select>
         )}
 
         <Badge tone={status === 'streaming' ? 'ok' : status === 'error' ? 'danger' : 'idle'}>
@@ -254,42 +253,27 @@ export function LogViewer({
                 : 'Log stream failed.'}
         </span>
 
-        <input
+        <TextInput
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter lines"
           aria-label="Filter log lines"
-          className="w-44 bg-surface-2 px-2 py-1 text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-44"
         />
 
         <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={wrap}
-            onChange={(e) => setWrap(e.target.checked)}
-          />
+          <Checkbox checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
           Wrap
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={timestamps}
-            onChange={(e) => setTimestamps(e.target.checked)}
-          />
+          <Checkbox checked={timestamps} onChange={(e) => setTimestamps(e.target.checked)} />
           Timestamps
         </label>
         <label
           className="flex items-center gap-1.5 text-xs text-ink-muted"
           title="Show logs from the previous container instance — the only way to read why a crashed container died"
         >
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={previous}
-            onChange={(e) => setPrevious(e.target.checked)}
-          />
+          <Checkbox checked={previous} onChange={(e) => setPrevious(e.target.checked)} />
           Previous
         </label>
 
