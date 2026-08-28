@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { wsURL } from '../api/client'
 import type { LogMessage } from '../api/types'
 import { DownloadIcon, FollowIcon } from './icons'
-import { Badge, Button, Checkbox, Select, Spinner, TextInput } from './primitives'
+import { Badge, Button, Checkbox, FilterInput, Select, Spinner } from './primitives'
 
 /** How many lines to keep in the DOM. Beyond this the browser, not the
  *  cluster, becomes the bottleneck. */
@@ -253,9 +253,9 @@ export function LogViewer({
                 : 'Log stream failed.'}
         </span>
 
-        <TextInput
+        <FilterInput
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onValueChange={setFilter}
           placeholder="Filter lines"
           aria-label="Filter log lines"
           className="w-44"

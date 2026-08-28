@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { FacetsResponse } from '../api/types'
-import { TextInput } from './primitives'
+import { FilterInput } from './primitives'
 import {
   composeSearchInput,
   parseSearchInput,
@@ -9,7 +9,6 @@ import {
   type SearchProblem,
   type SearchQuery,
 } from '../lib/searchQuery'
-import { CloseIcon, SearchIcon } from './icons'
 
 interface Suggestion {
   /** Replacement for the token being typed. */
@@ -107,33 +106,9 @@ export function SearchBar({
     return () => window.clearTimeout(t)
   }, [text, query, onCommit])
 
-  // "/" focuses the bar, the convention everywhere a list can be filtered.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
-      const target = e.target as HTMLElement | null
-      // "/" is a character before it is a shortcut; never take it from
-      // someone who is typing one.
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-      e.preventDefault()
-      inputRef.current?.focus()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
   const clear = useCallback(() => {
-    setText('')
     setProblems([])
     onCommit({ q: '', labelSelector: '', fieldSelector: '' })
-    inputRef.current?.focus()
   }, [onCommit])
 
   const { head, token } = activeToken(text)
@@ -187,47 +162,30 @@ export function SearchBar({
   const showProblems = invalid && !(open && suggestions.length > 0)
 
   return (
-    <div className="relative w-full max-w-md min-w-56">
-      <SearchIcon
-        className="pointer-events-none absolute top-2 left-2.5 size-3.5 text-ink-faint"
-      />
-      <TextInput
-        ref={inputRef}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value)
-          setOpen(true)
-        }}
-        onFocus={() => {
-          onActivate?.()
-          setOpen(true)
-        }}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        onKeyDown={onKeyDown}
-        placeholder={placeholder}
-        aria-label="Search and filter"
-        aria-expanded={open && suggestions.length > 0}
-        aria-autocomplete="list"
-        role="combobox"
-        title={'Free text matches name, namespace and labels.\nFilter terms: app=web, tier!=cache, !canary, app in (web,api), status.phase=Running'}
-        aria-invalid={invalid}
-        aria-describedby={showProblems ? problemsId : undefined}
-        className={clsx('w-full pl-7', text === '' ? 'pr-2.5' : 'pr-7', invalid && 'ring-danger')}
-      />
-      {text !== '' && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          title="Clear search"
-          // Mousedown would blur the input first and the click would land on
-          // whatever moved under the cursor.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={clear}
-          className="absolute top-0 right-0 grid size-7 place-items-center text-ink-faint transition-colors hover:text-ink"
-        >
-          <CloseIcon className="size-3.5" />
-        </button>
-      )}
+    <FilterInput
+      inputRef={inputRef}
+      value={text}
+      onValueChange={(next) => {
+        setText(next)
+        setOpen(true)
+      }}
+      onClear={clear}
+      invalid={invalid}
+      className="w-full max-w-md min-w-56"
+      onFocus={() => {
+        onActivate?.()
+        setOpen(true)
+      }}
+      onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      aria-label="Search and filter"
+      aria-expanded={open && suggestions.length > 0}
+      aria-autocomplete="list"
+      role="combobox"
+      title={'Free text matches name, namespace and labels.\nFilter terms: app=web, tier!=cache, !canary, app in (web,api), status.phase=Running'}
+      aria-describedby={showProblems ? problemsId : undefined}
+    >
       {showProblems && (
         <div
           id={problemsId}
@@ -282,6 +240,6 @@ export function SearchBar({
           )}
         </ul>
       )}
-    </div>
+    </FilterInput>
   )
 }
