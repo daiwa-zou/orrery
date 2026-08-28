@@ -191,13 +191,21 @@ func computeFacets(objs []*unstructured.Unstructured) facetsResponse {
 	labelVals := map[string]map[string]int{}
 	fieldVals := map[string]map[string]int{}
 
+	// Two maps per object were being built and thrown away here — GetLabels
+	// copies the label map, fieldSetFor builds a fields.Set — to read the
+	// labels once and four field keys. The list path stopped doing that a
+	// while ago and left labelsOf and objectFields behind for the purpose;
+	// this walk, which the file above calls the most expensive read in the
+	// system and which every keystroke in the search bar triggers, had never
+	// been changed over.
 	for _, o := range objs {
-		for k, v := range o.GetLabels() {
+		for k, raw := range labelsOf(o) {
+			v, _ := raw.(string)
 			bump(labelVals, k, v)
 		}
-		set := fieldSetFor(o)
+		fields := objectFields{o}
 		for _, k := range fieldFacetKeys {
-			if v := set[k]; v != "" {
+			if v := fields.Get(k); v != "" {
 				bump(fieldVals, k, v)
 			}
 		}
@@ -244,16 +252,45 @@ func collapseFacets(m map[string]map[string]int, truncated bool) ([]facet, bool)
 
 	out := make([]facet, 0, len(keys))
 	for _, k := range keys {
-		vals := make([]string, 0, len(m[k.key]))
-		for v := range m[k.key] {
-			vals = append(vals, v)
-		}
-		sort.Strings(vals)
-		if len(vals) > maxFacetValuesPerKey {
-			vals = vals[:maxFacetValuesPerKey]
-			truncated = true
-		}
+		vals, cut := topValues(m[k.key])
+		truncated = truncated || cut
 		out = append(out, facet{Key: k.key, Values: vals})
 	}
 	return out, truncated
+}
+
+// topValues picks the values worth suggesting for one key, most common first,
+// and returns them in alphabetical order for the dropdown.
+//
+// Which twenty matters more here than it does for keys. Keys were already
+// chosen by how many objects carry them — "the caps keep the vocabulary people
+// actually filter by and drop the long tail" — but values were sorted
+// alphabetically and then cut, so a `version` label offered v1.0.0 through
+// v1.0.19 and never the version that is actually deployed, and a nodeName
+// facet on a large cluster offered the twenty nodes whose names sort first.
+// The counts needed to do better were being collected already and thrown away.
+//
+// Displaying them alphabetically once chosen is the other half: a dropdown is
+// scanned by eye for a value you already have in mind, which is a different
+// job from deciding which values belong in it.
+func topValues(counts map[string]int) ([]string, bool) {
+	vals := make([]string, 0, len(counts))
+	for v := range counts {
+		vals = append(vals, v)
+	}
+	if len(vals) <= maxFacetValuesPerKey {
+		sort.Strings(vals)
+		return vals, false
+	}
+
+	sort.Slice(vals, func(i, j int) bool {
+		if counts[vals[i]] != counts[vals[j]] {
+			return counts[vals[i]] > counts[vals[j]]
+		}
+		// Ties break by name so the same objects always yield the same list.
+		return vals[i] < vals[j]
+	})
+	vals = vals[:maxFacetValuesPerKey]
+	sort.Strings(vals)
+	return vals, true
 }
