@@ -250,3 +250,29 @@ describe('objectPath', () => {
     expect(objectPath('lens-a', new Map(), 'Pod/web-1', 'demo')).toBeUndefined()
   })
 })
+
+describe('cluster-scoped views', () => {
+  // The shared fixture is a slice of namespaced resources; these two are the
+  // point of this group, so they are named here.
+  const nav = buildNav(
+    discovery([
+      resource({ kind: 'Pod', name: 'pods' }),
+      resource({ kind: 'Node', name: 'nodes', namespaced: false }),
+      resource({ kind: 'Namespace', name: 'namespaces', namespaced: false }),
+    ]),
+  )
+
+  it('lifts nodes and namespaces out of the namespace-filtered sections', () => {
+    // They used to live in a section called "Cluster", between Configuration
+    // and the CRDs — among lists that all move when the namespace picker
+    // changes, when these two never do.
+    expect(nav.clusterScoped.map((i) => i.resource)).toEqual(['nodes', 'namespaces'])
+    expect(nav.primary.map((s) => s.title)).not.toContain('Cluster')
+  })
+
+  it('claims them, so they do not also appear under All resources', () => {
+    const rest = nav.rest.map((i) => i.resource)
+    expect(rest).not.toContain('nodes')
+    expect(rest).not.toContain('namespaces')
+  })
+})

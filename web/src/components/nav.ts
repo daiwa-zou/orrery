@@ -14,6 +14,12 @@ import type { APIResource, DiscoveryResponse } from '../api/types'
  * Nothing is unreachable — the command palette searches all of it.
  */
 export interface Nav {
+  /**
+   * The cluster's own structure: the resources the namespace picker does not
+   * apply to. They sit above the sections rather than inside one, because the
+   * sections are all namespace-filtered and these are not.
+   */
+  clusterScoped: NavItem[]
   /** Always visible, grouped into named sections. */
   primary: NavSection[]
   /** Resources from API groups Kubernetes does not ship: real CRDs. */
@@ -51,8 +57,20 @@ const CURATED: { title: string; resources: string[] }[] = [
   { title: 'Configuration', resources: ['configmaps', 'secrets'] },
   // Events are deliberately absent: the dedicated Events page above the
   // sections replaces the raw core/v1 list.
-  { title: 'Cluster', resources: ['nodes', 'namespaces'] },
 ]
+
+/**
+ * The cluster-scoped views, in the order they are read in.
+ *
+ * These used to be a section called "Cluster", which was a tautology in a
+ * console that shows one cluster at a time — every item in this sidebar is
+ * that cluster's. Worse, it put them among the namespace-filtered sections:
+ * pick a namespace and every list below moves except these two, because a
+ * node is not in a namespace and neither is a namespace. Sitting them beside
+ * Overview and Events, above the sections, gives the sidebar a rule it can
+ * keep: above the fold is the cluster, below it is what runs inside it.
+ */
+const CLUSTER_SCOPED = ['nodes', 'namespaces']
 
 /**
  * Kubernetes' own API groups that predate the `*.k8s.io` convention and so
@@ -105,7 +123,7 @@ function toItem(r: APIResource): NavItem {
 const byKind = (a: NavItem, b: NavItem) => a.kind.localeCompare(b.kind)
 
 export function buildNav(discovery?: DiscoveryResponse): Nav {
-  const empty: Nav = { primary: [], custom: [], rest: [] }
+  const empty: Nav = { clusterScoped: [], primary: [], custom: [], rest: [] }
   if (!discovery) return empty
 
   const all: APIResource[] = discovery.groups.flatMap((g) => g.resources)
@@ -121,6 +139,15 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
   }
 
   const claimed = new Set<string>()
+
+  const clusterScoped: NavItem[] = []
+  for (const name of CLUSTER_SCOPED) {
+    const r = byName.get(name)
+    if (!r) continue
+    clusterScoped.push(toItem(r))
+    claimed.add(`${r.group}/${r.name}`)
+  }
+
   const primary: NavSection[] = []
 
   for (const section of CURATED) {
@@ -148,7 +175,7 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
   custom.sort(byKind)
   rest.sort(byKind)
 
-  return { primary, custom, rest }
+  return { clusterScoped, primary, custom, rest }
 }
 
 /**

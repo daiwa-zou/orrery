@@ -47,6 +47,36 @@ function sidebarLinkClass({ isActive }: { isActive: boolean }): string {
   )
 }
 
+/**
+ * One of the cluster's own views — Nodes, Namespaces — in the block above the
+ * sections.
+ *
+ * It reads like Overview and Events beside it rather than like a section item,
+ * because that is what it is: a view of the cluster, not of what is running in
+ * a namespace. The access dimming is the sections' though, so a reader who
+ * cannot list nodes is told so here too.
+ */
+function ClusterScopedLink({
+  item,
+  cluster,
+  denied,
+}: {
+  item: NavItem
+  cluster: string
+  denied?: boolean
+}) {
+  const to = `/c/${cluster}/r/${groupSegment(item.group)}/${item.version}/${item.resource}`
+  return (
+    <NavLink
+      to={to}
+      title={denied ? `You cannot list ${item.kind} cluster-wide` : item.kind}
+      className={({ isActive }) => clsx(sidebarLinkClass({ isActive }), denied && 'opacity-40')}
+    >
+      {navLabel(item.kind)}
+    </NavLink>
+  )
+}
+
 function HealthDot({ status }: { status: HealthStatus }) {
   const tone = HEALTH_TONE[status]
   return (
@@ -72,7 +102,9 @@ function ClusterSwitcher({ current }: { current?: string }) {
   const { data, isLoading } = useClusters()
   const navigate = useNavigate()
 
-  const clusters = data?.clusters ?? []
+  // Memoised: a fresh [] every render would rebuild the option rows below it
+  // on every render too.
+  const clusters = useMemo(() => data?.clusters ?? [], [data])
   const active = clusters.find((c) => c.name === current)
 
   const items = useMemo(
@@ -572,6 +604,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 Events
               </NavLink>
+              {/* The cluster's own resources belong with the cluster's own
+                  pages. Below this point every list is filtered by the
+                  namespace picker; nothing above it is. */}
+              {nav.clusterScoped.map((item) => (
+                <ClusterScopedLink
+                  key={`${item.group}/${item.resource}`}
+                  item={item}
+                  cluster={cluster}
+                  denied={listAccess?.get(`${item.group}/${item.resource}`) === false}
+                />
+              ))}
 
               {discoveryLoading && (
                 <p className="flex items-center gap-2 px-3 py-2 text-sm text-ink-faint">
