@@ -470,7 +470,12 @@ export function Overview() {
             )}
           </Card>
 
-          <Card title="Live utilisation">
+          {/* "Node utilisation", not "Live": the card is a reading per node
+              against that node's allocatable, and "live" now means something
+              specific in this console — the badge that says a view keeps
+              itself current — which this card, polling every thirty seconds
+              like the ones around it, does not get to claim. */}
+          <Card title="Node utilisation">
             {nodeMetrics.kind === 'loading' ? (
               <div className="flex items-center gap-2 text-[13px] text-ink-faint">
                 <Spinner className="size-3.5" /> Reading metrics
