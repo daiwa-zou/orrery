@@ -162,7 +162,7 @@ func (a *API) listFacets(w http.ResponseWriter, r *http.Request) {
 	// query parameters. Reimplementing the match here would let the two drift,
 	// and a suggestion that the list then disagrees with is the exact failure
 	// this is meant to remove.
-	matching, err := filterObjects(objs, r)
+	matching, err := filterObjects(objs, r, a.tableFor(ctx, res.cluster, res.resource))
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
