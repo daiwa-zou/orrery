@@ -3,6 +3,7 @@ import { Corners } from './primitives'
 
 const SHORTCUTS: { what: string; key: string }[] = [
   { what: 'Open the command palette', key: '⌘K' },
+  { what: 'Focus the search bar', key: '/' },
   { what: 'Keyboard shortcuts', key: '?' },
   { what: 'Close dialogs and menus', key: 'esc' },
   { what: 'Navigate lists and results', key: '↑↓' },

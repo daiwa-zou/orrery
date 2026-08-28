@@ -70,6 +70,41 @@ describe('parseSearchInput', () => {
     expect(parseSearchInput('app=We!b').committable).toBe(false)
   })
 
+  it('names the term it rejected, and why', () => {
+    const { problems } = parseSearchInput('web app=We!b tier=cache')
+    expect(problems).toHaveLength(1)
+    expect(problems[0].term).toBe('app=We!b')
+    expect(problems[0].reason).toMatch(/label value/i)
+  })
+
+  it('reports a bad key in an exists-negation and in a set expression', () => {
+    expect(parseSearchInput('!Not/A/Key').problems[0]).toMatchObject({
+      term: '!Not/A/Key',
+    })
+    expect(parseSearchInput('Not/A/Key in (a,b)').problems[0]).toMatchObject({
+      term: 'Not/A/Key in (a,b)',
+    })
+  })
+
+  it('reports every rejected term, not just the first', () => {
+    const { problems } = parseSearchInput('app=We!b tier=Ca!che')
+    expect(problems.map((p) => p.term)).toEqual(['app=We!b', 'tier=Ca!che'])
+  })
+
+  it('leaves problems empty for anything committable', () => {
+    for (const input of ['', 'web', 'app=web', '!canary', 'app in (a,b)', 'status.phase=Running']) {
+      expect(parseSearchInput(input).problems).toEqual([])
+    }
+  })
+
+  it('keeps the valid terms of a partly-invalid input, so the bar can still show them', () => {
+    expect(parseSearchInput('web app=We!b tier=cache')).toMatchObject({
+      q: 'web',
+      labelSelector: 'tier=cache',
+      committable: false,
+    })
+  })
+
   it('allows an empty label value (matches empty-valued labels)', () => {
     expect(parseSearchInput('app=')).toMatchObject({
       labelSelector: 'app=',

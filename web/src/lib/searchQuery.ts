@@ -57,6 +57,14 @@ export function tokenizeSearch(text: string): string[] {
   return out
 }
 
+/** A term the parser recognised as a selector but cannot send. */
+export interface SearchProblem {
+  /** The term exactly as typed, so a message can point at it. */
+  term: string
+  /** Why it was rejected, in the words of the validator that rejected it. */
+  reason: string
+}
+
 export interface ParsedSearch extends SearchQuery {
   /**
    * False while a term is recognizably a selector mid-edit but not yet valid
@@ -64,24 +72,33 @@ export interface ParsedSearch extends SearchQuery {
    * query instead of sending a request that can only 400.
    */
   committable: boolean
+  /**
+   * Which terms were rejected and why. Holding the previous query is the
+   * right behaviour, but doing it silently leaves the reader looking at an
+   * unfiltered list believing it is filtered — so the bar needs something to
+   * show them.
+   */
+  problems: SearchProblem[]
 }
 
 export function parseSearchInput(text: string): ParsedSearch {
   const labels: string[] = []
   const fields: string[] = []
   const words: string[] = []
-  let committable = true
+  const problems: SearchProblem[] = []
 
   for (const token of tokenizeSearch(text)) {
     const set = SET_EXPR_RE.exec(token)
     if (set) {
-      if (validateMetaKey(set[1]) === undefined) labels.push(token)
-      else committable = false
+      const bad = validateMetaKey(set[1])
+      if (bad === undefined) labels.push(token)
+      else problems.push({ term: token, reason: bad })
       continue
     }
     if (token.startsWith('!') && token.length > 1 && !token.includes('=')) {
-      if (validateMetaKey(token.slice(1)) === undefined) labels.push(token)
-      else committable = false
+      const bad = validateMetaKey(token.slice(1))
+      if (bad === undefined) labels.push(token)
+      else problems.push({ term: token, reason: bad })
       continue
     }
     const term = TERM_RE.exec(token)
@@ -93,16 +110,18 @@ export function parseSearchInput(text: string): ParsedSearch {
         if (!key.includes('/') && SUPPORTED_FIELD_KEYS.includes(key)) {
           fields.push(`${key}${op === '==' ? '=' : op}${value}`)
         } else if (key.includes('/') && validateMetaKey(key) === undefined) {
-          if (validateLabelValue(value) === undefined) labels.push(token)
-          else committable = false
+          const bad = validateLabelValue(value)
+          if (bad === undefined) labels.push(token)
+          else problems.push({ term: token, reason: bad })
         } else {
           words.push(token)
         }
         continue
       }
       if (validateMetaKey(key) === undefined) {
-        if (validateLabelValue(value) === undefined) labels.push(token)
-        else committable = false
+        const bad = validateLabelValue(value)
+        if (bad === undefined) labels.push(token)
+        else problems.push({ term: token, reason: bad })
         continue
       }
     }
@@ -113,7 +132,8 @@ export function parseSearchInput(text: string): ParsedSearch {
     q: words.join(' '),
     labelSelector: labels.join(','),
     fieldSelector: fields.join(','),
-    committable,
+    committable: problems.length === 0,
+    problems,
   }
 }
 
