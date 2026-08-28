@@ -330,15 +330,61 @@ export function trailingToken(input: string): string {
  */
 export function addQueryTerm(query: SearchQuery, term: string): SearchQuery {
   const parsed = parseSearchInput(term)
-  const join = (existing: string, added: string) =>
-    !added ? existing : existing ? `${existing},${added}` : added
 
+  /**
+   * Adds terms to a selector without letting it contradict itself.
+   *
+   * An exact repeat is dropped: `app=web,app=web` narrows to nothing that
+   * `app=web` did not already, and reads as two filters where there is one.
+   * A *different* equality on a key that already has one replaces it, because
+   * an object cannot have two values for one label and the pair would match
+   * nothing at all — which is the rule toggleSelectorTerm has always applied
+   * to a label chip, now applied to the same term typed instead of clicked.
+   *
+   * Only equality conflicts. `app=web tier!=cache` and `app in (a,b)` are
+   * each meaningful alongside their key, and are left alone.
+   */
+  const merge = (existing: string, added: string) => {
+    if (!added) return existing
+    const incoming = splitSelector(added)
+    let kept = splitSelector(existing)
+    for (const term of incoming) {
+      const key = equalityKey(term)
+      kept = kept.filter(
+        (p) => p !== term && !(key !== undefined && equalityKey(p) === key),
+      )
+    }
+    return [...kept, ...incoming].join(',')
+  }
+
+  const where = query.where ?? []
   return {
     q: query.q,
-    labelSelector: join(query.labelSelector, parsed.labelSelector),
-    fieldSelector: join(query.fieldSelector, parsed.fieldSelector),
-    where: [...(query.where ?? []), ...parsed.where],
+    labelSelector: merge(query.labelSelector, parsed.labelSelector),
+    fieldSelector: merge(query.fieldSelector, parsed.fieldSelector),
+    // Two predicates on one column are not a contradiction — `restarts>3` and
+    // `restarts<10` is a range — so only an exact repeat is dropped.
+    where: [...where, ...parsed.where.filter((w) => !where.includes(w))],
   }
+}
+
+/**
+ * The key of an equality term, or undefined if the term is not one.
+ *
+ * `!=`, `in`, `notin` and a bare `!key` all say something a second term about
+ * the same key can coexist with; only `=` and `==` pin a key to one value.
+ */
+export function equalityKey(term: string): string | undefined {
+  // The lookahead keeps `name=~^web` out: its `=` opens a pattern, not an
+  // equality, and reading it as one would let a predicate evict a label term
+  // that shares its key.
+  const m = /^([^!=<>~()\s]+)\s*==?(?!~)/.exec(term)
+  return m ? m[1] : undefined
+}
+
+/** Whether this exact term is already part of the query. */
+export function queryHasTerm(query: SearchQuery, term: string): boolean {
+  return queryTerms(query).some((t) => t.term === term)
 }
 
 /** What the table is showing, which is what a predicate may talk about. */
