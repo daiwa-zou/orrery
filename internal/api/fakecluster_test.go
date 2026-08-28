@@ -735,15 +735,21 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 	// with sendInitialEvents=true that must deliver ADDED events followed by a
 	// bookmark annotated "initial-events-end" before the cache counts as
 	// synced. After the initial burst the stream hangs until the client goes.
-	if r.URL.Query().Get("watch") == "true" {
-		f.mu.Lock()
-		broken := f.breakCacheResource
-		f.mu.Unlock()
-		if broken != "" && resource == broken {
-			hndStatus(w, 500, "InternalError", "the watch for "+resource+" is broken")
-			return
-		}
+	// An informer fills its cache from a WatchList and falls back to LIST +
+	// WATCH when that is refused, so refusing only the watch leaves the other
+	// route open and the cache syncs after all — a flake rather than a
+	// fixture, and one that took a CI run to show itself. Every collection
+	// request for the resource fails instead. Reads of a single object still
+	// work, because it is the cache that is broken and not the resource.
+	f.mu.Lock()
+	broken := f.breakCacheResource
+	f.mu.Unlock()
+	if broken != "" && resource == broken && name == "" {
+		hndStatus(w, 500, "InternalError", "the cache for "+resource+" cannot be built")
+		return
+	}
 
+	if r.URL.Query().Get("watch") == "true" {
 		f.mu.Lock()
 		res := f.resources[key]
 		if res == nil {
