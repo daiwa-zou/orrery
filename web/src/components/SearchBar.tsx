@@ -67,6 +67,7 @@ export function SearchBar({
   onCommit,
   facets,
   onActivate,
+  onScopeChange,
   placeholder = 'Search or filter…',
 }: {
   query: SearchQuery
@@ -74,6 +75,12 @@ export function SearchBar({
   facets?: FacetsResponse
   /** Called on first focus so facet loading can be lazy. */
   onActivate?: () => void
+  /**
+   * The search the suggestions should be drawn from: everything committed
+   * except the term being typed. The caller fetches facets for it, so the
+   * dropdown only ever offers keys and values that still match something.
+   */
+  onScopeChange?: (scope: SearchQuery) => void
   placeholder?: string
 }) {
   const [text, setText] = useState(() => composeSearchInput(query))
@@ -112,6 +119,29 @@ export function SearchBar({
   }, [onCommit])
 
   const { head, token } = activeToken(text)
+
+  // Scope the vocabulary by what is already filtering, minus the term under
+  // the cursor. Including that one would narrow the suggestions by the very
+  // thing they are meant to complete: typing `tier=` would ask for the values
+  // of `tier` among objects whose tier is empty, and answer nothing.
+  const scope = useMemo<SearchQuery>(() => {
+    const parsed = parseSearchInput(head)
+    return {
+      q: parsed.q,
+      labelSelector: parsed.labelSelector,
+      fieldSelector: parsed.fieldSelector,
+    }
+  }, [head])
+
+  // Trailing whitespace moves `head` without changing the search it denotes,
+  // so report only real changes and leave the caller's query key alone.
+  const reportedScope = useRef(scope)
+  useEffect(() => {
+    if (sameQuery(reportedScope.current, scope)) return
+    reportedScope.current = scope
+    onScopeChange?.(scope)
+  }, [scope, onScopeChange])
+
   const suggestions = useMemo(
     () => (open ? buildSuggestions(token, facets) : []),
     [open, token, facets],

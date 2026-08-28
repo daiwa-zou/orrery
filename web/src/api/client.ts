@@ -12,6 +12,7 @@ import type {
   SearchResponse,
   ClusterSummary,
 } from './types'
+import type { SearchQuery } from '../lib/searchQuery'
 
 const BASE = '/api/v1'
 
@@ -272,10 +273,26 @@ export const api = {
       signal,
     ),
 
-  facets: (ref: ResourceRef, namespace: string | undefined, signal?: AbortSignal) =>
+  /**
+   * The autocomplete vocabulary, narrowed by whatever is already filtering.
+   * `scope` is the committed search minus the term being typed — including
+   * that one would scope the suggestions by the half-written thing they are
+   * meant to complete.
+   */
+  facets: (
+    ref: ResourceRef,
+    namespace: string | undefined,
+    scope: SearchQuery | undefined,
+    signal?: AbortSignal,
+  ) =>
     request<FacetsResponse>(
       `/clusters/${ref.cluster}/resources/${groupSegment(ref.group)}/${ref.version}/${ref.resource}/facets` +
-        qs({ namespace }),
+        qs({
+          namespace,
+          q: scope?.q || undefined,
+          labelSelector: scope?.labelSelector || undefined,
+          fieldSelector: scope?.fieldSelector || undefined,
+        }),
       {},
       signal,
     ),

@@ -40,7 +40,6 @@ type facetsResponse struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-
 // facetsCacheTTL bounds how stale an autocomplete vocabulary may be. Facets
 // are explicitly a hint rather than an inventory, and the set of distinct
 // label keys on a resource moves far slower than it is queried, so a short
@@ -144,15 +143,48 @@ func (a *API) listFacets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The authorization walk above has already run; what is memoised is the
-	// scan over the objects it returned.
-	key := res.cluster.Cfg.Name + "|" + res.resource.GVR().String() + "|" + scopeKey(scope)
+	// scan over the objects it returned, per search.
+	key := res.cluster.Cfg.Name + "|" + res.resource.GVR().String() + "|" +
+		scopeKey(scope) + "|" + searchKey(r)
 	if resp, ok := a.facets.get(key); ok {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	resp := computeFacets(objs)
+
+	// Autocomplete narrows with the search. Once `app=web` is applied, a
+	// dropdown still offering every label key on the resource is offering
+	// mostly dead ends: picking one of them adds a term that matches nothing,
+	// and the reader learns that only by watching the list empty. Suggesting
+	// from the objects that currently match means every suggestion leads
+	// somewhere.
+	//
+	// filterObjects is the list endpoint's own predicate, read from the same
+	// query parameters. Reimplementing the match here would let the two drift,
+	// and a suggestion that the list then disagrees with is the exact failure
+	// this is meant to remove.
+	matching, err := filterObjects(objs, r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
+	resp := computeFacets(matching)
 	a.facets.put(key, resp)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// searchKey folds the active search into the cache key.
+//
+// Without it two different searches would share one vocabulary, which is worse
+// than not narrowing at all: the dropdown would confidently offer keys
+// harvested from somebody else's filter. Selector strings are compared as
+// written, so two orderings of the same selector simply miss the cache rather
+// than collide.
+func searchKey(r *http.Request) string {
+	q := r.URL.Query()
+	return "q=" + strings.ToLower(strings.TrimSpace(q.Get("q"))) +
+		"|l=" + q.Get("labelSelector") +
+		"|f=" + q.Get("fieldSelector")
 }
 
 func computeFacets(objs []*unstructured.Unstructured) facetsResponse {
