@@ -42,6 +42,7 @@ import {
   Modal,
   Loading,
   StatusBadge,
+  TextInput,
 } from '../components/primitives'
 import { useToast } from '../components/Toast'
 import { kindToResource, RESTARTABLE_KINDS, splitApiVersion } from '../lib/format'
@@ -855,12 +856,13 @@ function ResourceDetailInner() {
           Currently running <span className="font-medium text-ink">{currentReplicas}</span>{' '}
           replica(s).
         </p>
-        <input
+        <TextInput
+          size="md"
           type="number"
           min={0}
           value={replicas}
           onChange={(e) => setReplicas(Math.max(0, Number(e.target.value)))}
-          className="w-32 rounded-md bg-surface-2 px-2 py-1.5 text-sm text-ink ring-1 ring-border"
+          className="w-32 tabular-nums"
         />
         {replicas === 0 && (
           <p className="mt-3 text-sm text-warn">

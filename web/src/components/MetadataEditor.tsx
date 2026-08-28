@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { metaChanges, validateLabelValue, validateMetaKey } from '../lib/labels'
-import { Button, GatedButton, LabelChips } from './primitives'
+import { Button, GatedButton, LabelChips, TextInput } from './primitives'
 
 /**
  * Inline editing of metadata.labels / metadata.annotations — the UI half of
@@ -136,22 +136,22 @@ export function MetadataEditor({
           add()
         }}
       >
-        <input
+        <TextInput
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
           placeholder="key"
           disabled={busy}
           spellCheck={false}
-          className="w-44 rounded-md bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-44 font-mono"
         />
         <span className="text-ink-faint">=</span>
-        <input
+        <TextInput
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
           placeholder="value"
           disabled={busy}
           spellCheck={false}
-          className="w-44 rounded-md bg-surface-2 px-2 py-1 font-mono text-xs text-ink ring-1 ring-border placeholder:text-ink-faint"
+          className="w-44 font-mono"
         />
         <Button size="sm" type="submit" disabled={busy || newKey === ''}>
           Add

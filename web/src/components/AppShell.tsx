@@ -23,7 +23,7 @@ import {
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
-import { Badge, Button, Spinner } from './primitives'
+import { Badge, Button, Select, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
 import { LogoMark, Wordmark } from './Logo'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
@@ -238,7 +238,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
       <span className="mb-1 block text-[10px] font-semibold tracking-[.1em] text-ink-faint uppercase">
         Namespace
       </span>
-      <select
+      <Select
         value={current}
         onChange={(e) => {
           const next = new URLSearchParams(params)
@@ -250,7 +250,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
           next.delete('page')
           setParams(next, { replace: true })
         }}
-        className="w-full bg-surface-2 px-2 py-1.5 text-[13px] text-ink ring-1 ring-border"
+        className="w-full"
       >
         <option value="">All namespaces</option>
         {names.map((n) => (
@@ -258,7 +258,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
             {n}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   )
 }
@@ -377,14 +377,16 @@ function ThemeToggle() {
   }
 
   return (
-    <button
+    <Button
+      size="sm"
+      icon
       onClick={flip}
       title={theme === 'dark' ? 'Switch to the light palette' : 'Switch to the dark palette'}
       aria-label={theme === 'dark' ? 'Switch to the light palette' : 'Switch to the dark palette'}
-      className="grid size-6 place-items-center border border-border text-xs text-ink-faint transition-colors hover:text-ink"
+      className="text-ink-faint hover:text-ink"
     >
       {theme === 'dark' ? '☾' : '☀'}
-    </button>
+    </Button>
   )
 }
 
@@ -432,9 +434,9 @@ export function UserMenu() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`Account: ${label}`}
-        className="flex items-center gap-2 px-2 py-1.5 text-[13px] text-ink-muted transition-colors hover:text-ink"
+        className="flex h-7 items-center gap-2 px-2 text-xs text-ink-muted transition-colors hover:text-ink"
       >
-        <span className="grid size-6 place-items-center border border-accent-text/40 bg-accent/30 text-[11px] font-semibold text-ink">
+        <span className="grid size-5 place-items-center border border-accent-text/40 bg-accent/30 text-[11px] font-semibold text-ink">
           {label.slice(0, 1).toUpperCase()}
         </span>
         <span className="hidden max-w-40 truncate sm:block">{label}</span>
@@ -628,7 +630,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <NamespacePicker cluster={cluster} />
               <button
                 onClick={() => setPaletteOpen(true)}
-                className="flex w-full items-center gap-2 bg-surface-2 px-2 py-1.5 text-left text-[13px] text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
+                className="flex h-7 w-full items-center gap-2 bg-surface-2 px-2.5 text-left text-xs text-ink-faint ring-1 ring-border transition-colors hover:text-ink-muted"
               >
                 <SearchIcon className="size-3.5" />
                 <span>Search</span>
@@ -705,14 +707,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           />
           <div className="flex items-center gap-2.5">
             {namespace && <Badge tone="info">ns: {namespace}</Badge>}
-            <button
+            <Button
+              size="sm"
+              icon
               onClick={() => setShortcutsOpen(true)}
               title="Keyboard shortcuts"
               aria-label="Keyboard shortcuts"
-              className="grid size-6 place-items-center border border-border text-xs text-ink-faint transition-colors hover:text-ink"
+              className="text-ink-faint hover:text-ink"
             >
               ?
-            </button>
+            </Button>
             <ThemeToggle />
             <UserMenu />
           </div>
