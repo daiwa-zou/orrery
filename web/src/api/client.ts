@@ -397,6 +397,8 @@ export const api = {
       involvedKind?: string
       involvedUID?: string
       warningsOnly?: boolean
+      /** Column predicates over the event table; repeated, one per term. */
+      where?: string[]
       limit?: number
     },
     signal?: AbortSignal,

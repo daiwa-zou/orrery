@@ -443,14 +443,27 @@ export function useEvents(
     involvedKind?: string
     involvedUID?: string
     warningsOnly?: boolean
+    where?: string[]
     limit?: number
   },
+  /**
+   * Whether the feed keeps refreshing itself. A feed that reorders under the
+   * reader is exactly wrong during the one activity this page exists for —
+   * reading a burst of events closely — so the page can hold it still. False
+   * only stops the timer: a manual refresh still works, and the age shown
+   * beside the toggle is what keeps a held feed from being mistaken for a
+   * current one.
+   */
+  live = true,
 ) {
   return useQuery({
     queryKey: ['events', cluster, filter],
     queryFn: ({ signal }) => api.events(cluster!, { limit: 100, ...filter }, signal),
     enabled: !!cluster,
-    refetchInterval: 15_000,
+    refetchInterval: live ? 15_000 : false,
+    // Focus is the other way a held feed would move, and it moves at the worst
+    // possible moment: the reader has just come back to look at it.
+    refetchOnWindowFocus: live,
   })
 }
 
