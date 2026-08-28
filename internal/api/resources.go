@@ -161,6 +161,32 @@ func queryNamespaces(r *http.Request) []string {
 	return out
 }
 
+// listAcross reads one resource from the cache across several namespaces and
+// concatenates what it finds.
+//
+// A failure is returned, never skipped. InformerManager.List fails when the
+// resource's informer cannot be started or synced, which is a property of the
+// resource and not of the namespace — so the first namespace to fail is a
+// promise that the rest will too, and skipping them yields an empty slice and
+// a nil error: "we could not read this" delivered as "there is nothing here".
+// The overview page's counts are built entirely on telling those two apart.
+func listAcross(
+	ctx context.Context,
+	c *cluster.Cluster,
+	ar cluster.APIResource,
+	namespaces []string,
+) ([]*unstructured.Unstructured, error) {
+	var out []*unstructured.Unstructured
+	for _, ns := range namespaces {
+		part, err := c.Informers.List(ctx, ar, ns)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, part...)
+	}
+	return out, nil
+}
+
 // visibleScope collects the objects the caller is allowed to list, together
 // with the scope actually granted and any partial-scan warnings. Every read
 // that serves cached objects must come through here (or perform the same
@@ -206,15 +232,8 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []stri
 		} else {
 			scope.Namespaces = allowed
 		}
-		var objs []*unstructured.Unstructured
-		for _, ns := range allowed {
-			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
-			if err != nil {
-				return nil, scope, warnings, err
-			}
-			objs = append(objs, part...)
-		}
-		return objs, scope, warnings, nil
+		objs, err := listAcross(ctx, res.cluster, res.resource, allowed)
+		return objs, scope, warnings, err
 	}
 
 	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
@@ -243,15 +262,8 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []stri
 		return nil, scope, nil, &forbiddenError{verb: "list", resource: res.resource.Name}
 	default:
 		scope.Namespaces = allowed
-		var objs []*unstructured.Unstructured
-		for _, ns := range allowed {
-			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
-			if err != nil {
-				return nil, scope, warnings, err
-			}
-			objs = append(objs, part...)
-		}
-		return objs, scope, warnings, nil
+		objs, err := listAcross(ctx, res.cluster, res.resource, allowed)
+		return objs, scope, warnings, err
 	}
 }
 
@@ -367,11 +379,6 @@ func pageBounds(total, page, pageSize int) (int, int) {
 	return start, end
 }
 
-func pageOf(rows []map[string]any, page, pageSize int) []map[string]any {
-	start, end := pageBounds(len(rows), page, pageSize)
-	return rows[start:end]
-}
-
 func isMetaSortKey(key string) bool {
 	switch key {
 	case "", "name", "namespace", "age", "creationTimestamp":
@@ -450,24 +457,6 @@ func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, de
 		sorted[dst] = objs[src]
 	}
 	copy(objs, sorted)
-}
-
-// rowLess builds the comparison used for both row sorting paths.
-func rowLess(rows []map[string]any, key string, desc bool) func(i, j int) bool {
-	if key == "" {
-		key = "name"
-	}
-	return func(i, j int) bool {
-		c := compareCell(rows[i][key], rows[j][key])
-		if c == 0 {
-			// Ties break on name so paging is deterministic.
-			return fmt.Sprint(rows[i]["name"]) < fmt.Sprint(rows[j]["name"])
-		}
-		if desc {
-			return c > 0
-		}
-		return c < 0
-	}
 }
 
 // compareCell orders two cells: numerically when both are numbers (zero-padded

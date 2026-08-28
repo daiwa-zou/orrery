@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -207,36 +206,19 @@ func TestSortByMeta(t *testing.T) {
 	}
 }
 
-func TestSortRowsHandlesNumbersNumerically(t *testing.T) {
-	rows := []map[string]any{
-		{"name": "a", "restarts": int64(9)},
-		{"name": "b", "restarts": int64(10)},
-		{"name": "c", "restarts": int64(2)},
+func TestSortByCellHandlesNumbersNumerically(t *testing.T) {
+	objs := []*unstructured.Unstructured{
+		obj("a", "d", nil, nil),
+		obj("b", "d", nil, nil),
+		obj("c", "d", nil, nil),
 	}
+	set := restartsColumns(map[string]int64{"a": 9, "b": 10, "c": 2})
 
-	sort.SliceStable(rows, rowLess(rows, "restarts", false))
+	sortByCell(objs, set, "restarts", false)
+
 	// Lexical sorting would put 10 before 9; that is the bug this guards.
-	want := []any{int64(2), int64(9), int64(10)}
-	for i, w := range want {
-		if rows[i]["restarts"] != w {
-			t.Fatalf("numeric sort gave %v", []any{rows[0]["restarts"], rows[1]["restarts"], rows[2]["restarts"]})
-		}
-	}
-}
-
-func TestSortRowsFallsBackToNameForTies(t *testing.T) {
-	rows := []map[string]any{
-		{"name": "zebra", "status": "Running"},
-		{"name": "apple", "status": "Running"},
-		{"name": "mango", "status": "Pending"},
-	}
-
-	sort.SliceStable(rows, rowLess(rows, "status", false))
-	if rows[0]["name"] != "mango" {
-		t.Errorf("Pending should sort first, got %v", rows[0]["name"])
-	}
-	if rows[1]["name"] != "apple" || rows[2]["name"] != "zebra" {
-		t.Errorf("ties should break on name, got %v then %v", rows[1]["name"], rows[2]["name"])
+	if got := names(objs); got[0] != "c" || got[1] != "a" || got[2] != "b" {
+		t.Fatalf("numeric sort gave %v, want [c a b] for restarts 2, 9, 10", got)
 	}
 }
 
@@ -266,15 +248,18 @@ func TestPageBounds(t *testing.T) {
 	}
 }
 
-func TestPageOfNeverPanics(t *testing.T) {
-	rows := make([]map[string]any, 10)
-	for i := range rows {
-		rows[i] = map[string]any{"name": strconv.Itoa(i)}
+func TestProjectPageNeverPanics(t *testing.T) {
+	objs := make([]*unstructured.Unstructured, 10)
+	for i := range objs {
+		objs[i] = obj(strconv.Itoa(i), "d", nil, nil)
 	}
-	if got := pageOf(rows, 100, 25); len(got) != 0 {
+	set := restartsColumns(nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+
+	if got := projectPage(objs, set, 100, 25, r); len(got) != 0 {
 		t.Errorf("a page past the end returned %d rows", len(got))
 	}
-	if got := pageOf(rows, 1, 3); len(got) != 3 {
+	if got := projectPage(objs, set, 1, 3, r); len(got) != 3 {
 		t.Errorf("first page returned %d rows", len(got))
 	}
 }

@@ -68,6 +68,11 @@ type hndFake struct {
 	// lookup for it fails the way it would on a cluster that does not serve
 	// it — or on one whose discovery is not answering.
 	hideResource string
+	// breakCacheResource fails the informer's watch for one resource while
+	// discovery keeps advertising it, which is what an unsynced cache looks
+	// like from the API's side: the resource resolves, and then reading it
+	// returns an error rather than an empty list.
+	breakCacheResource string
 }
 
 func hndKey(group, version, resource string) string {
@@ -713,6 +718,14 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 	// bookmark annotated "initial-events-end" before the cache counts as
 	// synced. After the initial burst the stream hangs until the client goes.
 	if r.URL.Query().Get("watch") == "true" {
+		f.mu.Lock()
+		broken := f.breakCacheResource
+		f.mu.Unlock()
+		if broken != "" && resource == broken {
+			hndStatus(w, 500, "InternalError", "the watch for "+resource+" is broken")
+			return
+		}
+
 		f.mu.Lock()
 		res := f.resources[key]
 		if res == nil {
