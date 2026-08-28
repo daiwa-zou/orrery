@@ -204,7 +204,7 @@ func (a *API) execIntoPod(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if err := a.authorize(ctx, &reauthRes, "create", namespace, pod, "exec"); err != nil {
-					ws.wsError("access to this pod was revoked")
+					ws.wsError(streamClosedBecause(err, "access to this pod was revoked"))
 					cancel()
 					return
 				}
