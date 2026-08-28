@@ -13,6 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// The pod table, which is what these filters are written against.
+var podSet = builtinColumns[gk("", "Pod")]
+
 func obj(name, namespace string, labels map[string]string, extra map[string]any) *unstructured.Unstructured {
 	meta := map[string]any{"name": name}
 	if namespace != "" {
@@ -51,7 +54,7 @@ func TestFilterObjectsByName(t *testing.T) {
 		obj("WEB-upper", "demo", nil, nil),
 	}
 
-	got, err := filterObjects(objs, req("q=web"))
+	got, err := filterObjects(objs, req("q=web"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +72,7 @@ func TestFilterObjectsQueryMatchesNamespaceAndLabels(t *testing.T) {
 		obj("unrelated", "demo", map[string]string{"app": "web"}, nil),
 	}
 
-	got, err := filterObjects(objs, req("q=payments"))
+	got, err := filterObjects(objs, req("q=payments"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +82,7 @@ func TestFilterObjectsQueryMatchesNamespaceAndLabels(t *testing.T) {
 	}
 
 	// "key=value" reaches labels without selector syntax.
-	got, err = filterObjects(objs, req("q=app%3Dweb"))
+	got, err = filterObjects(objs, req("q=app%3Dweb"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +95,7 @@ func TestFilterObjectsRejectsUnsupportedFieldKey(t *testing.T) {
 	objs := []*unstructured.Unstructured{obj("a", "demo", nil, nil)}
 
 	// A field this server never projects must 400, not silently match nothing.
-	_, err := filterObjects(objs, req("fieldSelector=spec.serviceAccountName%3Dx"))
+	_, err := filterObjects(objs, req("fieldSelector=spec.serviceAccountName%3Dx"), podSet)
 	if err == nil {
 		t.Fatal("an unsupported field selector key should be rejected")
 	}
@@ -111,7 +114,7 @@ func TestFilterObjectsByLabelSelector(t *testing.T) {
 		obj("c", "demo", map[string]string{"app": "web", "tier": "cache"}, nil),
 	}
 
-	got, err := filterObjects(objs, req("labelSelector=app%3Dweb"))
+	got, err := filterObjects(objs, req("labelSelector=app%3Dweb"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +122,7 @@ func TestFilterObjectsByLabelSelector(t *testing.T) {
 		t.Fatalf("app=web matched %v", names(got))
 	}
 
-	got, err = filterObjects(objs, req("labelSelector=app%3Dweb%2Ctier%21%3Dcache"))
+	got, err = filterObjects(objs, req("labelSelector=app%3Dweb%2Ctier%21%3Dcache"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +134,7 @@ func TestFilterObjectsByLabelSelector(t *testing.T) {
 func TestFilterObjectsRejectsBadSelectors(t *testing.T) {
 	objs := []*unstructured.Unstructured{obj("a", "demo", nil, nil)}
 
-	if _, err := filterObjects(objs, req("labelSelector=%3D%3Dbroken")); err == nil {
+	if _, err := filterObjects(objs, req("labelSelector=%3D%3Dbroken"), podSet); err == nil {
 		t.Error("an invalid label selector should be a bad request, not silently ignored")
 	}
 }
@@ -152,7 +155,7 @@ func TestFilterObjectsByFieldSelector(t *testing.T) {
 		}),
 	}
 
-	got, err := filterObjects(objs, req("fieldSelector=spec.nodeName%3Dnode-1"))
+	got, err := filterObjects(objs, req("fieldSelector=spec.nodeName%3Dnode-1"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestFilterObjectsByFieldSelector(t *testing.T) {
 		t.Errorf("nodeName filter matched %v", names(got))
 	}
 
-	got, err = filterObjects(objs, req("fieldSelector=status.phase%3DFailed"))
+	got, err = filterObjects(objs, req("fieldSelector=status.phase%3DFailed"), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +174,7 @@ func TestFilterObjectsByFieldSelector(t *testing.T) {
 
 func TestFilterObjectsWithoutFiltersIsIdentity(t *testing.T) {
 	objs := []*unstructured.Unstructured{obj("a", "d", nil, nil), obj("b", "d", nil, nil)}
-	got, err := filterObjects(objs, req(""))
+	got, err := filterObjects(objs, req(""), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}

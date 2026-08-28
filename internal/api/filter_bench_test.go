@@ -36,7 +36,7 @@ func benchObjects(n int) []*unstructured.Unstructured {
 func benchFilter(b *testing.B, n int, query string) {
 	objs := benchObjects(n)
 	r := httptest.NewRequest("GET", "/?"+query, nil)
-	f, err := parseListFilter(r)
+	f, err := parseListFilter(r, podSet)
 	if err != nil {
 		b.Fatalf("parseListFilter: %v", err)
 	}
@@ -83,7 +83,7 @@ func BenchmarkFreeTextLabelMiss50k(b *testing.B) { benchFilterNoMatch(b, 50_000,
 func benchFilterNoMatch(b *testing.B, n int, query string) {
 	objs := benchObjects(n)
 	r := httptest.NewRequest("GET", "/?"+query, nil)
-	f, err := parseListFilter(r)
+	f, err := parseListFilter(r, podSet)
 	if err != nil {
 		b.Fatalf("parseListFilter: %v", err)
 	}

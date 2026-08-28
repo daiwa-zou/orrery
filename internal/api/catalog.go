@@ -125,6 +125,7 @@ var listParams = []endpointParam{
 	param("q", "string", "", "free text over name, namespace and labels (matches key=value)"),
 	param("labelSelector", "string", "", "Kubernetes label selector"),
 	param("fieldSelector", "string", "", "field selector; unsupported fields are rejected rather than silently matching nothing"),
+	param("where", "string", "", "column predicate, repeatable and ANDed: restarts>3, age<1h, name=~^web-, status!~Running. Operators >, >=, <, <= order number and age columns; =~ and !~ match a pattern against any column. Repeated rather than comma-separated so a pattern may contain a comma"),
 	param("sort", "string", "name", "column to sort by"),
 	param("order", "string", "asc", "asc or desc"),
 	param("page", "integer", "1", "1-based page number"),
@@ -291,6 +292,7 @@ var readOnlyEndpoints = []endpoint{
 			param("q", "string", "", "free text already applied, so suggestions lead somewhere"),
 			param("labelSelector", "string", "", "label selector already applied"),
 			param("fieldSelector", "string", "", "field selector already applied"),
+			param("where", "string", "", "column predicates already applied, repeatable"),
 		},
 	},
 	{

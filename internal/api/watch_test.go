@@ -17,7 +17,7 @@ func uobj(name, namespace, uid string, labels map[string]string) *unstructured.U
 
 func filterFor(t *testing.T, query string) *watchEventFilter {
 	t.Helper()
-	f, err := parseListFilter(req(query))
+	f, err := parseListFilter(req(query), podSet)
 	if err != nil {
 		t.Fatal(err)
 	}
