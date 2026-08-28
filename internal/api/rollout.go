@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
 
 	"github.com/daiwa-zou/orrery/internal/cluster"
 )
@@ -39,6 +41,13 @@ type revisionSummary struct {
 	// Changes is what rolling back here would alter in the pod template,
 	// phrased in the direction it would travel. Empty on the current revision.
 	Changes []string `json:"changes"`
+	// Diff is the same answer in full: the lines of the pod template that
+	// differ from the deployed one. Naming a field says whether to look; this
+	// says what would be going back.
+	Diff []diffLine `json:"diff,omitempty"`
+	// DiffTruncated counts the changed lines beyond the cap, so a diff that
+	// stops partway does not read as a complete one.
+	DiffTruncated int `json:"diffTruncated,omitempty"`
 	// Identical says the template matches the one deployed now exactly, so a
 	// rollback would change nothing. Empty Changes does not imply it: a
 	// difference this server does not name leaves both empty and false.
@@ -93,6 +102,30 @@ func (a *API) deploymentRevisions(ctx context.Context, res *resolved, namespace,
 		return revisionOf(owned[i]) > revisionOf(owned[j])
 	})
 	return dep, owned, nil
+}
+
+// maxDiffLines is what one revision may contribute to the response. Enough for
+// any change a person made by hand; a template rewritten wholesale is reported
+// as truncated rather than shipped in full to a modal nobody will read it in.
+const maxDiffLines = 120
+
+// templateLines renders a revision's pod template as the YAML lines to diff.
+//
+// YAML rather than JSON because it is the shape the object is read in
+// everywhere else in this console — the detail page's YAML tab, kubectl — and
+// because one field per line is what makes a line diff mean anything. The
+// controller's own hash is dropped for the same reason the summary ignores it:
+// it differs between every pair of revisions and says nothing anyone did.
+func templateLines(rs *unstructured.Unstructured) []string {
+	template := podTemplateOf(rs)
+	if template == nil {
+		return nil
+	}
+	out, err := yaml.Marshal(withoutTemplateHash(template))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 }
 
 func revisionOf(rs *unstructured.Unstructured) int64 {
@@ -153,6 +186,10 @@ func (a *API) rolloutHistory(w http.ResponseWriter, r *http.Request) {
 				summary.Changes = changes
 			}
 			summary.Identical = identical
+			if !identical {
+				diff := lineDiff(templateLines(currentRS), templateLines(rs), 2)
+				summary.Diff, summary.DiffTruncated = truncateDiff(diff, maxDiffLines)
+			}
 		}
 		out = append(out, summary)
 	}

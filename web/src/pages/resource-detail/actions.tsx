@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
@@ -218,6 +218,53 @@ export function TaintsButton({
  * identity, so RBAC still applies.
  */
 /**
+ * The lines that differ, under the row they belong to.
+ *
+ * Naming a field says whether to look; this says what would be going back —
+ * which argument, and to what. The legend is not decoration: a diff with no
+ * stated direction is ambiguous exactly where it matters, and reading it
+ * backwards means restoring the thing you meant to remove.
+ */
+function RevisionDiff({ rev }: { rev: Revision }) {
+  const lines = rev.diff ?? []
+  if (lines.length === 0) return null
+
+  return (
+    <div className="mt-1 bg-canvas p-2 ring-1 ring-border">
+      <p className="mb-1.5 text-[11px] text-ink-faint">
+        <span className="text-danger">−</span> deployed now ·{' '}
+        <span className="text-ok">+</span> what revision {rev.revision} would restore
+      </p>
+      <pre className="overflow-x-auto font-mono text-[11px] leading-[1.45]">
+        {lines.map((line, i) => (
+          <div
+            key={`${i}-${line.text}`}
+            className={
+              line.op === '-'
+                ? 'bg-danger/10 text-danger'
+                : line.op === '+'
+                  ? 'bg-ok/10 text-ok'
+                  : line.op === '…'
+                    ? 'text-ink-faint'
+                    : 'text-ink-muted'
+            }
+          >
+            {line.op === '…' ? '  ⋯' : `${line.op} ${line.text}`}
+          </div>
+        ))}
+      </pre>
+      {!!rev.diffTruncated && (
+        // A diff that stops partway reads as a complete one unless it says so.
+        <p className="mt-1.5 text-[11px] text-ink-faint">
+          {rev.diffTruncated.toLocaleString()} more changed{' '}
+          {rev.diffTruncated === 1 ? 'line' : 'lines'} not shown — the object's YAML has all of it.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
  * What rolling back to one revision would do, in the terms the choice is made
  * in.
  *
@@ -280,6 +327,10 @@ export function RollbackButton({
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** Which revision's diff is open. One at a time: the point is to compare a
+   *  candidate against what is deployed, not five candidates against each
+   *  other. */
+  const [openDiff, setOpenDiff] = useState<number | null>(null)
   const toast = useToast()
 
   const history = useQuery({
@@ -348,7 +399,8 @@ export function RollbackButton({
             </thead>
             <tbody>
               {revisions.map((rev) => (
-                <tr key={rev.revision} className="border-b border-border/50 align-top">
+                <Fragment key={rev.revision}>
+                <tr className="border-b border-border/50 align-top">
                   <td className="py-2 pr-4">
                     {/* gap-2, because the badge was touching the number and
                         read as part of it — "2current". */}
@@ -369,12 +421,27 @@ export function RollbackButton({
                   <td className="max-w-[16rem] truncate py-2 pr-4 font-mono text-xs text-ink-muted" title={rev.images.join('\n')}>
                     {rev.images.join(', ') || '—'}
                   </td>
-                  <td className="max-w-[20rem] py-2 pr-4 text-xs">
+                  <td className="max-w-[26rem] py-2 pr-4 text-xs">
                     <RevisionChange rev={rev} />
                     {rev.changeCause && (
                       <span className="mt-1 block text-[11px] text-ink-faint" title="kubernetes.io/change-cause">
                         “{rev.changeCause}”
                       </span>
+                    )}
+                    {/* Behind a disclosure rather than always open: five
+                        revisions of diffs at once is a wall, and the summary
+                        above is what most readers need. */}
+                    {(rev.diff?.length ?? 0) > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setOpenDiff(openDiff === rev.revision ? null : rev.revision)}
+                          aria-expanded={openDiff === rev.revision}
+                          className="mt-1 text-[11px] text-accent-text hover:text-accent-text-hover"
+                        >
+                          {openDiff === rev.revision ? 'Hide' : 'Show'} the lines that differ
+                        </button>
+                      </>
                     )}
                   </td>
                   {/* Ready of desired: a revision that never became ready is a
@@ -405,6 +472,16 @@ export function RollbackButton({
                     )}
                   </td>
                 </tr>
+                {/* A row of its own, spanning the table: a diff inside one
+                    cell widens that column and squeezes every other one. */}
+                {openDiff === rev.revision && (
+                  <tr className="border-b border-border/50">
+                    <td colSpan={6} className="pb-3">
+                      <RevisionDiff rev={rev} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -177,6 +177,14 @@ export function proxyURL(
   return `${BASE}/clusters/${cluster}/proxy/${namespace}/${ptype}/${name}:${port}/`
 }
 
+/** One line of a revision's diff against the deployed template. */
+export interface DiffLine {
+  /** " " unchanged, "-" deployed now, "+" what this revision would restore,
+   *  "…" a run of unchanged lines left out. */
+  op: ' ' | '-' | '+' | '…'
+  text: string
+}
+
 export interface Revision {
   revision: number
   name: string
@@ -195,6 +203,12 @@ export interface Revision {
    *  nothing. Not implied by empty `changes`: a difference the server does not
    *  name leaves both empty and false. */
   identical?: boolean
+  /** The same answer in full: the template lines that differ from the deployed
+   *  one, "-" being what is running now. */
+  diff?: DiffLine[]
+  /** Changed lines beyond the cap, so a diff that stops partway is not read as
+   *  a complete one. */
+  diffTruncated?: number
 }
 
 export interface ResourceRef {

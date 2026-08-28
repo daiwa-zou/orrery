@@ -212,6 +212,13 @@ Images are reported per container in the direction a rollback would travel
 (`env`, `args`, `resources`), because the choice being made needs to know
 *whether* to look, and the object's YAML is where to look.
 
+`diff` carries the same answer in full: the template's YAML lines that differ,
+with two lines of context, `-` being what is deployed now and `+` what the
+revision would restore. Runs of unchanged lines between hunks are replaced by a
+single `…` entry, and a diff past 120 lines stops with `diffTruncated` counting
+the changed lines left out — a diff that ends mid-change must not read as a
+complete one.
+
 `identical` says the template matches the deployed one exactly, so rolling back
 would change nothing. It is not implied by an empty `changes`: a difference this
 server does not name leaves both empty and `identical` false. The comparison
