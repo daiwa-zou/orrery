@@ -128,3 +128,39 @@ func TestEmptyEventsFeedStillCarriesItems(t *testing.T) {
 		t.Errorf("expected no events, got %d", items)
 	}
 }
+
+// A feed cut down to its limit must still report how many matched. Reporting
+// the truncated length as the total is how a capped list comes to describe
+// itself as a complete one.
+func TestCappedEventsFeedReportsWhatMatched(t *testing.T) {
+	rig := hndNewRig(t)
+
+	full := rig.get(t, "/api/v1/clusters/fake/events?namespace=demo")
+	hndWantStatus(t, full, http.StatusOK)
+	var all struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(full.Body.Bytes(), &all); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if all.Total != len(all.Items) || all.Total < 2 {
+		t.Fatalf("uncapped feed = %d items, total %d; want them equal and >= 2", len(all.Items), all.Total)
+	}
+
+	capped := rig.get(t, "/api/v1/clusters/fake/events?namespace=demo&limit=1")
+	hndWantStatus(t, capped, http.StatusOK)
+	var one struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(capped.Body.Bytes(), &one); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(one.Items) != 1 {
+		t.Errorf("limit=1 returned %d items, want 1", len(one.Items))
+	}
+	if one.Total != all.Total {
+		t.Errorf("capped feed reported total %d, want %d — the count of what matched", one.Total, all.Total)
+	}
+}
