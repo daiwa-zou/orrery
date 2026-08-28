@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { FacetsResponse } from '../api/types'
 import { TextInput } from './primitives'
@@ -6,8 +6,10 @@ import {
   composeSearchInput,
   parseSearchInput,
   sameQuery,
+  type SearchProblem,
   type SearchQuery,
 } from '../lib/searchQuery'
+import { CloseIcon, SearchIcon } from './icons'
 
 interface Suggestion {
   /** Replacement for the token being typed. */
@@ -79,6 +81,8 @@ export function SearchBar({
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const problemsId = useId()
+  const [problems, setProblems] = useState<SearchProblem[]>([])
   const textRef = useRef(text)
   useEffect(() => {
     textRef.current = text
@@ -91,13 +95,46 @@ export function SearchBar({
     setText(composeSearchInput(query))
   }, [query.q, query.labelSelector, query.fieldSelector]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced commit; invalid mid-edit selectors hold the previous query.
+  // One 300ms settle drives both the commit and the rejection message, so a
+  // term is never called invalid at a different moment than it would have
+  // been searched for — and `app=web` is not scolded at `app=w`.
   useEffect(() => {
     const parsed = parseSearchInput(text)
-    if (!parsed.committable || sameQuery(parsed, query)) return
-    const t = window.setTimeout(() => onCommit(parsed), 300)
+    const t = window.setTimeout(() => {
+      setProblems(parsed.problems)
+      if (parsed.committable && !sameQuery(parsed, query)) onCommit(parsed)
+    }, 300)
     return () => window.clearTimeout(t)
   }, [text, query, onCommit])
+
+  // "/" focuses the bar, the convention everywhere a list can be filtered.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      // "/" is a character before it is a shortcut; never take it from
+      // someone who is typing one.
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      e.preventDefault()
+      inputRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const clear = useCallback(() => {
+    setText('')
+    setProblems([])
+    onCommit({ q: '', labelSelector: '', fieldSelector: '' })
+    inputRef.current?.focus()
+  }, [onCommit])
 
   const { head, token } = activeToken(text)
   const suggestions = useMemo(
@@ -144,8 +181,16 @@ export function SearchBar({
     }
   }
 
+  const invalid = problems.length > 0
+  // Suggestions win the space under the bar: someone completing a term is
+  // already fixing it, and does not need to be told twice.
+  const showProblems = invalid && !(open && suggestions.length > 0)
+
   return (
     <div className="relative w-full max-w-md min-w-56">
+      <SearchIcon
+        className="pointer-events-none absolute top-2 left-2.5 size-3.5 text-ink-faint"
+      />
       <TextInput
         ref={inputRef}
         value={text}
@@ -165,8 +210,43 @@ export function SearchBar({
         aria-autocomplete="list"
         role="combobox"
         title={'Free text matches name, namespace and labels.\nFilter terms: app=web, tier!=cache, !canary, app in (web,api), status.phase=Running'}
-        className="w-full"
+        aria-invalid={invalid}
+        aria-describedby={showProblems ? problemsId : undefined}
+        className={clsx('w-full pl-7', text === '' ? 'pr-2.5' : 'pr-7', invalid && 'ring-danger')}
       />
+      {text !== '' && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          title="Clear search"
+          // Mousedown would blur the input first and the click would land on
+          // whatever moved under the cursor.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={clear}
+          className="absolute top-0 right-0 grid size-7 place-items-center text-ink-faint transition-colors hover:text-ink"
+        >
+          <CloseIcon className="size-3.5" />
+        </button>
+      )}
+      {showProblems && (
+        <div
+          id={problemsId}
+          role="status"
+          className="absolute top-full left-0 z-20 mt-1 w-full min-w-64 bg-raised px-2.5 py-2 text-[11px] shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-danger/45"
+        >
+          {problems.map((p) => (
+            <p key={p.term} className="text-ink-muted">
+              <span className="font-mono text-danger">{p.term}</span> — {p.reason}
+            </p>
+          ))}
+          {/* The load-bearing sentence. Holding the last good query is right,
+              but a reader who is not told is looking at an unfiltered list
+              believing they filtered it. */}
+          <p className="mt-1.5 border-t border-border pt-1.5 text-ink-faint">
+            Still showing the results for the last valid search.
+          </p>
+        </div>
+      )}
       {open && suggestions.length > 0 && (
         <ul
           role="listbox"
