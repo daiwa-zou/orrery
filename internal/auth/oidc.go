@@ -245,9 +245,28 @@ func (a *Authenticator) userFromToken(idToken *oidc.IDToken) (*User, error) {
 		return nil, errors.New("could not read token claims")
 	}
 
+	// The three ways a required claim can refuse a login are three different
+	// facts, and this text is what the person sees on the login page — it is
+	// all they get, since they cannot read the server's logs. It said "claim
+	// %q does not permit access" for every one of them.
+	//
+	// The type mismatch is the one that mattered most. requiredClaims compares
+	// text, the way kube-apiserver's --oidc-required-claim does, so a perfectly
+	// reasonable `email_verified: "true"` against a boolean claim locked
+	// everybody out permanently and blamed each of them for it in turn. No
+	// claim values appear here: the key, and the shape, are enough to fix it.
 	for k, want := range a.cfg.RequiredClaims {
-		if got, _ := claims[k].(string); got != want {
-			return nil, fmt.Errorf("claim %q does not permit access", k)
+		raw, present := claims[k]
+		got, isText := raw.(string)
+		switch {
+		case !present:
+			return nil, fmt.Errorf("your token does not carry the %q claim this dashboard requires", k)
+		case !isText:
+			return nil, fmt.Errorf(
+				"the %q claim is a %T and requiredClaims compares text — "+
+					"this is a configuration problem, not a permission one", k, raw)
+		case got != want:
+			return nil, fmt.Errorf("the %q claim does not permit access", k)
 		}
 	}
 
