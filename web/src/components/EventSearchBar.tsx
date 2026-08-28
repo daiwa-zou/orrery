@@ -310,7 +310,9 @@ export function EventSearchBar({
         window.setTimeout(() => setOpen(false), 150)
       }}
       onKeyDown={onKeyDown}
-      placeholder="Search events…"
+      // The resource search teaches its grammar in the placeholder; a reader
+      // moving between the two pages should be told the same way here.
+      placeholder="Search events, or add a filter — count>3"
       aria-label="Search events"
       aria-expanded={open && suggestions.length > 0}
       aria-autocomplete="list"

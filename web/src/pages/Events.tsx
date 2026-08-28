@@ -13,6 +13,7 @@ import {
   Button,
   ErrorState,
   Eyebrow,
+  LiveIndicator,
   Loading,
   Spinner,
 } from '../components/primitives'
@@ -160,6 +161,26 @@ export function Events() {
           Events
         </h1>
 
+        {/* The same badge, in the same place, as every resource list — except
+            that this one is also the control, because this feed refreshes on a
+            timer the reader is allowed to stop. Held, it carries the age of
+            what is on screen: a paused feed mistaken for a current one is the
+            whole risk of offering the button at all. */}
+        <LiveIndicator
+          state={live ? 'live' : 'paused'}
+          detail={
+            live ? undefined : (
+              <Age timestamp={dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined} />
+            )
+          }
+          onToggle={() => setLive((on) => !on)}
+          title={
+            live
+              ? 'Refreshing every 15 seconds. Pause to hold the rows still while you read.'
+              : 'Paused. Nothing moves until you refresh or resume.'
+          }
+        />
+
         {data && (
           <span
             className="text-xs text-ink-faint tabular-nums"
@@ -187,37 +208,13 @@ export function Events() {
 
         <div className="flex-1" />
 
-        {/* A paused feed and a live one look identical, so the control says
-            which it is and, while it is held, how old what you are reading is
-            — a held feed mistaken for a current one is the whole risk of
-            offering the button at all. */}
-        <button
-          type="button"
-          aria-pressed={live}
-          onClick={() => setLive((on) => !on)}
-          title={
-            live
-              ? 'Refreshing every 15 seconds. Pause to keep the rows still while you read.'
-              : 'Paused. Nothing will move until you refresh or resume.'
-          }
-          className="inline-flex h-7 items-center gap-1.5 px-2 text-xs text-ink-muted transition-colors hover:text-ink"
-        >
-          <span aria-hidden className={dotClass(live)} />
-          {live ? (
-            'Live'
-          ) : (
-            <>
-              Paused ·{' '}
-              <span className="text-ink-faint">
-                <Age timestamp={dataUpdatedAt ? new Date(dataUpdatedAt).toISOString() : undefined} />
-              </span>
-            </>
-          )}
-        </button>
+        <EventSearchBar query={query} onCommit={commit} columns={columns} rows={rows} />
 
+        {/* Primary-when-on, beside the search box: the same shape every list
+            toggle in this console has. */}
         <Button
           size="sm"
-          variant={warningsOnly ? 'default' : 'ghost'}
+          variant={warningsOnly ? 'primary' : 'default'}
           aria-pressed={warningsOnly}
           title={
             warningsOnly
@@ -228,14 +225,6 @@ export function Events() {
         >
           Warnings
         </Button>
-
-        <EventSearchBar
-          query={query}
-          onCommit={commit}
-          columns={columns}
-          rows={rows}
-          className="max-w-sm"
-        />
 
         <Button
           size="sm"
@@ -363,13 +352,6 @@ export function Events() {
       </div>
     </div>
   )
-}
-
-/** The live indicator: filled while refreshing, hollow while the feed is held. */
-function dotClass(live: boolean): string {
-  return live
-    ? 'size-1.5 rounded-full bg-ok'
-    : 'size-1.5 rounded-full ring-1 ring-ink-faint ring-inset'
 }
 
 /** A reason chip, toned by whether that reason is carrying warnings. */

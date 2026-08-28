@@ -118,6 +118,92 @@ export function StatusBadge({ value, title }: { value: string; title?: string })
   )
 }
 
+const LIVE_STATES = {
+  connecting: { tone: 'idle', label: 'connecting' },
+  live: { tone: 'ok', label: 'live' },
+  polling: { tone: 'warn', label: 'polling' },
+  paused: { tone: 'idle', label: 'paused' },
+  off: { tone: 'idle', label: 'static' },
+} as const
+
+export type LiveState = keyof typeof LIVE_STATES
+
+const LIVE_SPOKEN: Record<LiveState, string> = {
+  connecting: 'Connecting to the live stream.',
+  live: 'Live: updates are streaming from the cluster.',
+  polling: 'Live stream unavailable. Refreshing every 15 seconds instead.',
+  paused: 'Paused. The list is being held still and is not updating.',
+  off: 'Static list. Not receiving live updates.',
+}
+
+/**
+ * Explains the live-update state in a page header, honestly.
+ *
+ * Every list in this console updates itself by some means, and none of them
+ * look any different while doing it. This badge is where a page says which it
+ * is — and, when a page can hold itself still, it is also the control that
+ * does so, because a reader who has just paused a feed looks for the state at
+ * the place they changed it.
+ *
+ * The one thing it must never do is imply currency it does not have: a held
+ * feed carries `detail` saying how old what you are reading is.
+ */
+export function LiveIndicator({
+  state,
+  detail,
+  onToggle,
+  title,
+}: {
+  state: LiveState
+  /** Rendered after the label — the age of a held feed, typically. */
+  detail?: ReactNode
+  /** Supply one to make the indicator the control that changes the state. */
+  onToggle?: () => void
+  title?: string
+}) {
+  const { tone, label } = LIVE_STATES[state]
+  const tip =
+    title ??
+    (state === 'live'
+      ? 'Streaming changes from the cluster watch'
+      : state === 'polling'
+        ? 'The live stream is unavailable; refreshing every 15 seconds instead'
+        : undefined)
+
+  const badge = (
+    <Badge tone={tone} title={onToggle ? undefined : tip}>
+      {state === 'live' && <span className="size-1.5 animate-pulse rounded-full bg-ok" />}
+      <span aria-hidden="true">{label}</span>
+      {detail !== undefined && <span className="text-ink-faint tabular-nums">{detail}</span>}
+    </Badge>
+  )
+
+  return (
+    <>
+      {onToggle ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          title={tip}
+          aria-pressed={state === 'live'}
+          aria-label={state === 'live' ? 'Pause live updates' : 'Resume live updates'}
+          className="inline-flex transition-opacity hover:opacity-80"
+        >
+          {badge}
+        </button>
+      ) : (
+        badge
+      )}
+      {/* A reader who cannot see the badge change colour still needs to know
+          the page stopped being live. Announced politely, and only when the
+          state actually moves — never per row. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {LIVE_SPOKEN[state]}
+      </span>
+    </>
+  )
+}
+
 // One shared 10s ticker for every Age cell. A 250-row table with two time
 // columns would otherwise run 500 unsynchronised intervals, each triggering
 // its own isolated re-render.
