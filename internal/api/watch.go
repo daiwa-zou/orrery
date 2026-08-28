@@ -289,21 +289,9 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		// Authorized one at a time, like the list endpoint: permission is
 		// granted per namespace, and being allowed two of the three asked for
 		// is a narrower stream rather than a refused one.
-		var (
-			allowed  []string
-			firstErr error
-		)
-		for _, ns := range namespaces {
-			if err := a.authorize(ctx, res, "watch", ns, "", ""); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			allowed = append(allowed, ns)
-		}
-		if len(allowed) == 0 {
-			return vis, firstErr
+		access := a.authorizeNamespaces(ctx, res, "watch", namespaces)
+		if len(access.allowed) == 0 {
+			return vis, access.firstErr
 		}
 		// A single namespace is already all the informer will deliver, so the
 		// stream needs no filter of its own.
@@ -311,8 +299,8 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 			vis.all = true
 			return vis, nil
 		}
-		vis.namespaces = make(map[string]struct{}, len(allowed))
-		for _, ns := range allowed {
+		vis.namespaces = make(map[string]struct{}, len(access.allowed))
+		for _, ns := range access.allowed {
 			vis.namespaces[ns] = struct{}{}
 		}
 		return vis, nil

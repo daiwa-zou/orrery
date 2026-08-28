@@ -187,6 +187,65 @@ func listAcross(
 	return out, nil
 }
 
+// namespaceAccess is the answer to "which of these namespaces may I read?",
+// with the three possible outcomes kept apart.
+//
+// Two of them are easy to run together and must not be. A denial is a fact
+// about RBAC, and "You may not list pods in team-b" is a sentence its reader
+// can act on. A review that could not be performed is a fact about the API
+// server and says nothing whatever about permission — dressing it as a denial
+// sends people to change bindings that were never the problem, and the
+// bindings they change will not help.
+type namespaceAccess struct {
+	allowed   []string
+	denied    []string
+	unchecked []string
+	// firstErr is what to return when nothing was allowed: the caller has no
+	// partial answer to serve, so the reason is all there is.
+	firstErr error
+}
+
+// authorizeNamespaces asks about each namespace on its own, because permission
+// is granted that way — being allowed three of four is a narrower answer
+// rather than a refused one.
+func (a *API) authorizeNamespaces(ctx context.Context, res *resolved, verb string, namespaces []string) namespaceAccess {
+	var na namespaceAccess
+	for _, ns := range namespaces {
+		err := a.authorize(ctx, res, verb, ns, "", "")
+		switch {
+		case err == nil:
+			na.allowed = append(na.allowed, ns)
+			continue
+		case isForbidden(err):
+			na.denied = append(na.denied, ns)
+		default:
+			na.unchecked = append(na.unchecked, ns)
+		}
+		if na.firstErr == nil {
+			na.firstErr = err
+		}
+	}
+	return na
+}
+
+// warnings describes a partial answer, in one sentence per kind of gap, so the
+// missing namespaces are named rather than silently absent.
+func (na namespaceAccess) warnings(resource string) []string {
+	var out []string
+	if len(na.denied) > 0 {
+		out = append(out, fmt.Sprintf(
+			"You may not list %s in %s, so nothing from there is shown.",
+			resource, strings.Join(na.denied, ", ")))
+	}
+	if len(na.unchecked) > 0 {
+		out = append(out, fmt.Sprintf(
+			"Your access to %s in %s could not be checked, so nothing from there is shown. "+
+				"This is not a permission problem; try again.",
+			resource, strings.Join(na.unchecked, ", ")))
+	}
+	return out
+}
+
 // visibleScope collects the objects the caller is allowed to list, together
 // with the scope actually granted and any partial-scan warnings. Every read
 // that serves cached objects must come through here (or perform the same
@@ -198,34 +257,16 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []stri
 	)
 
 	if len(namespaces) > 0 {
-		// Each namespace is authorized on its own, because permission is
-		// granted that way. Asking for four and being allowed three is a
-		// partial answer, not a failure — but it must not be served as though
-		// it were the whole one, so the namespaces that were dropped are named
-		// in a warning rather than silently missing.
-		var (
-			allowed  []string
-			denied   []string
-			firstErr error
-		)
-		for _, ns := range namespaces {
-			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				denied = append(denied, ns)
-				continue
-			}
-			allowed = append(allowed, ns)
-		}
+		// Asking for four and being allowed three is a partial answer, not a
+		// failure — but it must not be served as though it were the whole one,
+		// so what was dropped is named in a warning rather than silently
+		// missing, and said to be missing for the reason it actually is.
+		access := a.authorizeNamespaces(ctx, res, "list", namespaces)
+		allowed := access.allowed
 		if len(allowed) == 0 {
-			return nil, scope, nil, firstErr
+			return nil, scope, nil, access.firstErr
 		}
-		if len(denied) > 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"You may not list %s in %s, so nothing from there is shown.",
-				res.resource.Name, strings.Join(denied, ", ")))
-		}
+		warnings = append(warnings, access.warnings(res.resource.Name)...)
 
 		if len(allowed) == 1 {
 			scope.Namespace = allowed[0]

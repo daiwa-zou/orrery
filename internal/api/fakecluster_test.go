@@ -65,6 +65,9 @@ type hndFake struct {
 	// rather than come back denied — the difference between "you may not" and
 	// "we could not ask", which callers must not collapse.
 	failReviewResource string
+	// denyNamespace denies reviews scoped to one namespace, which is what a
+	// partial answer is made of: several namespaces asked for, some allowed.
+	denyNamespace string
 	// trace, when set, records every path the fake is asked for, so a test can
 	// assert on where a request actually landed rather than only on its status.
 	trace func(string)
@@ -648,6 +651,12 @@ func (f *hndFake) serveAccessReview(w http.ResponseWriter, r *http.Request, path
 			allowed = false
 		}
 		if nsOnly != "" && attrs.Resource == nsOnly && attrs.Namespace == "" {
+			allowed = false
+		}
+		f.mu.Lock()
+		denyNS := f.denyNamespace
+		f.mu.Unlock()
+		if denyNS != "" && attrs.Namespace == denyNS {
 			allowed = false
 		}
 	}

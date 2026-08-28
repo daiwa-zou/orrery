@@ -242,6 +242,16 @@ export function Events() {
         </div>
       )}
 
+      {/* A feed narrowed to fewer namespaces than were asked for. Without
+          this the page reads as everything that happened, which is the one
+          conclusion an incident cannot afford to get wrong. The resource
+          lists have always said so; this feed used to narrow in silence. */}
+      {data?.warnings?.map((w) => (
+        <p key={w} className="border-b border-border bg-warn/8 px-4 py-1.5 text-xs text-warn">
+          {w}
+        </p>
+      ))}
+
       {/* What the feed is made of. An event stream is repetitive — one
           crash-looping pod writes the same reason a hundred times — so the
           length of the page says little about what is happening, and the
