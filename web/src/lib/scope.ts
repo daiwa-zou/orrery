@@ -114,3 +114,28 @@ export function toggleNamespace(namespaces: string[], ns: string): string[] {
 export function onlyNamespace(namespaces: string[]): string | undefined {
   return namespaces.length === 1 ? namespaces[0] : undefined
 }
+
+/**
+ * Why the namespace list is empty, when it is empty for a reason.
+ *
+ * An empty picker has three quite different causes and used to look the same
+ * for all of them: this cluster really has no namespaces, you may not list
+ * them, or the request did not come back. The last two are the common ones —
+ * a narrowly bound user is precisely who cannot list namespaces — and a
+ * control that shows nothing without saying why reads as the first.
+ *
+ * Returns undefined for the one case that needs no explaining: the request
+ * answered, and the answer was none. That is the only state the bare empty
+ * list was ever telling the truth about.
+ */
+export function namespaceListReason(isLoading: boolean, error: unknown): string | undefined {
+  if (isLoading) return 'Loading namespaces…'
+  if (!error) return undefined
+  const err = error as { status?: number }
+  if (err?.status === 403) {
+    return 'You may not list namespaces on this cluster, so none are offered here. ' +
+      'Resources you are allowed to read are still shown.'
+  }
+  return 'Namespaces could not be listed, so none are offered here. ' +
+    'This is not a permission problem; try again.'
+}

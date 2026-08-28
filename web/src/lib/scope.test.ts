@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  namespaceListReason,
   namespaceSearch,
   namespacesIn,
   scopeIsEmpty,
@@ -131,5 +132,34 @@ describe('the empty scope', () => {
     expect(scopeLabel([], true)).toBe('None')
     expect(scopeLabel([], false)).toBe('All')
     expect(scopeDescription([], true)).toMatch(/nothing to show/)
+  })
+})
+
+/**
+ * An empty namespace picker had one appearance and three causes. Two of them
+ * — you may not list namespaces, the request did not come back — are the
+ * common ones on exactly the deployments this dashboard is for, and both used
+ * to render as the third: a cluster with no namespaces in it.
+ */
+describe('why the namespace list is empty', () => {
+  it('says nothing when the answer really is none', () => {
+    expect(namespaceListReason(false, undefined)).toBeUndefined()
+  })
+
+  it('does not present a list still loading as a list that came back empty', () => {
+    expect(namespaceListReason(true, undefined)).toMatch(/Loading/)
+  })
+
+  it('names a denial as a denial', () => {
+    const reason = namespaceListReason(false, { status: 403 })
+    expect(reason).toMatch(/may not list namespaces/)
+    // And says the rest of the console still works, since it does.
+    expect(reason).toMatch(/still shown/)
+  })
+
+  it('does not blame RBAC for a request that failed', () => {
+    const reason = namespaceListReason(false, { status: 500 })
+    expect(reason).not.toMatch(/may not/)
+    expect(reason).toMatch(/not a permission problem/)
   })
 })
