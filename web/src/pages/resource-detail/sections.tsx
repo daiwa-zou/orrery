@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   Corners,
+  Eyebrow,
   GatedButton,
   Spinner,
   StatusBadge,
@@ -43,9 +44,7 @@ export function ContainerSection({
   return (
     <section className="blueprint bg-surface p-3.5">
       <Corners />
-      <h2 className="mb-1.5 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-        Containers
-      </h2>
+      <Eyebrow className="mb-2">Containers</Eyebrow>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
           <thead>
@@ -143,9 +142,7 @@ export function EnvSection({ cluster, namespace, pod }: { cluster: string; names
     <section className="blueprint bg-surface p-3.5">
       <Corners />
       <div className="flex items-center justify-between">
-        <h2 className="text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-          Environment
-        </h2>
+        <Eyebrow>Environment</Eyebrow>
         <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)}>
           {open ? 'Hide' : 'Show'}
         </Button>
@@ -239,9 +236,7 @@ export function DataSection({ obj }: { obj: KubeObject }) {
   return (
     <section className="blueprint bg-surface p-3.5">
       <Corners />
-      <h2 className="mb-1.5 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-        Data
-      </h2>
+      <Eyebrow className="mb-2">Data</Eyebrow>
       <table className="w-full text-[12px]">
         <tbody>
           {keys.map((k) => {
@@ -290,9 +285,7 @@ export function StatusSection({ status }: { status?: Record<string, unknown> }) 
   return (
     <section className="blueprint bg-surface p-3.5">
       <Corners />
-      <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-        Status
-      </h2>
+      <Eyebrow className="mb-2">Status</Eyebrow>
 
       {conditions.length > 0 && (
         <table className="mb-4 w-full text-[12.5px]">
@@ -378,9 +371,7 @@ export function ProxySection({
   return (
     <section className="blueprint bg-surface p-3.5">
       <Corners />
-      <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-        HTTP proxy
-      </h2>
+      <Eyebrow className="mb-2">HTTP proxy</Eyebrow>
       <p className="mb-2 text-xs text-ink-muted">
         Opens the port through the API server&apos;s proxy — port-forward for HTTP, read-only,
         under your own identity.

@@ -9,6 +9,7 @@ import {
   Corners,
   EmptyState,
   ErrorState,
+  Eyebrow,
   Loading,
   Spinner,
   StatusBadge,
@@ -31,9 +32,7 @@ function Card({
     <section className="blueprint bg-surface">
       <Corners />
       <header className="flex items-center justify-between border-b border-border px-3.5 py-[9px]">
-        <h2 className="text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-          {title}
-        </h2>
+        <Eyebrow>{title}</Eyebrow>
         {action}
       </header>
       <div className={flush ? 'px-3.5 py-1.5' : 'p-3.5'}>{children}</div>
@@ -59,7 +58,7 @@ function CountTile({
     return (
       <div className="blueprint bg-surface px-3 py-2.5">
         <Corners />
-        <p className="text-[11px] tracking-[.06em] text-ink-faint uppercase">{label}</p>
+        <Eyebrow as="p">{label}</Eyebrow>
         {/* "you may not" and "we could not" are different answers; showing
             the wrong one sends people chasing RBAC bugs that do not exist. */}
         <p className="mt-1 text-sm text-ink-faint">
@@ -76,7 +75,7 @@ function CountTile({
   const body = (
     <div className="blueprint bg-surface px-3 py-2.5 transition-colors hover:border-accent-text/45">
       <Corners />
-      <p className="text-[11px] tracking-[.06em] text-ink-faint uppercase">{label}</p>
+      <Eyebrow as="p">{label}</Eyebrow>
       <p className="mt-1 font-condensed text-[27px] leading-none font-semibold tabular-nums text-ink">
         {summary.total.toLocaleString()}
       </p>

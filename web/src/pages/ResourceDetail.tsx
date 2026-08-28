@@ -37,10 +37,11 @@ import {
   Corners,
   EmptyState,
   ErrorState,
+  Eyebrow,
   Field,
   GatedButton,
-  Modal,
   Loading,
+  Modal,
   StatusBadge,
   TextInput,
 } from '../components/primitives'
@@ -681,9 +682,7 @@ function ResourceDetailInner() {
           <div className="mx-auto max-w-[980px] space-y-4 p-4">
             <section className="blueprint bg-surface p-3.5">
               <Corners />
-              <h2 className="mb-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-                Metadata
-              </h2>
+              <Eyebrow className="mb-2">Metadata</Eyebrow>
               <dl>
                 <Field label="Name">{obj.metadata.name}</Field>
                 {ns && <Field label="Namespace">{ns}</Field>}

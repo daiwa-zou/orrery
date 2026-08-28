@@ -4,7 +4,7 @@ import type { ResourceRef } from '../api/client'
 import { useRelated } from '../api/hooks'
 import type { ObjectRef } from '../api/types'
 import { groupRelations, relatedHref } from '../lib/related'
-import { Corners, Spinner, StatusBadge } from './primitives'
+import { Corners, Eyebrow, Spinner, StatusBadge } from './primitives'
 
 /**
  * Everything attached to the object on screen, in one place.
@@ -55,10 +55,10 @@ export function RelatedSection({
   return (
     <section className="blueprint bg-surface p-3.5">
       <Corners />
-      <h2 className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase">
+      <Eyebrow className="mb-2 flex items-center gap-2">
         Related
         {isLoading && <Spinner className="h-3 w-3" />}
-      </h2>
+      </Eyebrow>
 
       {groups.length > 0 && (
         <dl className="space-y-1">

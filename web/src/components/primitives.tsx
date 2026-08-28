@@ -383,6 +383,39 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
   )
 }
 
+/**
+ * The small uppercase label that titles a panel or a tile.
+ *
+ * It had been written out by hand at ten call sites, and had drifted: three
+ * letter-spacings (.06em, .08em, .1em), two weights, and one label at 10px
+ * instead of 11px. Each difference is small on its own, but together they
+ * read as ten slightly different kinds of heading rather than one heading
+ * used ten times.
+ *
+ * Layout stays with the caller — the gap under a heading depends on what it
+ * sits above — so this fixes the type and nothing else.
+ */
+export function Eyebrow({
+  as: Tag = 'h2',
+  className,
+  children,
+}: {
+  as?: 'h2' | 'p' | 'span'
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <Tag
+      className={clsx(
+        'text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase',
+        className,
+      )}
+    >
+      {children}
+    </Tag>
+  )
+}
+
 /** A labelled key/value row, used throughout the detail pane. */
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
