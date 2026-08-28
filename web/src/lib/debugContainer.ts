@@ -7,8 +7,29 @@ import type { KubeObject } from '../api/types'
  * attach to yet — but they are different to the person waiting. Absent is the
  * node not having acknowledged the container at all; starting is the node
  * working on it, and carrying the reason why it is taking a moment.
+ *
+ * `unstartable` is the one that is not about the container at all: the pod has
+ * finished, so nothing in it will start again. It looks exactly like `absent`
+ * in the pod's status — which is why waiting on it used to go on forever.
  */
-export type DebugPhase = 'absent' | 'starting' | 'running' | 'terminated'
+export type DebugPhase = 'absent' | 'starting' | 'running' | 'terminated' | 'unstartable'
+
+/**
+ * Waiting reasons the kubelet will not resolve on its own.
+ *
+ * A pull that is backing off is genuinely still trying, and the pane says so
+ * and keeps waiting. These are different: they describe the container as
+ * specified, and the specification of an ephemeral container cannot be changed
+ * or removed. CreateContainerConfigError is the one that was hanging — a
+ * debugger targeting a container that is not running reports it and then sits
+ * in Waiting for the life of the pod.
+ */
+const PERMANENT_WAITING = new Set([
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'InvalidImageName',
+  'RunContainerError',
+])
 
 export interface DebugContainerState {
   phase: DebugPhase
@@ -34,7 +55,7 @@ export function debugContainerState(
     | { ephemeralContainerStatuses?: Record<string, unknown>[] }
     | undefined
   const found = (status?.ephemeralContainerStatuses ?? []).find((s) => s.name === name)
-  if (!found) return { phase: 'absent' }
+  if (!found) return finished(obj) ?? { phase: 'absent' }
 
   const state = (found.state ?? {}) as Record<string, Record<string, unknown> | undefined>
 
@@ -50,13 +71,19 @@ export function debugContainerState(
     return { phase: 'terminated', detail: parts.join(' — ') }
   }
 
+  // A pod that has finished has a kubelet that has stopped acting on it, so a
+  // container still waiting there is waiting for nothing.
+  const done = finished(obj)
+  if (done) return done
+
   if (state.waiting) {
     const w = state.waiting
     const reason = w.reason ? String(w.reason) : undefined
     const message = w.message ? String(w.message) : undefined
+    const detail = reason && message ? `${reason} — ${message}` : (reason ?? message)
     return {
-      phase: 'starting',
-      detail: reason && message ? `${reason} — ${message}` : (reason ?? message),
+      phase: reason && PERMANENT_WAITING.has(reason) ? 'unstartable' : 'starting',
+      detail,
     }
   }
 
@@ -64,11 +91,34 @@ export function debugContainerState(
 }
 
 /**
+ * The state of a debug container in a pod that has finished, or undefined if
+ * the pod is still running.
+ *
+ * Succeeded and Failed are both terminal: the kubelet will not pull an image
+ * or start a container for a pod it has finished with. Nothing in the pod's
+ * status says so about the container itself — it simply never appears, or
+ * never leaves Waiting — so the pod's own phase is the only thing that can
+ * end the wait.
+ */
+function finished(obj: KubeObject | undefined): DebugContainerState | undefined {
+  const phase = (obj?.status as { phase?: string } | undefined)?.phase
+  if (phase !== 'Succeeded' && phase !== 'Failed') return undefined
+  return {
+    phase: 'unstartable',
+    detail:
+      `This pod has finished (${phase}), so the node will not start a debug ` +
+      'container in it. Debug a running pod, or start a new one from the same workload.',
+  }
+}
+
+/**
  * Whether a phase can still become `running` on its own.
  *
  * A pull that is backing off is still waiting as far as the kubelet is
  * concerned, so this deliberately does not treat a slow start as a failure —
- * the reason is shown instead, and leaving is the viewer's call.
+ * the reason is shown instead, and leaving is the viewer's call. A pod that
+ * has finished is a different matter: there is no start to wait for, and
+ * saying "waiting for the node" about it is untrue.
  */
 export function debugStillStarting(state: DebugContainerState): boolean {
   return state.phase === 'absent' || state.phase === 'starting'

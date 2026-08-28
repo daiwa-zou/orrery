@@ -10,6 +10,22 @@
   --color-raised: #1f2630; /* dropdowns, modals, toasts */
   --color-code: #10141a; /* code panes, log wells */
   --color-term: #0c1015; /* the terminal, one step darker again */
+
+  /* Text on those two surfaces.
+     
+     The code and terminal grounds are the same in both palettes — a log well
+     inverted to white would cost more legibility than the consistency gains —
+     so the ink on them cannot be the palette's, which does invert. Pairing
+     them was the bug: light-theme ink-muted (#4b5563) on the code ground is
+     2.44:1, well under the 4.5:1 WCAG asks for body text, and the status JSON
+     on a detail page was unreadable in daylight while looking fine at night.
+     These are stated once and repeated verbatim in the light block, so the
+     pairing cannot come apart again; contrast.test.ts holds them to 4.5:1. */
+  --color-code-ink: #e7eaee;
+  --color-code-ink-muted: #a7afba;
+  --color-code-ink-faint: #8a94a2;
+  --color-code-danger: #e0705c;
+  --color-code-warn: #d9a94e;
   --color-border: rgba(231, 234, 238, 0.12); /* hairlines */
   --color-border-strong: rgba(231, 234, 238, 0.22);
 
@@ -62,8 +78,15 @@
   --color-surface: #ffffff;
   --color-surface-2: #eaeef3;
   --color-raised: #ffffff;
+  /* Unchanged from the dark palette, deliberately: so is the ground they sit
+     on. */
   --color-code: #10141a;
   --color-term: #0c1015;
+  --color-code-ink: #e7eaee;
+  --color-code-ink-muted: #a7afba;
+  --color-code-ink-faint: #8a94a2;
+  --color-code-danger: #e0705c;
+  --color-code-warn: #d9a94e;
   --color-border: rgba(20, 24, 30, 0.14);
   --color-border-strong: rgba(20, 24, 30, 0.26);
 

@@ -226,10 +226,25 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	res.resource = eventRes
 
-	namespace := r.URL.Query().Get("namespace")
-	if namespace != "" {
-		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
-			a.writeErr(w, r, err)
+	// Authorized one at a time, like every other read narrowed to namespaces:
+	// permission is granted that way, so being allowed two of the three asked
+	// for is a narrower feed rather than a refused one.
+	namespaces := queryNamespaces(r)
+	var scoped map[string]struct{}
+	if len(namespaces) > 0 {
+		var firstErr error
+		scoped = make(map[string]struct{}, len(namespaces))
+		for _, ns := range namespaces {
+			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			scoped[ns] = struct{}{}
+		}
+		if len(scoped) == 0 {
+			a.writeErr(w, r, firstErr)
 			return
 		}
 	}
@@ -244,13 +259,26 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("involvedName")
 	kind := r.URL.Query().Get("involvedKind")
 	onlyWarnings := queryBool(r, "warningsOnly", false)
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	terms := parseSearchTerms(r.URL.Query().Get("q"))
 
 	set := a.tableFor(ctx, res.cluster, eventRes)
+	// Column predicates are bound to the event table's own columns, so
+	// count>3, reason=~^Failed and lastSeen<15m mean here exactly what they
+	// mean on every other list. Binding them is also what lets a term naming a
+	// column this table does not have be refused with a message, rather than
+	// matching nothing on every row and reading as a quiet cluster.
+	preds, err := parseWhere(r.URL.Query()["where"], set.columns)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+
 	rows := make([]map[string]any, 0, 64)
 	for _, e := range objs {
-		if namespace != "" && e.GetNamespace() != namespace {
-			continue
+		if scoped != nil {
+			if _, ok := scoped[e.GetNamespace()]; !ok {
+				continue
+			}
 		}
 		if uid != "" && str(e, "involvedObject", "uid") != uid {
 			continue
@@ -265,9 +293,14 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row := set.row(e)
-		// Free text scans the projected columns the table shows, so what
-		// matches is exactly what the reader can see.
-		if q != "" && !rowMatchesQuery(row, q, eventSearchKeys) {
+		// Free text and predicates both read the projected row, so what
+		// filters is exactly what the reader can see — and both are applied
+		// before the limit below, so a match older than the newest few hundred
+		// events still surfaces.
+		if !rowMatchesSearch(row, terms, eventSearchKeys) {
+			continue
+		}
+		if !matchesAll(preds, row) {
 			continue
 		}
 		rows = append(rows, row)
@@ -296,7 +329,12 @@ func asString(v any) string {
 	return s
 }
 
-var eventSearchKeys = []string{"object", "reason", "message", "namespace"}
+// eventSearchKeys are the columns free text scans: everything an event says in
+// words. "type" is among them because "warning" is a word people type, and a
+// box that ignores it is answering a question it was not asked. The count and
+// the timestamp are left out — they are compared, not read, and `count>3` says
+// what searching for "3" never could.
+var eventSearchKeys = []string{"object", "reason", "message", "namespace", "type"}
 
 func rowMatchesQuery(row map[string]any, q string, keys []string) bool {
 	for _, k := range keys {

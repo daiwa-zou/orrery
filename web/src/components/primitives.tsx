@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   useSyncExternalStore,
   type ComponentPropsWithRef,
   type ReactNode,
@@ -80,10 +81,14 @@ export function Badge({
   children,
   tone = 'idle',
   title,
+  className,
 }: {
   children: ReactNode
   tone?: Tone
   title?: string
+  /** For a badge that has to line up with others — a fixed column width,
+   *  typically. Layout only; the skin is not a caller's business. */
+  className?: string
 }) {
   return (
     <span
@@ -91,6 +96,7 @@ export function Badge({
       className={clsx(
         'inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] ring-1 ring-inset whitespace-nowrap',
         TONE_CLASS[tone],
+        className,
       )}
     >
       {children}
@@ -115,6 +121,92 @@ export function StatusBadge({ value, title }: { value: string; title?: string })
       />
       {value}
     </Badge>
+  )
+}
+
+const LIVE_STATES = {
+  connecting: { tone: 'idle', label: 'connecting' },
+  live: { tone: 'ok', label: 'live' },
+  polling: { tone: 'warn', label: 'polling' },
+  paused: { tone: 'idle', label: 'paused' },
+  off: { tone: 'idle', label: 'static' },
+} as const
+
+export type LiveState = keyof typeof LIVE_STATES
+
+const LIVE_SPOKEN: Record<LiveState, string> = {
+  connecting: 'Connecting to the live stream.',
+  live: 'Live: updates are streaming from the cluster.',
+  polling: 'Live stream unavailable. Refreshing every 15 seconds instead.',
+  paused: 'Paused. The list is being held still and is not updating.',
+  off: 'Static list. Not receiving live updates.',
+}
+
+/**
+ * Explains the live-update state in a page header, honestly.
+ *
+ * Every list in this console updates itself by some means, and none of them
+ * look any different while doing it. This badge is where a page says which it
+ * is — and, when a page can hold itself still, it is also the control that
+ * does so, because a reader who has just paused a feed looks for the state at
+ * the place they changed it.
+ *
+ * The one thing it must never do is imply currency it does not have: a held
+ * feed carries `detail` saying how old what you are reading is.
+ */
+export function LiveIndicator({
+  state,
+  detail,
+  onToggle,
+  title,
+}: {
+  state: LiveState
+  /** Rendered after the label — the age of a held feed, typically. */
+  detail?: ReactNode
+  /** Supply one to make the indicator the control that changes the state. */
+  onToggle?: () => void
+  title?: string
+}) {
+  const { tone, label } = LIVE_STATES[state]
+  const tip =
+    title ??
+    (state === 'live'
+      ? 'Streaming changes from the cluster watch'
+      : state === 'polling'
+        ? 'The live stream is unavailable; refreshing every 15 seconds instead'
+        : undefined)
+
+  const badge = (
+    <Badge tone={tone} title={onToggle ? undefined : tip}>
+      {state === 'live' && <span className="size-1.5 animate-pulse rounded-full bg-ok" />}
+      <span aria-hidden="true">{label}</span>
+      {detail !== undefined && <span className="text-ink-faint tabular-nums">{detail}</span>}
+    </Badge>
+  )
+
+  return (
+    <>
+      {onToggle ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          title={tip}
+          aria-pressed={state === 'live'}
+          aria-label={state === 'live' ? 'Pause live updates' : 'Resume live updates'}
+          className="inline-flex transition-opacity hover:opacity-80"
+        >
+          {badge}
+        </button>
+      ) : (
+        badge
+      )}
+      {/* A reader who cannot see the badge change colour still needs to know
+          the page stopped being live. Announced politely, and only when the
+          state actually moves — never per row. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {LIVE_SPOKEN[state]}
+      </span>
+    </>
   )
 }
 
@@ -403,10 +495,274 @@ export function FilterInput({
   )
 }
 
+/** One row of a Listbox. */
+export interface ListboxItem {
+  /** Reported on selection, and the row's key. */
+  value: string
+  /** What type-ahead matches and what a screen reader reads. */
+  label: string
+  /** A richer row than its label, for a list that shows more than a name. */
+  content?: ReactNode
+}
+
+/** How long a type-ahead burst stays one word: long enough to spell a
+ *  namespace, short enough that the next search starts fresh. */
+const TYPE_AHEAD_MS = 700
+
 /**
- * A native select on the same scale. Native is deliberate: it keeps the
- * platform's own keyboard handling and its long-list behaviour, which a
- * hand-rolled listbox would have to reimplement badly.
+ * A dropdown that is drawn by this application rather than by the platform.
+ *
+ * The native `<select>` below is still the right control for a short list
+ * inside a form. It is the wrong one for the console's own chrome: the browser
+ * paints that menu in the operating system's colours and typeface, so the two
+ * pickers in the sidebar looked like they came from different programs — one
+ * of them from a different decade.
+ *
+ * What native gives away for free is the part that has to be re-earned here,
+ * and is: focus moves to the listbox with the options pointed at by
+ * aria-activedescendant, arrows and Home/End move, Enter and Space choose,
+ * Escape closes and returns focus to the trigger, Tab leaves without a stale
+ * popup behind it, and typing jumps — which is how anyone picks one namespace
+ * out of two hundred without reaching for the mouse.
+ */
+export function Listbox({
+  items,
+  value,
+  selected,
+  onSelect,
+  ariaLabel,
+  labelledBy,
+  footer,
+  children,
+}: {
+  items: ListboxItem[]
+  /** The selected value in single-select mode; ignored when `selected` is given. */
+  value?: string
+  /**
+   * The selected values, which turns the list multi-select: rows carry
+   * checkboxes, choosing one toggles it, and the popup stays open because the
+   * next thing a reader does is choose another.
+   */
+  selected?: ReadonlySet<string>
+  onSelect: (value: string) => void
+  ariaLabel?: string
+  /** Id of an existing label, for a control that already has one on screen. */
+  labelledBy?: string
+  /**
+   * An action under the options — somewhere to go rather than something to
+   * choose. It sits outside the listbox in the markup, because a link is not
+   * an option and a screen reader should not be told it is one; Tab reaches
+   * it from the list, and the popup closes once it is used.
+   */
+  footer?: ReactNode
+  /** The closed control's contents; the frame and the caret are drawn here. */
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const listboxId = useId()
+  const typed = useRef({ text: '', at: 0 })
+
+  // Focus lives on the listbox itself; options are pointed at with
+  // aria-activedescendant so a screen reader tracks the arrow keys.
+  useEffect(() => {
+    if (open) listRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
+
+  const multi = selected !== undefined
+  const isChosen = (item: ListboxItem) =>
+    multi ? selected.has(item.value) : item.value === value
+
+  const openList = () => {
+    const at = items.findIndex((i) => isChosen(i))
+    setActiveIndex(at >= 0 ? at : 0)
+    setOpen(true)
+  }
+
+  const close = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const choose = (item: ListboxItem) => {
+    // Single-select closes: the choice is made. Multi-select does not, because
+    // picking two namespaces is one action to the reader and reopening the
+    // list between them is the console counting differently.
+    if (!multi) close()
+    onSelect(item.value)
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActiveIndex((i) => Math.min(i + 1, items.length - 1))
+        return
+      case 'ArrowUp':
+        e.preventDefault()
+        setActiveIndex((i) => Math.max(i - 1, 0))
+        return
+      case 'Home':
+        e.preventDefault()
+        setActiveIndex(0)
+        return
+      case 'End':
+        e.preventDefault()
+        setActiveIndex(items.length - 1)
+        return
+      case 'Enter':
+      case ' ':
+        e.preventDefault()
+        if (items[activeIndex]) choose(items[activeIndex])
+        return
+      case 'Escape':
+        e.preventDefault()
+        close()
+        return
+      case 'Tab':
+        // Let focus move on naturally, but not with a stale popup behind it.
+        // With a footer, the next stop is inside the popup, so it stays: the
+        // blur handler below closes it once focus actually leaves.
+        if (!footer) setOpen(false)
+        return
+    }
+
+    // Type-ahead. A burst of letters spells one prefix; a pause starts a new
+    // one, except that repeating a single letter cycles the matches for it,
+    // which is what every platform list does and what fingers expect.
+    if (e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey) return
+    const now = Date.now()
+    const fresh = now - typed.current.at > TYPE_AHEAD_MS
+    const repeat = !fresh && typed.current.text === e.key
+    const text = fresh || repeat ? e.key : typed.current.text + e.key
+    typed.current = { text, at: now }
+
+    const matches = (i: number) => items[i].label.toLowerCase().startsWith(text.toLowerCase())
+    const from = repeat || text.length === 1 ? activeIndex + 1 : activeIndex
+    for (let n = 0; n < items.length; n++) {
+      const i = (from + n) % items.length
+      if (matches(i)) {
+        e.preventDefault()
+        setActiveIndex(i)
+        return
+      }
+    }
+  }
+
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => {
+        // Focus moving within the popup — list to footer — is not leaving it.
+        if (!open || e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        setOpen(false)
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => (open ? setOpen(false) : openList())}
+        className="flex w-full items-center gap-2 bg-surface-2 px-2.5 py-2 text-left ring-1 ring-border transition-colors hover:ring-border-strong"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        aria-labelledby={labelledBy}
+        aria-controls={open ? listboxId : undefined}
+      >
+        <span className="min-w-0 flex-1">{children}</span>
+        <span aria-hidden className="text-ink-faint">
+          ▾
+        </span>
+      </button>
+
+      {open && (
+        <>
+          {/* Catches the click that dismisses the popup, so choosing "somewhere
+              else" does not also press whatever was underneath. */}
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          {/* The panel carries the skin; the list inside it carries the
+              scrolling, so a footer stays put while the options move under
+              it. */}
+          <div className="animate-in absolute z-40 mt-1 w-full bg-raised shadow-[0_16px_40px_rgba(0,0,0,.6)] ring-1 ring-border-strong">
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-label={ariaLabel}
+            aria-labelledby={labelledBy}
+            tabIndex={-1}
+            aria-activedescendant={items[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
+            aria-multiselectable={multi || undefined}
+            onKeyDown={onKeyDown}
+            className="max-h-96 overflow-auto py-1 outline-none"
+          >
+            {items.map((item, i) => (
+              <li
+                key={item.value}
+                id={`${listboxId}-${i}`}
+                role="option"
+                aria-selected={isChosen(item)}
+                data-active={i === activeIndex}
+                onMouseMove={() => setActiveIndex(i)}
+                onClick={() => choose(item)}
+                className={clsx(
+                  'flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left',
+                  i === activeIndex && 'bg-surface-2',
+                  isChosen(item) && 'bg-accent-soft',
+                )}
+              >
+                {multi && (
+                  // Drawn rather than an <input>: the row is the control, and a
+                  // real checkbox inside it would take a second click target
+                  // and its own focus stop for the same one choice.
+                  <span
+                    aria-hidden
+                    className={clsx(
+                      'mt-[3px] grid size-3.5 shrink-0 place-items-center text-[10px] ring-1',
+                      isChosen(item)
+                        ? 'bg-accent text-canvas ring-accent'
+                        : 'ring-border-strong',
+                    )}
+                  >
+                    {isChosen(item) ? '✓' : ''}
+                  </span>
+                )}
+                {item.content ?? <span className="truncate text-[13px] text-ink">{item.label}</span>}
+              </li>
+            ))}
+          </ul>
+          {footer && (
+            <div
+              // Mousedown would blur the list first, and the blur handler
+              // above unmounts the popup — so the click landed on whatever
+              // moved under the cursor, and the link did nothing at all. The
+              // suggestion lists in the search bars dodge this the same way.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setOpen(false)}
+              className="border-t border-border"
+            >
+              {footer}
+            </div>
+          )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A native select on the same scale, for the short lists inside forms and
+ * dialogs. The console's own chrome uses Listbox above: a menu the platform
+ * paints in its own colours reads as another application's, which is exactly
+ * what the sidebar's two pickers looked like side by side.
  */
 export function Select({
   size = 'sm',
@@ -553,13 +909,17 @@ export function Eyebrow({
   as: Tag = 'h2',
   className,
   children,
+  id,
 }: {
   as?: 'h2' | 'p' | 'span'
   className?: string
   children: ReactNode
+  /** For an eyebrow that names a control beside it, via aria-labelledby. */
+  id?: string
 }) {
   return (
     <Tag
+      id={id}
       className={clsx(
         'text-[11px] font-semibold tracking-[.1em] text-ink-faint uppercase',
         className,

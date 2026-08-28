@@ -319,6 +319,17 @@ func cellString(cell any) string {
 	return fmt.Sprint(cell)
 }
 
+// matchesAll reports whether a projected row satisfies every predicate.
+// Predicates are ANDed: each one narrows what the last left.
+func matchesAll(preds []wherePredicate, row map[string]any) bool {
+	for _, p := range preds {
+		if !p.matches(row) {
+			return false
+		}
+	}
+	return true
+}
+
 // filterRows keeps the objects whose projected row satisfies every predicate.
 func filterRows(
 	objs []*unstructured.Unstructured,
@@ -330,15 +341,7 @@ func filterRows(
 	}
 	out := objs[:0:0]
 	for _, o := range objs {
-		row := set.row(o)
-		keep := true
-		for _, p := range preds {
-			if !p.matches(row) {
-				keep = false
-				break
-			}
-		}
-		if keep {
+		if matchesAll(preds, set.row(o)) {
 			out = append(out, o)
 		}
 	}

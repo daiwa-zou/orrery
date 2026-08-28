@@ -1,8 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // envSeed plants a pod exercising every env source, plus the ConfigMap and
@@ -204,4 +207,24 @@ func TestPodEnvUnknownPodHTTP(t *testing.T) {
 	rig := hndNewRig(t)
 	rec := rig.get(t, "/api/v1/clusters/fake/pods/demo/absent/env")
 	hndWantStatus(t, rec, http.StatusNotFound)
+}
+
+// A container with no environment is an answer, and it has to arrive as one.
+// A nil slice marshals to null, which is not a list: the pane that reads it
+// crashed the whole page on `c.env.length`.
+func TestEnvOfAContainerWithNoneIsAList(t *testing.T) {
+	rs := &refResolver{}
+	pod := &corev1.Pod{}
+	got := rs.resolveContainer(pod, corev1.Container{Name: "bare"})
+	if got == nil {
+		t.Fatal("resolveContainer returned nil, which serialises to null")
+	}
+	if len(got) != 0 {
+		t.Errorf("resolveContainer = %v, want empty", got)
+	}
+	if b, err := json.Marshal(map[string]any{"env": got}); err != nil {
+		t.Fatal(err)
+	} else if string(b) != `{"env":[]}` {
+		t.Errorf("marshalled as %s, want an empty list", b)
+	}
 }

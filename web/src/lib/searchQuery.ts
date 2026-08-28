@@ -41,6 +41,56 @@ export type WhereOp = (typeof WHERE_OPS)[number]
 /** A column name, as far as the client can tell without asking the server. */
 const COLUMN_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 
+/** One operator a key can take, and what choosing it would mean in words. */
+export interface OperatorChoice {
+  op: string
+  /** Plain English, because `!~` is not a word anybody thinks in. */
+  means: string
+}
+
+/**
+ * The operators a Kubernetes selector key takes.
+ *
+ * A label or field is a value an object either has or does not; there is no
+ * magnitude to order and no pattern to match, which is exactly the gap the
+ * column predicates below exist to fill.
+ */
+export const SELECTOR_OPERATORS: OperatorChoice[] = [
+  { op: '=', means: 'is' },
+  { op: '!=', means: 'is not' },
+]
+
+/**
+ * The operators a projected column takes, chosen by what its type can answer.
+ *
+ * The order is the order the questions get asked in. For an age that is
+ * "in the last…" first, because a list is usually read for what changed
+ * recently; for a count it is "more than…", because a threshold is what
+ * separates a one-off from a problem. The rest follow rather than being left
+ * out — a filter language that only offers the common case teaches people it
+ * cannot do the other one.
+ */
+export function columnOperators(type: string | undefined): OperatorChoice[] {
+  if (type === 'age') {
+    return [
+      { op: '<', means: 'in the last' },
+      { op: '>', means: 'older than' },
+    ]
+  }
+  if (type === 'number') {
+    return [
+      { op: '>', means: 'more than' },
+      { op: '<', means: 'fewer than' },
+      { op: '>=', means: 'at least' },
+      { op: '<=', means: 'at most' },
+    ]
+  }
+  return [
+    { op: '=~', means: 'matches' },
+    { op: '!~', means: 'does not match' },
+  ]
+}
+
 export interface WhereTerm {
   column: string
   op: WhereOp

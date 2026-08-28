@@ -159,7 +159,11 @@ func (rs *refResolver) resolveContainer(pod *corev1.Pod, c corev1.Container) []e
 	// Order and precedence match the kubelet: envFrom first, then env, with a
 	// later definition of the same name replacing the earlier one in place.
 	byName := map[string]int{}
-	var out []envVar
+	// Empty rather than nil: a container with no environment is an answer, and
+	// it has to arrive as one. A nil slice marshals to null, which is not a
+	// list, and the pane that reads it crashed on `c.env.length` — the same
+	// rule the list and warnings responses already state, applied here.
+	out := []envVar{}
 	put := func(v envVar) {
 		if i, ok := byName[v.Name]; ok {
 			out[i] = v

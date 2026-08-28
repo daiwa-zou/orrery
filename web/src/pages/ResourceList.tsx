@@ -7,6 +7,13 @@ import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory, RESTARTABLE_RESOURCES } from '../lib/format'
 import { toggleSelectorTerm } from '../lib/labels'
 import { queryTerms, removeQueryTerm, type SearchQuery } from '../lib/searchQuery'
+import {
+  namespaceSearch,
+  namespacesIn,
+  onlyNamespace,
+  scopeIsEmpty,
+  withNamespaces,
+} from '../lib/scope'
 
 /** The unfiltered scope, stable so it never re-keys the facets query. */
 const EMPTY_QUERY: SearchQuery = { q: '', labelSelector: '', fieldSelector: '', where: [] }
@@ -30,12 +37,12 @@ import {
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
 import {
-  Badge,
   Button,
   ErrorState,
   Eyebrow,
   Field,
   GatedButton,
+  LiveIndicator,
   Loading,
   Modal,
   Spinner,
@@ -53,7 +60,6 @@ function nameList(rows: Row[]): string {
     : `${names.slice(0, 6).join(', ')} +${names.length - 6} more`
 }
 
-/** Explains the live-update state in the header, honestly. */
 function ColumnPicker({
   chosen,
   available,
@@ -151,44 +157,6 @@ function ColumnPicker({
   )
 }
 
-function LiveIndicator({ state }: { state: 'connecting' | 'live' | 'polling' | 'off' }) {
-  const map = {
-    connecting: { tone: 'idle', label: 'connecting' },
-    live: { tone: 'ok', label: 'live' },
-    polling: { tone: 'warn', label: 'polling' },
-    off: { tone: 'idle', label: 'static' },
-  } as const
-
-  const { tone, label } = map[state]
-  const title =
-    state === 'live'
-      ? 'Streaming changes from the cluster watch'
-      : state === 'polling'
-        ? 'The live stream is unavailable; refreshing every 15 seconds instead'
-        : undefined
-
-  return (
-    <>
-      <Badge tone={tone} title={title}>
-        {state === 'live' && <span className="size-1.5 animate-pulse rounded-full bg-ok" />}
-        <span aria-hidden="true">{label}</span>
-      </Badge>
-      {/* A reader who cannot see the badge change colour still needs to know
-          the page stopped being live. Announced politely, and only when the
-          connection state actually moves — never per row. */}
-      <span role="status" aria-live="polite" className="sr-only">
-        {state === 'live'
-          ? 'Live: updates are streaming from the cluster.'
-          : state === 'polling'
-            ? 'Live stream unavailable. Refreshing every 15 seconds instead.'
-            : state === 'connecting'
-              ? 'Connecting to the live stream.'
-              : 'Static list. Not receiving live updates.'}
-      </span>
-    </>
-  )
-}
-
 export function ResourceList() {
   const { cluster, group, version, resource } = useParams<{
     cluster: string
@@ -201,7 +169,15 @@ export function ResourceList() {
   const qc = useQueryClient()
   const toast = useToast()
 
-  const namespace = params.get('namespace') ?? ''
+  const namespaces = namespacesIn(params)
+  // Every box unticked. Nothing is asked of the server, because there is
+  // nothing to ask about — and an empty table with no explanation would read
+  // as "this cluster has no pods".
+  const noNamespaces = scopeIsEmpty(params)
+  const namespaceKey = namespaces.join('\u0000')
+  // The one namespace, where a thing can only have one: creating an object has
+  // to put it somewhere, and pod metrics answer for a single namespace.
+  const namespace = onlyNamespace(namespaces) ?? ''
   const q = params.get('q') ?? ''
   const sort = params.get('sort') ?? 'name'
   const order = (params.get('order') as 'asc' | 'desc') ?? 'asc'
@@ -221,13 +197,13 @@ export function ResourceList() {
   const [bulkRunning, setBulkRunning] = useState(false)
 
   const ref: ResourceRef | null =
-    cluster && group && version && resource
+    cluster && group && version && resource && !noNamespaces
       ? { cluster, group: apiGroup(group), version, resource }
       : null
 
   const listParams = useMemo(
     () => ({
-      namespace,
+      namespace: namespaces,
       q,
       sort,
       order,
@@ -238,10 +214,16 @@ export function ResourceList() {
       where: whereTerms,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [namespace, q, sort, order, page, pageSize, labelSelector, fieldSelector, whereKey],
+    [namespaceKey, q, sort, order, page, pageSize, labelSelector, fieldSelector, whereKey],
   )
 
-  const { data, isLoading, error, stalled, live, refetch } = useLiveList(ref, listParams)
+  const list = useLiveList(ref, listParams)
+  const { isLoading, error, stalled, live, refetch } = list
+  // A disabled query keeps the rows it last fetched, which is right when a
+  // page is loading the next scope and wrong when there is no scope to load:
+  // the table would go on showing the namespace that was unticked last, under
+  // a picker reading "None". Nothing was asked for, so nothing is shown.
+  const data = noNamespaces ? undefined : list.data
 
   const meta = data?.resource
   const canDelete = meta?.verbs.includes('delete') ?? false
@@ -326,7 +308,7 @@ export function ResourceList() {
   const [searchActive, setSearchActive] = useState(false)
   const activateSearch = useCallback(() => setSearchActive(true), [])
   const [facetScope, setFacetScope] = useState<SearchQuery>(EMPTY_QUERY)
-  const facets = useFacets(ref, namespace, searchActive, facetScope)
+  const facets = useFacets(ref, namespaces, searchActive, facetScope)
 
   // A starred view is the resource plus the narrowing that made it useful —
   // "the failing pods in staging" rather than just "pods". That narrowing is
@@ -423,7 +405,7 @@ export function ResourceList() {
   const openRow = (row: Row) => {
     const ns = row.namespace ?? '_'
     navigate(`/c/${cluster}/r/${group}/${version}/${resource}/${ns}/${row.name}${
-      namespace ? `?namespace=${namespace}` : ''
+      namespaceSearch(namespaces, noNamespaces)
     }`)
   }
 
@@ -431,7 +413,8 @@ export function ResourceList() {
   // resource or namespace makes them meaningless.
   useEffect(() => {
     setSelected(new Set())
-  }, [cluster, group, version, resource, namespace])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cluster, group, version, resource, namespaceKey])
 
   const confirmBulk = async () => {
     if (!pendingBulk || !ref || !cluster) return
@@ -590,6 +573,25 @@ export function ResourceList() {
   // this page is simply not where they are.
   const lastPage = data ? Math.max(1, Math.ceil(data.total / pageSize)) : 1
   const pastEnd = !!data && data.total > 0 && rows.length === 0 && page > lastPage
+
+  /**
+   * Whether the scope on screen is narrower than the one that was asked for.
+   *
+   * The server reports the namespaces a response actually covers, which is the
+   * same field whether the narrowing came from permission or from the picker.
+   * Only the first is news.
+   */
+  const scopeNamespaces = data?.scope?.namespaces ?? []
+  const narrowedByPermission =
+    !!data?.scope &&
+    !data.scope.allNamespaces &&
+    !data.scope.namespace &&
+    scopeNamespaces.length > 0 &&
+    !(
+      namespaces.length > 0 &&
+      scopeNamespaces.length === namespaces.length &&
+      scopeNamespaces.every((ns) => namespaces.includes(ns))
+    )
 
   if (error) return <ErrorState error={error} retry={refetch} />
   // A parked retry with nothing to show would otherwise fall through to the
@@ -765,12 +767,18 @@ export function ResourceList() {
       )}
 
       {/* The server tells us when it could only show part of the cluster.
-          Surfacing that is the difference between "empty" and "invisible". */}
-      {data?.scope && !data.scope.allNamespaces && !data.scope.namespace && (
+          Surfacing that is the difference between "empty" and "invisible".
+
+          Only when the narrowing was not the reader's own: a scope they chose
+          in the picker comes back named in the response too, and announcing
+          "you can only list this in demo, kube-system" to someone who just
+          ticked demo and kube-system reports their own choice as a permission
+          problem. What is worth saying is when the two differ. */}
+      {narrowedByPermission && (
         <p className="border-b border-border bg-warn/8 px-4 py-1.5 text-xs text-warn">
           You can only list this resource in{' '}
-          {data.scope.namespaces?.length ?? 0} namespace(s):{' '}
-          <span className="font-mono">{(data.scope.namespaces ?? []).join(', ')}</span>
+          {data?.scope.namespaces?.length ?? 0} namespace(s):{' '}
+          <span className="font-mono">{(data?.scope.namespaces ?? []).join(', ')}</span>
         </p>
       )}
       {data?.warnings?.map((w) => (
@@ -793,14 +801,31 @@ export function ResourceList() {
             onLabelClick={showLabels ? onLabelClick : undefined}
             loading={isLoading}
             emptyTitle={
-              pastEnd
-                ? `Nothing on page ${page.toLocaleString()}`
-                : q || labelSelector || fieldSelector
-                  ? 'No matches'
-                  : `No ${meta?.kind ?? resource} found`
+              // The scope, first: a table empty because nothing was asked for
+              // must not read as a cluster with nothing in it.
+              noNamespaces
+                ? 'No namespaces selected'
+                : pastEnd
+                  ? `Nothing on page ${page.toLocaleString()}`
+                  : q || labelSelector || fieldSelector
+                    ? 'No matches'
+                    : `No ${meta?.kind ?? resource} found`
             }
             emptyDescription={
-              pastEnd ? (
+              noNamespaces ? (
+                <>
+                  Every namespace is unticked, so nothing was asked for. Tick
+                  one in the namespace picker, or{' '}
+                  <button
+                    type="button"
+                    className="text-accent-text underline underline-offset-2 hover:text-accent-text-hover"
+                    onClick={() => setParams(withNamespaces(params, []), { replace: true })}
+                  >
+                    show every namespace
+                  </button>
+                  .
+                </>
+              ) : pastEnd ? (
                 <>
                   There {data!.total === 1 ? 'is' : 'are'}{' '}
                   {data!.total.toLocaleString()}{' '}

@@ -96,6 +96,19 @@ func (a *API) debugPod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A pod that has finished will never start another container. The kubelet
+	// acts on ephemeral containers only while the pod is running, and the API
+	// server accepts the update regardless — so nothing fails, the container is
+	// simply added to a pod that is done, and whoever asked is left watching a
+	// spinner for a start that is not coming. Refusing here is the difference
+	// between an answer and a wait with no end.
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		a.writeErr(w, r, badRequest(
+			"pod %q has finished (%s), so the kubelet will not start a debug container in it — debug a running pod instead",
+			req.Pod, pod.Status.Phase))
+		return
+	}
+
 	// Targeting a container that does not exist fails inside the API server
 	// with a message about the pod spec; catching it here says which name was
 	// wrong and what the choices were.
@@ -104,6 +117,23 @@ func (a *API) debugPod(w http.ResponseWriter, r *http.Request) {
 			"pod %q has no container %q (containers: %s)",
 			req.Pod, req.TargetContainer, containerNames(pod)))
 		return
+	}
+
+	// Sharing a process namespace needs a process to share. The kubelet cannot
+	// resolve a target that is not running, and it says so with a
+	// CreateContainerConfigError that never resolves — the ephemeral container
+	// sits in Waiting for the life of the pod, and it cannot be edited or
+	// removed to try again. That is the shape of the hang this refuses: a pod
+	// whose only container is stuck pulling its image, debugged at that
+	// container, waits forever for a start that the config error has already
+	// ruled out.
+	if req.TargetContainer != "" {
+		if state, running := containerState(pod, req.TargetContainer); !running {
+			a.writeErr(w, r, badRequest(
+				"container %q in pod %q is not running (%s), so a debug container cannot share its process namespace — debug it once it is running, or without targeting a container",
+				req.TargetContainer, req.Pod, state))
+			return
+		}
 	}
 
 	suffix, err := debugSuffix()
@@ -150,6 +180,32 @@ func hasContainer(pod *corev1.Pod, name string) bool {
 		}
 	}
 	return false
+}
+
+// containerState reports whether one of a pod's containers is running, and the
+// word for what it is doing instead. The state is for the message: "not
+// running" is the fact, and "ImagePullBackOff" is the reason someone can act
+// on.
+func containerState(pod *corev1.Pod, name string) (string, bool) {
+	all := append(append([]corev1.ContainerStatus{}, pod.Status.ContainerStatuses...),
+		pod.Status.InitContainerStatuses...)
+	for _, s := range all {
+		if s.Name != name {
+			continue
+		}
+		switch {
+		case s.State.Running != nil:
+			return "running", true
+		case s.State.Waiting != nil && s.State.Waiting.Reason != "":
+			return s.State.Waiting.Reason, false
+		case s.State.Terminated != nil && s.State.Terminated.Reason != "":
+			return s.State.Terminated.Reason, false
+		}
+		return "not started", false
+	}
+	// In the spec but not yet in the status: the kubelet has not reported on
+	// it at all, which is not running either.
+	return "not started", false
 }
 
 func containerNames(pod *corev1.Pod) string {

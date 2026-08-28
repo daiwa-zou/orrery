@@ -35,13 +35,16 @@ interface LogViewerProps {
  * their stream, so this is a heuristic over the conventional level markers —
  * cheap, and wrong only about logs that lie about themselves.
  */
+// The code-* tones, not the palette's: this pane's ground is dark in both
+// themes, and the palette's danger and warn invert with it — 3.02:1 and 3.41:1
+// against the log well in the light theme, against the 4.5:1 body text needs.
 function lineTone(line: string): string {
   // Level markers, plus klog's single-letter severity prefix (E0824 12:00:00).
   if (/\b(ERROR|FATAL|panic|OOMKilled)\b/.test(line) || /^[EF]\d{4} /.test(line)) {
-    return 'text-danger'
+    return 'text-code-danger'
   }
-  if (/\bWARN(ING)?\b/.test(line) || /^W\d{4} /.test(line)) return 'text-warn'
-  return 'text-ink-muted'
+  if (/\bWARN(ING)?\b/.test(line) || /^W\d{4} /.test(line)) return 'text-code-warn'
+  return 'text-code-ink-muted'
 }
 
 /** How long incoming lines are coalesced before one state update. */
@@ -253,14 +256,6 @@ export function LogViewer({
                 : 'Log stream failed.'}
         </span>
 
-        <FilterInput
-          value={filter}
-          onValueChange={setFilter}
-          placeholder="Filter lines"
-          aria-label="Filter log lines"
-          className="w-44"
-        />
-
         <label className="flex items-center gap-1.5 text-xs text-ink-muted">
           <Checkbox checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
           Wrap
@@ -278,6 +273,19 @@ export function LogViewer({
         </label>
 
         <div className="flex-1" />
+
+        {/* Right of the spacer, where the search on every list page in this
+            console already is. The badges and checkboxes to its left describe
+            the stream; this is the one control that narrows what is on
+            screen, and someone moving between pages should not have to look
+            for it in a new place. */}
+        <FilterInput
+          value={filter}
+          onValueChange={setFilter}
+          placeholder="Filter lines"
+          aria-label="Filter log lines"
+          className="w-44"
+        />
 
         <span className="text-xs tabular-nums text-ink-faint">
           {visible.length.toLocaleString()}
@@ -332,12 +340,12 @@ export function LogViewer({
         className="min-h-0 flex-1 overflow-auto bg-code px-3 py-2 font-mono text-xs leading-[1.55]"
       >
         {status === 'connecting' && buf.items.length === 0 && (
-          <p className="flex items-center gap-2 text-ink-faint">
+          <p className="flex items-center gap-2 text-code-ink-faint">
             <Spinner className="size-3" /> Attaching to {pod}
           </p>
         )}
         {status !== 'connecting' && visible.length === 0 && (
-          <p className="text-ink-faint">
+          <p className="text-code-ink-faint">
             {filter ? 'No lines match the filter.' : 'No output yet.'}
           </p>
         )}

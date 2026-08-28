@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/daiwa-zou/orrery/internal/config"
 )
 
@@ -172,5 +174,71 @@ func TestDebugPodRefusedWhenNotPermitted(t *testing.T) {
 
 	if got := rig.fake.ephemeralContainers(); len(got) != 0 {
 		t.Errorf("a forbidden request still reached the cluster: %v", got)
+	}
+}
+
+// A pod that has finished will never start another container: the kubelet is
+// done with it. The API server accepts the update anyway, so without this the
+// call succeeded, the container was added to a pod that was over, and the
+// console sat on "waiting for the node to start it" until whoever asked gave
+// up. An answer beats a spinner.
+func TestDebugPodRefusesAFinishedPod(t *testing.T) {
+	rig := hndNewRig(t)
+
+	rec := hndDebugPost(t, rig, `{"namespace":"demo","pod":"done-1"}`)
+	hndWantStatus(t, rec, http.StatusBadRequest)
+
+	if body := rec.Body.String(); !strings.Contains(body, "Succeeded") {
+		t.Errorf("the refusal should name the phase that caused it: %s", body)
+	}
+	if sent := rig.fake.ephemeralContainers(); len(sent) != 0 {
+		t.Errorf("nothing should have been added to a finished pod, got %v", sent)
+	}
+}
+
+// A debug container shares its target's process namespace, so the target needs
+// a process. Aimed at one that is not running, the kubelet answers
+// CreateContainerConfigError — "unable to find target container" — and the
+// ephemeral container waits there for the life of the pod, unable to be edited
+// or removed. Refusing the request is the only place that can be prevented.
+func TestContainerStateNamesWhatIsNotRunning(t *testing.T) {
+	pod := &corev1.Pod{
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "app", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+				{Name: "pulling", State: corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"},
+				}},
+				{Name: "gone", State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{Reason: "Completed"},
+				}},
+				{Name: "silent"},
+			},
+			InitContainerStatuses: []corev1.ContainerStatus{
+				{Name: "setup", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+			},
+		},
+	}
+
+	cases := []struct {
+		name    string
+		state   string
+		running bool
+	}{
+		{"app", "running", true},
+		{"setup", "running", true},
+		// The reason is the half someone can act on: "not running" is the
+		// fact, "ImagePullBackOff" is why.
+		{"pulling", "ImagePullBackOff", false},
+		{"gone", "Completed", false},
+		{"silent", "not started", false},
+		// In the spec but not yet in the status is not running either.
+		{"absent", "not started", false},
+	}
+	for _, c := range cases {
+		state, running := containerState(pod, c.name)
+		if state != c.state || running != c.running {
+			t.Errorf("containerState(%q) = %q,%v — want %q,%v", c.name, state, running, c.state, c.running)
+		}
 	}
 }

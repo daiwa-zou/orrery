@@ -253,6 +253,47 @@ func TestClusterEndpointsHTTP(t *testing.T) {
 		if body.Total != 1 {
 			t.Errorf("free-text filter = %+v", rowsOf(body))
 		}
+
+		// Two words are two requirements, each free to land in a different
+		// column: "web-2" is the object and "back-off" is the message.
+		rec = rig.get(t, "/api/v1/clusters/fake/events?q=back-off+web-2")
+		hndDecode(t, rec, &body)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "BackOff" {
+			t.Errorf("multi-word filter = %+v", rowsOf(body))
+		}
+		rec = rig.get(t, "/api/v1/clusters/fake/events?q=back-off+web-1")
+		hndDecode(t, rec, &body)
+		if body.Total != 0 {
+			t.Errorf("every word is required: %+v", rowsOf(body))
+		}
+		rec = rig.get(t, "/api/v1/clusters/fake/events?q=-started")
+		hndDecode(t, rec, &body)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "BackOff" {
+			t.Errorf("exclusion = %+v", rowsOf(body))
+		}
+
+		// The column predicates the resource lists take apply here too, bound
+		// to the event table's own columns.
+		rec = rig.get(t, "/api/v1/clusters/fake/events?where=count%3E1")
+		hndDecode(t, rec, &body)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "BackOff" {
+			t.Errorf("count>1 = %+v", rowsOf(body))
+		}
+		rec = rig.get(t, "/api/v1/clusters/fake/events?where=reason%3D~%5EStart")
+		hndDecode(t, rec, &body)
+		if body.Total != 1 || rowsOf(body)[0]["reason"] != "Started" {
+			t.Errorf("reason=~^Start = %+v", rowsOf(body))
+		}
+		// The fixtures are dated 2024, so everything is older than an hour.
+		rec = rig.get(t, "/api/v1/clusters/fake/events?where=lastSeen%3E1h")
+		hndDecode(t, rec, &body)
+		if body.Total != 2 {
+			t.Errorf("lastSeen>1h = %+v", rowsOf(body))
+		}
+		// A predicate naming a column this table does not have is refused,
+		// rather than matching nothing and reading as a quiet cluster.
+		rec = rig.get(t, "/api/v1/clusters/fake/events?where=restarts%3E1")
+		hndWantStatus(t, rec, 400)
 	})
 
 	t.Run("nodeMetrics", func(t *testing.T) {

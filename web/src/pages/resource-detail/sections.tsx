@@ -32,12 +32,19 @@ export function ContainerSection({
   onDebug,
   debugAllowed,
   debugPending,
+  podFinished,
 }: {
   rows: ContainerRow[]
   onLogs: (container: string) => void
   onDebug: (container: string) => void
   debugAllowed: boolean
   debugPending: boolean
+  /**
+   * Whether the pod has reached Succeeded or Failed. The kubelet starts no
+   * containers in a pod it has finished with, so offering Debug there is
+   * offering a button whose only outcome is a wait that never resolves.
+   */
+  podFinished?: boolean
 }) {
   if (rows.length === 0) return null
 
@@ -93,9 +100,25 @@ export function ContainerSection({
                     <GatedButton
                       size="sm"
                       variant="ghost"
-                      allowed={debugAllowed}
+                      // Dimmed with the reason rather than hidden, which is how
+                      // every other unavailable action reads here: a missing
+                      // button is a question ("where is Debug?"), a dimmed one
+                      // with a tooltip is an answer.
+                      // A debug container shares the target's process
+                      // namespace, so the target needs a process. Aimed at a
+                      // container that is not running, the kubelet answers
+                      // CreateContainerConfigError and the ephemeral container
+                      // — which cannot be edited or removed — waits there for
+                      // the life of the pod.
+                      allowed={debugAllowed && !podFinished && c.running}
                       disabled={debugPending}
-                      deniedTitle="Requires patch on pods/ephemeralcontainers"
+                      deniedTitle={
+                        podFinished
+                          ? 'This pod has finished, so the node will not start a debug container in it'
+                          : !c.running
+                            ? `${c.name} is not running (${c.state}), so a debug container cannot share its process namespace`
+                            : 'Requires patch on pods/ephemeralcontainers'
+                      }
                       title={`Start a debug container sharing ${c.name}'s process namespace`}
                       onClick={() => onDebug(c.name)}
                     >
@@ -164,13 +187,16 @@ export function EnvSection({ cluster, namespace, pod }: { cluster: string; names
               {c.name}
               {c.init && <span className="ml-1.5 text-[10px] text-ink-faint uppercase">init</span>}
             </h3>
-            {c.env.length === 0 ? (
+            {/* ?? [], because a server that predates the fix sends null for a
+                container with no environment, and a missing list must not be
+                allowed to take the page down. */}
+            {(c.env ?? []).length === 0 ? (
               <p className="text-[12px] text-ink-faint">No environment variables.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-[12px]">
                   <tbody>
-                    {c.env.map((e) => {
+                    {(c.env ?? []).map((e) => {
                       const key = `${c.name}/${e.name}`
                       const hidden = e.sensitive && !revealed.has(key)
                       return (
@@ -316,8 +342,11 @@ export function StatusSection({ status }: { status?: Record<string, unknown> }) 
         </table>
       )}
 
+      {/* code-ink-muted, not ink-muted: this ground stays dark in both
+          palettes, so its text has to as well. The palette's own muted ink is
+          2.44:1 here in the light theme. */}
       {Object.keys(rest).length > 0 && (
-        <pre className="max-h-80 overflow-auto bg-code p-3 font-mono text-xs text-ink-muted">
+        <pre className="max-h-80 overflow-auto bg-code p-3 font-mono text-xs text-code-ink-muted">
           {JSON.stringify(rest, null, 2)}
         </pre>
       )}

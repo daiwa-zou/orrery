@@ -6,6 +6,8 @@ import { FilterInput } from './primitives'
 import { useToast } from './Toast'
 import {
   addQueryTerm,
+  columnOperators,
+  SELECTOR_OPERATORS,
   freeTextOf,
   isFilterTerm,
   equalityKey,
@@ -25,9 +27,14 @@ import {
 interface Suggestion {
   /** Replacement for the token being typed. */
   token: string
-  /** What is inserted ends with an operator → keep suggesting values for it. */
-  kind: 'label' | 'field' | 'value' | 'column'
+  /**
+   * Which of the three steps this row completes. Everything but a value is
+   * half a term, and the list stays open for the next step.
+   */
+  kind: 'label' | 'field' | 'value' | 'column' | 'operator'
   display: string
+  /** Overrides the kind caption, for a row whose meaning is worth spelling. */
+  hint?: string
 }
 
 const MAX_SUGGESTIONS = 8
@@ -35,12 +42,11 @@ const MAX_SUGGESTIONS = 8
 /** Durations worth offering once an age comparison has been started. */
 const AGE_VALUES = ['5m', '1h', '6h', '1d', '7d', '30d']
 
-/**
- * The operator to offer with a column, chosen by what its type can answer:
- * ordering for the things that have a magnitude, a pattern for the rest.
- */
-function columnOp(type: string | undefined): string {
-  return type === 'number' || type === 'age' ? '>' : '=~'
+/** How prominent a column is at the empty prompt: what can be *ordered*
+ *  first, because comparing a magnitude is the capability nobody guesses is
+ *  there, where a pattern on a name is a familiar idea. */
+function columnRank(type: string | undefined): number {
+  return type === 'number' || type === 'age' ? 0 : 1
 }
 
 function buildSuggestions(
@@ -84,29 +90,71 @@ function buildSuggestions(
       .map((v) => ({ token: `${key}${op}${v}`, kind: 'value', display: v }))
   }
 
-  // Key position: labels first (the common case), but fields keep a couple of
-  // slots so status.phase and friends are discoverable at the empty prompt.
   const needle = token.toLowerCase()
   const match = (key: string) => needle === '' || key.toLowerCase().includes(needle)
+
+  // Operator position: the token names something we know of, and what is
+  // missing is the comparison. Which operators exist at all depends on what
+  // the key is — a label is equal to a value or it is not, where a column with
+  // a magnitude can be ordered — so this step is where that difference gets
+  // taught, in words, instead of being decided silently for the reader.
+  const selectorKey =
+    facets.labels.some((f) => f.key === token) || facets.fields.some((f) => f.key === token)
+  const namedColumn = (columns ?? []).find((c) => c.key === token && !c.key.startsWith('_'))
+  if (selectorKey || namedColumn) {
+    const ops: Suggestion[] = []
+    if (selectorKey && !pinned.has(token)) {
+      ops.push(
+        ...SELECTOR_OPERATORS.map(
+          (o): Suggestion => ({
+            token: `${token}${o.op}`,
+            kind: 'operator',
+            display: `${token}${o.op}`,
+            hint: o.means,
+          }),
+        ),
+      )
+    }
+    if (namedColumn) {
+      ops.push(
+        ...columnOperators(namedColumn.type).map(
+          (o): Suggestion => ({
+            token: `${token}${o.op}`,
+            kind: 'operator',
+            display: `${token}${o.op}`,
+            hint: o.means,
+          }),
+        ),
+      )
+    }
+    // A key that is also the start of a longer one still has to be reachable:
+    // picking `app` must not hide `app.kubernetes.io/name`.
+    const longer = [...facets.labels, ...facets.fields]
+      .filter((f) => f.key !== token && f.key.toLowerCase().startsWith(needle))
+      .map((f): Suggestion => ({ token: f.key, kind: 'label', display: f.key }))
+    return [...ops, ...longer].slice(0, MAX_SUGGESTIONS)
+  }
+
+  // Key position: labels first (the common case), but fields keep a couple of
+  // slots so status.phase and friends are discoverable at the empty prompt.
+  // Nothing here carries an operator: choosing what to filter on and choosing
+  // how to compare it are two decisions, and answering the second one on the
+  // reader's behalf is what hid `>=`, `<` and `!~` from everyone.
   const fields = facets.fields
     .filter((f) => match(f.key) && !pinned.has(f.key))
-    .map((f): Suggestion => ({ token: `${f.key}=`, kind: 'field', display: f.key }))
+    .map((f): Suggestion => ({ token: f.key, kind: 'field', display: f.key }))
   const labels = facets.labels
     .filter((f) => match(f.key) && !pinned.has(f.key))
-    .map((f): Suggestion => ({ token: `${f.key}=`, kind: 'label', display: f.key }))
+    .map((f): Suggestion => ({ token: f.key, kind: 'label', display: f.key }))
 
   // Columns are how anyone finds out that restarts>3 and age<1h are things
-  // they can write at all. The ones that can be *ordered* come first: a
-  // pattern on a name is a familiar idea, where comparing a magnitude is the
-  // capability nobody will guess is there. `_labels` is a rendering detail,
-  // not a column anyone can compare.
+  // they can write at all. `_labels` is a rendering detail, not a column
+  // anyone can compare.
+  const named = new Set([...fields, ...labels].map((s) => s.token))
   const cols = (columns ?? [])
-    .filter((c) => !c.key.startsWith('_') && match(c.key))
-    .map((c): Suggestion => {
-      const op = columnOp(c.type)
-      return { token: `${c.key}${op}`, kind: 'column', display: `${c.key}${op}` }
-    })
-    .sort((a, b) => Number(a.token.endsWith('=~')) - Number(b.token.endsWith('=~')))
+    .filter((c) => !c.key.startsWith('_') && match(c.key) && !named.has(c.key))
+    .sort((a, b) => columnRank(a.type) - columnRank(b.type))
+    .map((c): Suggestion => ({ token: c.key, kind: 'column', display: c.key }))
 
   const room = MAX_SUGGESTIONS - Math.min(fields.length, 2) - Math.min(cols.length, 3)
   return [...labels.slice(0, Math.max(room, 1)), ...fields.slice(0, 2), ...cols.slice(0, 3)].slice(
@@ -159,6 +207,15 @@ export function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null)
   const problemsId = useId()
   const [problems, setProblems] = useState<SearchProblem[]>([])
+  /**
+   * A key chosen from the list whose operator has not been picked yet.
+   *
+   * It sits in the box looking like a word, and it must not be sent as one:
+   * committing `app` as free text between the two clicks empties the list
+   * under the reader mid-decision. It stays pending only while it is still the
+   * trailing token — edit it and it becomes ordinary text again.
+   */
+  const [pendingKey, setPendingKey] = useState<string>()
   const toast = useToast()
   const draftRef = useRef(draft)
   useEffect(() => {
@@ -179,8 +236,9 @@ export function SearchBar({
   // not: they are promoted at a boundary the reader chooses, so a half-typed
   // `app=w` is never applied as though it were finished.
   useEffect(() => {
-    const next = freeTextOf(draft)
     const trailing = trailingToken(draft)
+    const pending = pendingKey !== undefined && trailing === pendingKey
+    const next = freeTextOf(pending ? draft.slice(0, draft.length - trailing.length) : draft)
     const t = window.setTimeout(() => {
       const bad = whereProblem(trailing, columns)
       if (bad) {
@@ -191,7 +249,7 @@ export function SearchBar({
       if (next !== query.q) onCommit({ ...query, q: next })
     }, 300)
     return () => window.clearTimeout(t)
-  }, [draft, query, onCommit, columns])
+  }, [draft, query, onCommit, columns, pendingKey])
 
   // The box's cross clears the box. It used to clear everything, which was
   // right when the box held everything; now that the applied filters live in
@@ -277,15 +335,17 @@ export function SearchBar({
         0,
         draftRef.current.length - trailingToken(draftRef.current).length,
       )
-      // Anything ending in an operator still needs its value, so it stays in
-      // the box with the dropdown open. A finished term has nothing left to
-      // type and goes straight to the chips.
-      if (/[=~<>]$/.test(s.token)) {
+      // Only a value finishes a term. A key still needs its operator and an
+      // operator still needs its value, so either stays in the box with the
+      // list open on the next step.
+      if (s.kind !== 'value') {
         setDraft(head + s.token)
+        setPendingKey(s.kind === 'operator' ? undefined : s.token)
         setOpen(true)
         inputRef.current?.focus()
         return
       }
+      setPendingKey(undefined)
       setDraft(head)
       setProblems([])
       onCommit(addQueryTerm({ ...query, q: freeTextOf(head) }, s.token))
@@ -423,8 +483,15 @@ export function SearchBar({
                 onMouseEnter={() => setHighlight(i)}
               >
                 <span className="truncate font-mono text-xs">{s.display}</span>
-                <span className="shrink-0 text-[10px] tracking-wide text-ink-faint uppercase">
-                  {s.kind}
+                {/* The kind is a category and reads as one, in caps. A hint is
+                    a sentence fragment — "older than" — and must not. */}
+                <span
+                  className={clsx(
+                    'shrink-0 text-[10px] tracking-wide text-ink-faint',
+                    s.hint === undefined && 'uppercase',
+                  )}
+                >
+                  {s.hint ?? s.kind}
                 </span>
               </button>
             </li>

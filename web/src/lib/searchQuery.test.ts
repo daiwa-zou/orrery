@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   addQueryTerm,
+  columnOperators,
+  SELECTOR_OPERATORS,
   composeSearchInput,
   freeTextOf,
   isFilterTerm,
@@ -508,6 +510,37 @@ describe('equalityKey', () => {
   it('has no opinion about the terms that can coexist', () => {
     for (const t of ['tier!=cache', '!canary', 'app in (a,b)', 'restarts>3', 'name=~^web']) {
       expect(equalityKey(t)).toBeUndefined()
+    }
+  })
+})
+
+describe('operator vocabulary', () => {
+  // The bars offer a key, then an operator, then a value; this is the middle
+  // step's contents. Every operator offered has to be one the server accepts
+  // for that type, or the reader is being walked into a 400.
+  it('offers a selector key equality and its negation, and nothing it cannot do', () => {
+    expect(SELECTOR_OPERATORS.map((o) => o.op)).toEqual(['=', '!='])
+  })
+
+  it('orders an age column by recency first, which is how a list is read', () => {
+    expect(columnOperators('age').map((o) => o.op)).toEqual(['<', '>'])
+    expect(columnOperators('age')[0].means).toBe('in the last')
+  })
+
+  it('offers a number every ordering, not just the common one', () => {
+    expect(columnOperators('number').map((o) => o.op)).toEqual(['>', '<', '>=', '<='])
+  })
+
+  it('gives text the pattern operators, since it has no magnitude to order', () => {
+    expect(columnOperators('text').map((o) => o.op)).toEqual(['=~', '!~'])
+    expect(columnOperators(undefined).map((o) => o.op)).toEqual(['=~', '!~'])
+  })
+
+  it('says what each one means, so the list can be read without knowing regex', () => {
+    for (const type of ['age', 'number', 'text', 'status']) {
+      for (const choice of columnOperators(type)) {
+        expect(choice.means).toMatch(/^[a-z]/)
+      }
     }
   })
 })

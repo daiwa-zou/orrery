@@ -6,6 +6,7 @@ import { yaml } from '@codemirror/lang-yaml'
 
 import { api, apiGroup } from '../api/client'
 import { useDiscovery } from '../api/hooks'
+import { namespacesIn, onlyNamespace } from '../lib/scope'
 import { ExplainPanel } from '../components/ExplainPanel'
 import { codeTheme } from '../components/YamlEditor'
 import { Button, Corners, Spinner } from '../components/primitives'
@@ -25,7 +26,10 @@ export function CreateResource() {
     resource: string
   }>()
   const [params] = useSearchParams()
-  const namespace = params.get('namespace') ?? ''
+  // Creating an object has to put it in exactly one namespace, so a scope of
+  // several prefills nothing: picking one of four for the reader would be
+  // worse than leaving the field to them.
+  const namespace = onlyNamespace(namespacesIn(params)) ?? ''
   const navigate = useNavigate()
   const qc = useQueryClient()
   const toast = useToast()

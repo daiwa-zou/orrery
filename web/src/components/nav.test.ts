@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { APIResource, DiscoveryResponse } from '../api/types'
-import { buildNav, isBrowsable, isCustomGroup } from './nav'
+import { buildNav, isBrowsable, isCustomGroup, objectPath, resourcesByKind } from './nav'
 import { rankResources, scoreResource } from '../lib/palette'
 
 function resource(partial: Partial<APIResource> & { kind: string; name: string }): APIResource {
@@ -186,5 +186,97 @@ describe('rankResources', () => {
 
   it('returns everything when the query is empty', () => {
     expect(rankResources(resources, '')).toHaveLength(resources.length)
+  })
+})
+
+describe('resourcesByKind', () => {
+  it('lets a built-in kind win over a CRD that shadows it', () => {
+    // An operator shipping its own Service must not capture the events about
+    // core/v1 Services: the shadowed kind is the one almost everybody means.
+    const d = discovery([
+      resource({ kind: 'Service', name: 'services', group: '' }),
+      resource({ kind: 'Service', name: 'services', group: 'acme.example.com' }),
+    ])
+    expect(resourcesByKind(d).get('service')?.group).toBe('')
+  })
+
+  it('lets a preferred version win over a superseded one', () => {
+    const d = discovery([
+      resource({ kind: 'Widget', name: 'widgets', group: 'acme.io', version: 'v1beta1', preferred: false }),
+      resource({ kind: 'Widget', name: 'widgets', group: 'acme.io', version: 'v1', preferred: true }),
+    ])
+    expect(resourcesByKind(d).get('widget')?.version).toBe('v1')
+  })
+
+  it('has nothing to say before discovery arrives', () => {
+    expect(resourcesByKind(undefined).size).toBe(0)
+  })
+})
+
+describe('objectPath', () => {
+  const byKind = resourcesByKind(
+    discovery([
+      resource({ kind: 'Pod', name: 'pods', group: '' }),
+      resource({ kind: 'Node', name: 'nodes', group: '', namespaced: false }),
+      resource({ kind: 'Deployment', name: 'deployments', group: 'apps', version: 'v1' }),
+    ]),
+  )
+
+  it('addresses a namespaced object through its namespace', () => {
+    expect(objectPath('lens-a', byKind, 'Pod/web-1', 'demo')).toBe(
+      '/c/lens-a/r/core/v1/pods/demo/web-1',
+    )
+  })
+
+  it('encodes the core group the way the routes spell it', () => {
+    expect(objectPath('lens-a', byKind, 'Deployment/web', 'demo')).toBe(
+      '/c/lens-a/r/apps/v1/deployments/demo/web',
+    )
+  })
+
+  it('puts _ where a cluster-scoped object has no namespace', () => {
+    expect(objectPath('lens-a', byKind, 'Node/node-1', 'demo')).toBe(
+      '/c/lens-a/r/core/v1/nodes/_/node-1',
+    )
+    expect(objectPath('lens-a', byKind, 'Pod/web-1')).toBe('/c/lens-a/r/core/v1/pods/_/web-1')
+  })
+
+  it('refuses what it cannot resolve rather than guessing a URL', () => {
+    // A row dressed as a link that leads to a 404 is indistinguishable, to the
+    // reader, from the console being broken.
+    expect(objectPath('lens-a', byKind, 'Widget/thing', 'demo')).toBeUndefined()
+    expect(objectPath('lens-a', byKind, 'justaname', 'demo')).toBeUndefined()
+    expect(objectPath('lens-a', byKind, 'Pod/', 'demo')).toBeUndefined()
+    expect(objectPath('lens-a', new Map(), 'Pod/web-1', 'demo')).toBeUndefined()
+  })
+})
+
+describe('cluster-scoped views', () => {
+  const nav = buildNav(
+    discovery([
+      resource({ kind: 'Pod', name: 'pods' }),
+      resource({ kind: 'Node', name: 'nodes', namespaced: false }),
+      resource({ kind: 'Namespace', name: 'namespaces', namespaced: false }),
+    ]),
+  )
+
+  it('lifts nodes out of the namespace-filtered sections', () => {
+    // Nodes used to live in a section called "Cluster", between Configuration
+    // and the CRDs — among lists that all move when the namespace picker
+    // changes, when a node never does.
+    expect(nav.clusterScoped.map((i) => i.resource)).toEqual(['nodes'])
+    expect(nav.primary.map((s) => s.title)).not.toContain('Cluster')
+  })
+
+  it('claims nodes, so they do not also appear under All resources', () => {
+    expect(nav.rest.map((i) => i.resource)).not.toContain('nodes')
+  })
+
+  it('leaves namespaces to the picker that is named after them', () => {
+    // The word appeared twice in one column meaning two different things: the
+    // scope every list below is filtered by, and a list of objects. The list
+    // hangs off the picker now, and stays reachable under All resources.
+    expect(nav.clusterScoped.map((i) => i.resource)).not.toContain('namespaces')
+    expect(nav.rest.map((i) => i.resource)).toContain('namespaces')
   })
 })

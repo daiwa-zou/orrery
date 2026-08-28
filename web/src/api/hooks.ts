@@ -407,7 +407,9 @@ export function useLiveResource(ref: ResourceRef | null): LiveObjectState {
  */
 export function useFacets(
   ref: ResourceRef | null,
-  namespace: string,
+  /** The namespace scope. Facets are drawn from the objects in it, so the
+   *  vocabulary the search bar offers matches the list beneath it. */
+  namespaces: string[],
   enabled: boolean,
   scope?: SearchQuery,
 ) {
@@ -419,14 +421,15 @@ export function useFacets(
           ref.group,
           ref.version,
           ref.resource,
-          namespace,
+          namespaces.join('\u0000'),
           scope?.q ?? '',
           scope?.labelSelector ?? '',
           scope?.fieldSelector ?? '',
           (scope?.where ?? []).join('\u0000'),
         ]
       : ['facets', 'none'],
-    queryFn: ({ signal }) => api.facets(ref!, namespace || undefined, scope, signal),
+    queryFn: ({ signal }) =>
+      api.facets(ref!, namespaces.length ? namespaces : undefined, scope, signal),
     enabled: !!ref && enabled,
     staleTime: 30_000,
     placeholderData: (previous) => previous,
@@ -437,20 +440,33 @@ export function useFacets(
 export function useEvents(
   cluster: string | undefined,
   filter: {
-    namespace?: string
+    namespace?: string[]
     q?: string
     involvedName?: string
     involvedKind?: string
     involvedUID?: string
     warningsOnly?: boolean
+    where?: string[]
     limit?: number
   },
+  /**
+   * Whether the feed keeps refreshing itself. A feed that reorders under the
+   * reader is exactly wrong during the one activity this page exists for —
+   * reading a burst of events closely — so the page can hold it still. False
+   * only stops the timer: a manual refresh still works, and the age shown
+   * beside the toggle is what keeps a held feed from being mistaken for a
+   * current one.
+   */
+  live = true,
 ) {
   return useQuery({
     queryKey: ['events', cluster, filter],
     queryFn: ({ signal }) => api.events(cluster!, { limit: 100, ...filter }, signal),
     enabled: !!cluster,
-    refetchInterval: 15_000,
+    refetchInterval: live ? 15_000 : false,
+    // Focus is the other way a held feed would move, and it moves at the worst
+    // possible moment: the reader has just come back to look at it.
+    refetchOnWindowFocus: live,
   })
 }
 

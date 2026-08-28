@@ -119,7 +119,9 @@ function nsSegment(namespace?: string): string {
 }
 
 export interface ListParams {
-  namespace?: string
+  /** The namespace scope; repeated in the query string, one per namespace.
+   *  Absent or empty means everywhere the caller may read. */
+  namespace?: string[]
   q?: string
   labelSelector?: string
   fieldSelector?: string
@@ -177,14 +179,38 @@ export function proxyURL(
   return `${BASE}/clusters/${cluster}/proxy/${namespace}/${ptype}/${name}:${port}/`
 }
 
+/** One line of a revision's diff against the deployed template. */
+export interface DiffLine {
+  /** " " unchanged, "-" deployed now, "+" what this revision would restore,
+   *  "…" a run of unchanged lines left out. */
+  op: ' ' | '-' | '+' | '…'
+  text: string
+}
+
 export interface Revision {
   revision: number
   name: string
   images: string[]
   replicas: number
+  /** How many of those replicas became ready — a revision that never did is a
+   *  poor thing to go back to. */
+  ready: number
   current: boolean
   changeCause?: string
   createdAt: string
+  /** What rolling back here would change in the pod template, in the
+   *  direction the rollback would travel. Empty on the current revision. */
+  changes?: string[]
+  /** The template matches the deployed one exactly, so a rollback would change
+   *  nothing. Not implied by empty `changes`: a difference the server does not
+   *  name leaves both empty and false. */
+  identical?: boolean
+  /** The same answer in full: the template lines that differ from the deployed
+   *  one, "-" being what is running now. */
+  diff?: DiffLine[]
+  /** Changed lines beyond the cap, so a diff that stops partway is not read as
+   *  a complete one. */
+  diffTruncated?: number
 }
 
 export interface ResourceRef {
@@ -209,7 +235,13 @@ export interface EnvVarRow {
 export interface ContainerEnv {
   name: string
   init?: boolean
-  env: EnvVarRow[]
+  /**
+   * Null from a server old enough to marshal an empty environment as a nil
+   * slice. The type says so because the pane crashed on it — reading
+   * `.length` off null took down the whole page — and a field that can arrive
+   * null is one every reader has to be made to handle.
+   */
+  env: EnvVarRow[] | null
 }
 
 export const api = {
@@ -283,7 +315,7 @@ export const api = {
    */
   facets: (
     ref: ResourceRef,
-    namespace: string | undefined,
+    namespace: string[] | undefined,
     scope: SearchQuery | undefined,
     signal?: AbortSignal,
   ) =>
@@ -391,12 +423,15 @@ export const api = {
   events: (
     cluster: string,
     params: {
-      namespace?: string
+      namespace?: string[]
       q?: string
       involvedName?: string
       involvedKind?: string
       involvedUID?: string
       warningsOnly?: boolean
+      /** Column predicates over the event table; repeated, one per term. */
+      where?: string[]
+      /** The namespace scope; repeated, one per namespace. */
       limit?: number
     },
     signal?: AbortSignal,

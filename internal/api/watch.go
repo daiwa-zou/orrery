@@ -35,9 +35,17 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespace := r.URL.Query().Get("namespace")
+	namespaces := queryNamespaces(r)
 	if !res.resource.Namespaced {
-		namespace = ""
+		namespaces = nil
+	}
+	// One namespace can be watched at the informer; several are watched
+	// cluster-wide and filtered, because the cache holds one informer per
+	// resource per namespace and opening three would cost three watches on the
+	// API server to answer one question.
+	watched := ""
+	if len(namespaces) == 1 {
+		watched = namespaces[0]
 	}
 
 	// The stream applies the same q/labelSelector/fieldSelector/where the list
@@ -61,9 +69,9 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 	// client to handle than a socket that opens and immediately closes.
 	attrs := authz.Attributes{
 		Verb: "watch", Group: res.resource.Group, Version: res.resource.Version,
-		Resource: res.resource.Name, Namespace: namespace,
+		Resource: res.resource.Name, Namespace: watched,
 	}
-	visible, err := a.watchScope(r.Context(), res, attrs, namespace)
+	visible, err := a.watchScope(r.Context(), res, attrs, namespaces)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
@@ -82,7 +90,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 	go ws.ping(ctx)
 	go ws.drain()
 
-	sub, initial, err := res.cluster.Informers.Watch(ctx, res.resource, namespace, watchBuffer)
+	sub, initial, err := res.cluster.Informers.Watch(ctx, res.resource, watched, watchBuffer)
 	if err != nil {
 		ws.wsError(err.Error())
 		return
@@ -126,7 +134,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			// Adopt the recomputed scope, not just the yes/no: losing one
 			// namespace out of several must stop that namespace's objects from
 			// streaming, and only total revocation closes the socket.
-			next, err := a.watchScope(ctx, res, attrs, namespace)
+			next, err := a.watchScope(ctx, res, attrs, namespaces)
 			if err != nil {
 				ws.wsError("access to this resource was revoked")
 				return
@@ -244,14 +252,47 @@ func (v watchVisibility) permits(o *unstructured.Unstructured) bool {
 }
 
 // watchScope authorizes the stream and returns the namespace filter to apply.
-func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attributes, namespace string) (watchVisibility, error) {
+func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attributes, namespaces []string) (watchVisibility, error) {
 	vis := watchVisibility{namespaced: res.resource.Namespaced}
 
-	if namespace != "" || !res.resource.Namespaced {
-		if err := a.authorize(ctx, res, "watch", namespace, "", ""); err != nil {
+	if !res.resource.Namespaced {
+		if err := a.authorize(ctx, res, "watch", "", "", ""); err != nil {
 			return vis, err
 		}
 		vis.all = true
+		return vis, nil
+	}
+
+	if len(namespaces) > 0 {
+		// Authorized one at a time, like the list endpoint: permission is
+		// granted per namespace, and being allowed two of the three asked for
+		// is a narrower stream rather than a refused one.
+		var (
+			allowed  []string
+			firstErr error
+		)
+		for _, ns := range namespaces {
+			if err := a.authorize(ctx, res, "watch", ns, "", ""); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			allowed = append(allowed, ns)
+		}
+		if len(allowed) == 0 {
+			return vis, firstErr
+		}
+		// A single namespace is already all the informer will deliver, so the
+		// stream needs no filter of its own.
+		if len(namespaces) == 1 {
+			vis.all = true
+			return vis, nil
+		}
+		vis.namespaces = make(map[string]struct{}, len(allowed))
+		for _, ns := range allowed {
+			vis.namespaces[ns] = struct{}{}
+		}
 		return vis, nil
 	}
 

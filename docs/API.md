@@ -182,9 +182,48 @@ that publishes a schema.
 
 ## Events
 
+`namespace` is repeatable on the list, watch, facets and event endpoints:
+`?namespace=demo&namespace=payments` answers for both at once, authorizing each
+on its own, and the response's `scope` names the namespaces it actually covers.
+A namespace the caller may not list is dropped with a warning rather than
+failing the whole request; being allowed none of them is still a 403.
+
 `GET .../events` returns the event feed, filterable by `namespace`, `q`,
 `warningsOnly`, and by the object involved (`involvedUID`, `involvedName`,
 `involvedKind`) — the last of which is what an object's own event list uses.
+
+`q` is a search box rather than one substring: its words are ANDed and each may
+match a different column, `"a phrase"` is one word, and `-word` excludes. The
+same `where` predicates the resource lists take apply here too, bound to the
+event columns — `count>3`, `lastSeen<15m`, `reason=~^Failed`, `type!~Normal`.
+Both are applied before `limit`, so a match older than the newest few hundred
+events still surfaces, and `total` reports what matched rather than what fitted.
+
+## Rollout history
+
+`GET .../rollout/history?namespace=&name=` lists a deployment's revisions,
+newest first, from the ReplicaSets it owns.
+
+Each entry carries what `kubectl rollout history` shows — revision, images,
+change cause — plus what it cannot: `ready`/`replicas` for that revision, and
+`changes`, naming how its pod template differs from the one deployed now.
+Images are reported per container in the direction a rollback would travel
+(`web: nginx:1.25 → nginx:1.24`); everything else is named rather than diffed
+(`env`, `args`, `resources`), because the choice being made needs to know
+*whether* to look, and the object's YAML is where to look.
+
+`diff` carries the same answer in full: the template's YAML lines that differ,
+with two lines of context, `-` being what is deployed now and `+` what the
+revision would restore. Runs of unchanged lines between hunks are replaced by a
+single `…` entry, and a diff past 120 lines stops with `diffTruncated` counting
+the changed lines left out — a diff that ends mid-change must not read as a
+complete one.
+
+`identical` says the template matches the deployed one exactly, so rolling back
+would change nothing. It is not implied by an empty `changes`: a difference this
+server does not name leaves both empty and `identical` false. The comparison
+ignores `pod-template-hash`, which the Deployment controller derives from the
+rest of the template and which therefore differs between any two revisions.
 
 ## Neighbourhoods
 

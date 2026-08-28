@@ -206,7 +206,8 @@ function ResourceDetailInner() {
   })
 
   const events = useEvents(cluster, {
-    namespace: ns,
+    // This object's own namespace, which is the only one its events are in.
+    namespace: ns ? [ns] : undefined,
     involvedName: name,
     involvedKind: obj?.kind,
     involvedUID: obj?.metadata.uid,
@@ -215,6 +216,10 @@ function ResourceDetailInner() {
   const eventsStalled = stalledReason(events)
   const kind = obj?.kind ?? ''
   const isPod = kind === 'Pod'
+  // Succeeded and Failed are terminal: the kubelet is done with this pod and
+  // will start nothing else in it, which is what makes Debug a dead end here.
+  const podFinished =
+    isPod && ['Succeeded', 'Failed'].includes(String((obj?.status as { phase?: string })?.phase))
   const isNode = kind === 'Node'
   const isDeployment = kind === 'Deployment'
   const isCronJob = kind === 'CronJob'
@@ -245,6 +250,17 @@ function ResourceDetailInner() {
       toast.push({
         tone: 'danger',
         title: `${debugStarting.container} exited before a shell could attach`,
+        description: debugState.detail,
+      })
+      setDebugStarting(undefined)
+      return
+    }
+    // The pod finished. Nothing is coming, so the wait ends here with the
+    // reason rather than spinning until the viewer gives up on it.
+    if (debugState.phase === 'unstartable') {
+      toast.push({
+        tone: 'warn',
+        title: `${debugStarting.container} will not start`,
         description: debugState.detail,
       })
       setDebugStarting(undefined)
@@ -723,6 +739,7 @@ function ResourceDetailInner() {
                 rows={containerRows(obj)}
                 debugAllowed={may('debug')}
                 debugPending={debugPending}
+                podFinished={podFinished}
                 onLogs={(container) => {
                   setLogContainer(container)
                   setTab('logs')

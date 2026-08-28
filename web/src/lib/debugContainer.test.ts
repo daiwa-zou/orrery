@@ -119,3 +119,96 @@ describe('shouldRetryAttach', () => {
     expect(shouldRetryAttach('stream error', 0)).toBe(false)
   })
 })
+
+describe('a pod that has finished', () => {
+  // The hang this fixes: an ephemeral container added to a Succeeded pod never
+  // appears in the status, because the kubelet is done with the pod. That is
+  // indistinguishable from "the node has not got to it yet", so the terminal
+  // waited for a start that was never coming.
+  const finishedPod = (phase: string) =>
+    ({ metadata: { name: 'p' }, status: { phase } }) as unknown as KubeObject
+
+  it('reports a debugger that will never start, rather than one still starting', () => {
+    for (const phase of ['Succeeded', 'Failed']) {
+      const state = debugContainerState(finishedPod(phase), 'debugger-abc')
+      expect(state.phase).toBe('unstartable')
+      expect(state.detail).toContain(phase)
+      expect(debugStillStarting(state)).toBe(false)
+    }
+  })
+
+  it('ends the wait even when the container is sitting in Waiting', () => {
+    const pod = {
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Succeeded',
+        ephemeralContainerStatuses: [
+          { name: 'debugger-abc', state: { waiting: { reason: 'ContainerCreating' } } },
+        ],
+      },
+    } as unknown as KubeObject
+    expect(debugContainerState(pod, 'debugger-abc').phase).toBe('unstartable')
+  })
+
+  it('still prefers what the container itself said when it ran and exited', () => {
+    // An exit code is more specific than "the pod is over", and it is the
+    // thing that explains why the shell never appeared.
+    const pod = {
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Failed',
+        ephemeralContainerStatuses: [
+          { name: 'debugger-abc', state: { terminated: { exitCode: 127, reason: 'Error' } } },
+        ],
+      },
+    } as unknown as KubeObject
+    const state = debugContainerState(pod, 'debugger-abc')
+    expect(state.phase).toBe('terminated')
+    expect(state.detail).toContain('exit 127')
+  })
+
+  it('leaves a running pod alone', () => {
+    const pod = { metadata: { name: 'p' }, status: { phase: 'Running' } } as unknown as KubeObject
+    const state = debugContainerState(pod, 'debugger-abc')
+    expect(state.phase).toBe('absent')
+    expect(debugStillStarting(state)).toBe(true)
+  })
+})
+
+describe('a wait the kubelet will not resolve', () => {
+  const waiting = (reason: string, message?: string) =>
+    ({
+      metadata: { name: 'p' },
+      status: {
+        phase: 'Running',
+        ephemeralContainerStatuses: [{ name: 'debugger-abc', state: { waiting: { reason, message } } }],
+      },
+    }) as unknown as KubeObject
+
+  it('keeps waiting through the reasons that are still trying', () => {
+    for (const reason of ['ContainerCreating', 'ImagePullBackOff', 'ErrImagePull', 'PodInitializing']) {
+      const state = debugContainerState(waiting(reason), 'debugger-abc')
+      expect(state.phase).toBe('starting')
+      expect(debugStillStarting(state)).toBe(true)
+    }
+  })
+
+  it('stops on a config error, which is what a missing target container is', () => {
+    // The hang: a debugger aimed at a container that is not running gets
+    // CreateContainerConfigError and sits in Waiting for the life of the pod,
+    // because an ephemeral container can be neither edited nor removed.
+    const state = debugContainerState(
+      waiting('CreateContainerConfigError', 'unable to find target container nginx'),
+      'debugger-abc',
+    )
+    expect(state.phase).toBe('unstartable')
+    expect(debugStillStarting(state)).toBe(false)
+    expect(state.detail).toContain('unable to find target container nginx')
+  })
+
+  it('stops on the other reasons that describe the spec rather than the moment', () => {
+    for (const reason of ['CreateContainerError', 'InvalidImageName', 'RunContainerError']) {
+      expect(debugContainerState(waiting(reason), 'debugger-abc').phase).toBe('unstartable')
+    }
+  })
+})

@@ -26,15 +26,6 @@ func mustParseWhere(t *testing.T, terms ...string) []wherePredicate {
 	return preds
 }
 
-func matchesAll(preds []wherePredicate, row map[string]any) bool {
-	for _, p := range preds {
-		if !p.matches(row) {
-			return false
-		}
-	}
-	return true
-}
-
 func TestWhereNumericComparison(t *testing.T) {
 	row := map[string]any{"restarts": int64(3)}
 

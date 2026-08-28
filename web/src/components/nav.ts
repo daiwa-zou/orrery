@@ -1,3 +1,4 @@
+import { groupSegment } from '../api/client'
 import type { APIResource, DiscoveryResponse } from '../api/types'
 
 /**
@@ -13,6 +14,12 @@ import type { APIResource, DiscoveryResponse } from '../api/types'
  * Nothing is unreachable — the command palette searches all of it.
  */
 export interface Nav {
+  /**
+   * The cluster's own structure: the resources the namespace picker does not
+   * apply to. They sit above the sections rather than inside one, because the
+   * sections are all namespace-filtered and these are not.
+   */
+  clusterScoped: NavItem[]
   /** Always visible, grouped into named sections. */
   primary: NavSection[]
   /** Resources from API groups Kubernetes does not ship: real CRDs. */
@@ -50,8 +57,26 @@ const CURATED: { title: string; resources: string[] }[] = [
   { title: 'Configuration', resources: ['configmaps', 'secrets'] },
   // Events are deliberately absent: the dedicated Events page above the
   // sections replaces the raw core/v1 list.
-  { title: 'Cluster', resources: ['nodes', 'namespaces'] },
 ]
+
+/**
+ * The cluster-scoped views, in the order they are read in.
+ *
+ * This used to be a section called "Cluster" holding Nodes and Namespaces,
+ * which was a tautology in a console that shows one cluster at a time — every
+ * item in this sidebar is that cluster's. Worse, it sat among the
+ * namespace-filtered sections: pick a namespace and every list below moves
+ * except those, because a node is not in a namespace. Beside Overview and
+ * Events, above the sections, the sidebar has a rule it can keep — above is
+ * the cluster, below is what runs inside it.
+ *
+ * Namespaces is not here, though it is cluster-scoped too. The namespace
+ * picker sits four rows above this list, so the word appeared twice in one
+ * column meaning two different things: the scope everything is filtered by,
+ * and a list of objects. The list now hangs off the picker itself, which is
+ * where someone thinking about namespaces is already looking.
+ */
+const CLUSTER_SCOPED = ['nodes']
 
 /**
  * Kubernetes' own API groups that predate the `*.k8s.io` convention and so
@@ -104,7 +129,7 @@ function toItem(r: APIResource): NavItem {
 const byKind = (a: NavItem, b: NavItem) => a.kind.localeCompare(b.kind)
 
 export function buildNav(discovery?: DiscoveryResponse): Nav {
-  const empty: Nav = { primary: [], custom: [], rest: [] }
+  const empty: Nav = { clusterScoped: [], primary: [], custom: [], rest: [] }
   if (!discovery) return empty
 
   const all: APIResource[] = discovery.groups.flatMap((g) => g.resources)
@@ -120,6 +145,15 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
   }
 
   const claimed = new Set<string>()
+
+  const clusterScoped: NavItem[] = []
+  for (const name of CLUSTER_SCOPED) {
+    const r = byName.get(name)
+    if (!r) continue
+    clusterScoped.push(toItem(r))
+    claimed.add(`${r.group}/${r.name}`)
+  }
+
   const primary: NavSection[] = []
 
   for (const section of CURATED) {
@@ -147,5 +181,63 @@ export function buildNav(discovery?: DiscoveryResponse): Nav {
   custom.sort(byKind)
   rest.sort(byKind)
 
-  return { primary, custom, rest }
+  return { clusterScoped, primary, custom, rest }
+}
+
+/**
+ * Which resource serves each kind, for the places that hold a reference like
+ * "Pod/web-1" and have to turn it into a link.
+ *
+ * An event and an overview warning both name their subject by kind, which is
+ * not enough to address it: the console's URLs are keyed by group, version and
+ * resource. Discovery has all three, but a kind can appear more than once in
+ * it, so this picks between the candidates by two rules.
+ *
+ * Built-in groups beat custom ones, because an operator that ships its own
+ * `Service` CRD must not capture the events about core/v1 Services — the
+ * shadowed kind is the one almost everybody means. Within a tier, a preferred
+ * version beats a superseded one, for the same reason discovery marks it.
+ */
+export function resourcesByKind(discovery?: DiscoveryResponse): Map<string, APIResource> {
+  const map = new Map<string, APIResource>()
+  for (const group of discovery?.groups ?? []) {
+    for (const res of group.resources) {
+      const key = res.kind.toLowerCase()
+      const existing = map.get(key)
+      const better =
+        !existing ||
+        (isCustomGroup(existing.group) && !isCustomGroup(res.group)) ||
+        (isCustomGroup(existing.group) === isCustomGroup(res.group) &&
+          res.preferred &&
+          !existing.preferred)
+      if (better) map.set(key, res)
+    }
+  }
+  return map
+}
+
+/**
+ * The console path for a "Kind/name" reference, or undefined when it cannot be
+ * resolved — an unknown kind, a malformed reference, or discovery that has not
+ * arrived yet.
+ *
+ * Undefined is the load-bearing case. A row that cannot be resolved must not
+ * be dressed as a link: sending someone to a 404 is worse than leaving the
+ * reference as text, and it is indistinguishable to them from the console
+ * being broken.
+ */
+export function objectPath(
+  cluster: string,
+  byKind: Map<string, APIResource>,
+  ref: string,
+  namespace?: string,
+): string | undefined {
+  const [kind, name] = ref.split('/')
+  if (!kind || !name) return undefined
+  const res = byKind.get(kind.toLowerCase())
+  if (!res) return undefined
+  // Cluster-scoped objects take "_" in the namespace position, and so does a
+  // namespaced one whose namespace we were not told.
+  const ns = res.namespaced ? namespace || '_' : '_'
+  return `/c/${cluster}/r/${groupSegment(res.group)}/${res.version}/${res.name}/${ns}/${name}`
 }

@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
 
 	"github.com/daiwa-zou/orrery/internal/cluster"
 )
@@ -22,15 +24,34 @@ const revisionAnnotation = "deployment.kubernetes.io/revision"
 
 const changeCauseAnnotation = "kubernetes.io/change-cause"
 
-// revisionSummary is one entry of `kubectl rollout history`.
+// revisionSummary is one entry of `kubectl rollout history`, plus what the
+// command cannot tell you: how this revision differs from the one running now.
 type revisionSummary struct {
-	Revision    int64    `json:"revision"`
-	Name        string   `json:"name"`
-	Images      []string `json:"images"`
-	Replicas    int64    `json:"replicas"`
-	Current     bool     `json:"current"`
-	ChangeCause string   `json:"changeCause,omitempty"`
-	CreatedAt   string   `json:"createdAt"`
+	Revision int64    `json:"revision"`
+	Name     string   `json:"name"`
+	Images   []string `json:"images"`
+	Replicas int64    `json:"replicas"`
+	// Ready is how many of those replicas ever became ready. A revision that
+	// never reached readiness is a poor thing to go back to, and the number is
+	// the only warning of that on the page.
+	Ready       int64  `json:"ready"`
+	Current     bool   `json:"current"`
+	ChangeCause string `json:"changeCause,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	// Changes is what rolling back here would alter in the pod template,
+	// phrased in the direction it would travel. Empty on the current revision.
+	Changes []string `json:"changes"`
+	// Diff is the same answer in full: the lines of the pod template that
+	// differ from the deployed one. Naming a field says whether to look; this
+	// says what would be going back.
+	Diff []diffLine `json:"diff,omitempty"`
+	// DiffTruncated counts the changed lines beyond the cap, so a diff that
+	// stops partway does not read as a complete one.
+	DiffTruncated int `json:"diffTruncated,omitempty"`
+	// Identical says the template matches the one deployed now exactly, so a
+	// rollback would change nothing. Empty Changes does not imply it: a
+	// difference this server does not name leaves both empty and false.
+	Identical bool `json:"identical"`
 }
 
 // deploymentRevisions lists the ReplicaSets owned by a deployment, newest
@@ -83,6 +104,30 @@ func (a *API) deploymentRevisions(ctx context.Context, res *resolved, namespace,
 	return dep, owned, nil
 }
 
+// maxDiffLines is what one revision may contribute to the response. Enough for
+// any change a person made by hand; a template rewritten wholesale is reported
+// as truncated rather than shipped in full to a modal nobody will read it in.
+const maxDiffLines = 120
+
+// templateLines renders a revision's pod template as the YAML lines to diff.
+//
+// YAML rather than JSON because it is the shape the object is read in
+// everywhere else in this console — the detail page's YAML tab, kubectl — and
+// because one field per line is what makes a line diff mean anything. The
+// controller's own hash is dropped for the same reason the summary ignores it:
+// it differs between every pair of revisions and says nothing anyone did.
+func templateLines(rs *unstructured.Unstructured) []string {
+	template := podTemplateOf(rs)
+	if template == nil {
+		return nil
+	}
+	out, err := yaml.Marshal(withoutTemplateHash(template))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+}
+
 func revisionOf(rs *unstructured.Unstructured) int64 {
 	n, _ := strconv.ParseInt(rs.GetAnnotations()[revisionAnnotation], 10, 64)
 	return n
@@ -110,17 +155,43 @@ func (a *API) rolloutHistory(w http.ResponseWriter, r *http.Request) {
 
 	currentRev, _ := strconv.ParseInt(dep.GetAnnotations()[revisionAnnotation], 10, 64)
 
+	// Every revision is compared against the deployed one, so the question the
+	// list exists to answer — which of these do I go back to — is answered on
+	// the row rather than left to whoever remembers what changed.
+	var currentRS *unstructured.Unstructured
+	for _, rs := range owned {
+		if revisionOf(rs) == currentRev {
+			currentRS = rs
+			break
+		}
+	}
+
 	out := make([]revisionSummary, 0, len(owned))
 	for _, rs := range owned {
-		out = append(out, revisionSummary{
+		current := revisionOf(rs) == currentRev
+		summary := revisionSummary{
 			Revision:    revisionOf(rs),
 			Name:        rs.GetName(),
 			Images:      containerImages(rs, "spec", "template", "spec"),
 			Replicas:    i64(rs, "status", "replicas"),
-			Current:     revisionOf(rs) == currentRev,
+			Ready:       i64(rs, "status", "readyReplicas"),
+			Current:     current,
 			ChangeCause: rs.GetAnnotations()[changeCauseAnnotation],
 			CreatedAt:   rs.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05Z"),
-		})
+			Changes:     []string{},
+		}
+		if !current {
+			changes, identical := revisionChanges(currentRS, rs)
+			if changes != nil {
+				summary.Changes = changes
+			}
+			summary.Identical = identical
+			if !identical {
+				diff := lineDiff(templateLines(currentRS), templateLines(rs), 2)
+				summary.Diff, summary.DiffTruncated = truncateDiff(diff, maxDiffLines)
+			}
+		}
+		out = append(out, summary)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revisions": out})
 }
