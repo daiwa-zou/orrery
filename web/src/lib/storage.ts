@@ -6,6 +6,67 @@
  * page down for.
  */
 
+/**
+ * The stored string for a key, or null. This is the snapshot the reactive
+ * hook reads: a primitive, so it is stable between renders and can be
+ * compared cheaply.
+ */
+export function readRaw(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** Parses a stored array, treating anything unexpected as empty. */
+export function parseArray<T>(raw: string | null): T[] {
+  if (raw === null) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as T[]) : []
+  } catch {
+    return []
+  }
+}
+
+/* ---- change notification ------------------------------------------------
+ *
+ * localStorage is an external store, and React has a primitive for reading
+ * one — but the browser only fires `storage` in *other* tabs. A write in this
+ * tab has to announce itself, or the view that just changed the value is the
+ * one view that does not re-render.
+ */
+
+type Listener = () => void
+const listeners = new Map<string, Set<Listener>>()
+
+/** Subscribes to changes for one key, from this tab or any other. */
+export function subscribeToKey(key: string, fn: Listener): () => void {
+  let set = listeners.get(key)
+  if (!set) {
+    set = new Set()
+    listeners.set(key, set)
+  }
+  set.add(fn)
+
+  const onStorage = (e: StorageEvent) => {
+    // A null key means the whole store was cleared.
+    if (e.key === null || e.key === key) fn()
+  }
+  window.addEventListener('storage', onStorage)
+
+  return () => {
+    set?.delete(fn)
+    if (set && set.size === 0) listeners.delete(key)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+function notify(key: string): void {
+  for (const fn of listeners.get(key) ?? []) fn()
+}
+
 export function readJSON<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(key)
@@ -27,11 +88,33 @@ export function writeJSON(key: string, value: unknown): void {
   } catch {
     // Quota exceeded or storage disabled — the preference simply does not stick.
   }
+  // Outside the try: subscribers should hear about it either way, since a
+  // failed write still means the value they are showing may be wrong.
+  notify(key)
 }
 
 /** Open nav sections are remembered per cluster, since their resources differ. */
 export function navStateKey(cluster: string): string {
   return `orrery.nav.${cluster}`
+}
+
+/**
+ * A stored list of strings, given the raw JSON. See isSavedIn for why these
+ * take the string rather than reading the store.
+ *
+ * The fallback is for absent or unreadable, not for empty: an empty list is a
+ * real answer — every section collapsed by hand — and replacing it with the
+ * defaults would reopen them all on the next visit.
+ */
+export function stringArrayIn(raw: string | null, fallback: string[]): string[] {
+  if (raw === null) return fallback
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return fallback
+    return parsed.filter((v): v is string => typeof v === 'string')
+  } catch {
+    return fallback
+  }
 }
 
 /** Recently opened resources, used to fill the palette before anything is typed. */
@@ -71,7 +154,7 @@ export function recordRecent(entry: RecentResource): void {
  * narrowed it. Teams operate the same handful of views every day — "my team's
  * failing pods", "everything in staging" — and re-typed them each time.
  */
-const SAVED_KEY = 'orrery.saved'
+export const SAVED_KEY = 'orrery.saved'
 const MAX_SAVED = 24
 
 export interface SavedSearch {
@@ -114,7 +197,18 @@ export function removeSaved(view: SavedSearch): void {
 }
 
 export function isSaved(view: SavedSearch): boolean {
-  return readJSON<SavedSearch[]>(SAVED_KEY, []).some((v) => savedKey(v) === savedKey(view))
+  return isSavedIn(readRaw(SAVED_KEY), view)
+}
+
+/**
+ * Whether a view is starred, given the stored JSON rather than the store.
+ *
+ * Taking the raw string is what lets the caller read this during render: the
+ * string is a stable value it can key a memo on, where an array parsed afresh
+ * each time would be a new identity every render.
+ */
+export function isSavedIn(raw: string | null, view: SavedSearch): boolean {
+  return parseArray<SavedSearch>(raw).some((v) => savedKey(v) === savedKey(view))
 }
 
 /* ---- custom columns ---------------------------------------------------- */
@@ -132,7 +226,7 @@ export function isSaved(view: SavedSearch): boolean {
  * column costs nothing extra on the wire, while annotations would need the
  * server to project them.
  */
-const COLUMNS_KEY = 'orrery.columns'
+export const COLUMNS_KEY = 'orrery.columns'
 const MAX_COLUMNS_PER_RESOURCE = 6
 
 function columnsKeyFor(cluster: string, resource: string): string {
@@ -142,8 +236,21 @@ function columnsKeyFor(cluster: string, resource: string): string {
 type ColumnMap = Record<string, string[]>
 
 export function readColumns(cluster: string, resource: string): string[] {
-  const all = readJSON<ColumnMap>(COLUMNS_KEY, {})
-  const keys = all?.[columnsKeyFor(cluster, resource)]
+  return columnsIn(readRaw(COLUMNS_KEY), cluster, resource)
+}
+
+/** The chosen columns for one resource, given the stored JSON. See isSavedIn. */
+export function columnsIn(raw: string | null, cluster: string, resource: string): string[] {
+  let all: ColumnMap = {}
+  try {
+    const parsed: unknown = raw === null ? {} : JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      all = parsed as ColumnMap
+    }
+  } catch {
+    // A corrupt store is an empty one, not a crashed page.
+  }
+  const keys = all[columnsKeyFor(cluster, resource)]
   return Array.isArray(keys) ? keys.filter((k) => typeof k === 'string') : []
 }
 
