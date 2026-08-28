@@ -27,6 +27,7 @@ import {
   Badge,
   Button,
   ErrorState,
+  Eyebrow,
   GatedButton,
   Loading,
   Modal,
@@ -86,9 +87,7 @@ function ColumnPicker({
 
       {open && (
         <div className="absolute right-0 z-20 mt-1 w-72 border border-border bg-raised p-2.5 shadow-lg">
-          <p className="mb-2 text-[11px] tracking-[.08em] text-ink-faint uppercase">
-            Label columns
-          </p>
+          <Eyebrow as="p" className="mb-2">Label columns</Eyebrow>
 
           {chosen.length > 0 && (
             <ul className="mb-2 flex flex-wrap gap-1">

@@ -23,7 +23,7 @@ import {
 } from '../lib/storage'
 import { useStoredRaw } from '../lib/useStored'
 import { SearchIcon } from './icons'
-import { Badge, Button, Select, Spinner } from './primitives'
+import { Badge, Button, Eyebrow, Select, Spinner } from './primitives'
 import { CommandPalette } from './CommandPalette'
 import { LogoMark, Wordmark } from './Logo'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
@@ -235,9 +235,7 @@ function NamespacePicker({ cluster }: { cluster: string }) {
 
   return (
     <label className="block">
-      <span className="mb-1 block text-[10px] font-semibold tracking-[.1em] text-ink-faint uppercase">
-        Namespace
-      </span>
+      <Eyebrow as="span" className="mb-1 block">Namespace</Eyebrow>
       <Select
         value={current}
         onChange={(e) => {
