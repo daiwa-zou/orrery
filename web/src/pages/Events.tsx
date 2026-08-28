@@ -10,9 +10,9 @@ import {
   Button,
   Checkbox,
   ErrorState,
+  FilterInput,
   Loading,
   Spinner,
-  TextInput,
 } from '../components/primitives'
 import { useDebouncedInput } from '../lib/useDebouncedInput'
 
@@ -130,9 +130,12 @@ export function Events() {
           Warnings only
         </label>
 
-        <TextInput
+        <FilterInput
           value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
+          onValueChange={setQInput}
+          // The debounce is for typing; abandoning a filter should not make
+          // the reader wait out a pause that exists to spare round trips.
+          onClear={() => commitQ('')}
           placeholder="Filter events"
           aria-label="Filter events"
           title="Matches object, reason, message or namespace"

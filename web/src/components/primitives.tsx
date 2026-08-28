@@ -6,8 +6,10 @@ import {
   useSyncExternalStore,
   type ComponentPropsWithRef,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { age as formatAge, toneFor, type Tone } from '../lib/format'
+import { CloseIcon, SearchIcon } from './icons'
 
 /* Small, shared building blocks. Keeping them in one file makes the visual
    language easy to keep consistent — every badge, button and empty state in
@@ -246,6 +248,158 @@ export function TextInput({
       {...rest}
       className={clsx(CONTROL_BOX[size], CONTROL_PAD[size], FIELD_SKIN, className)}
     />
+  )
+}
+
+/**
+ * "/" focuses a filter box, the convention everywhere a list can be filtered.
+ *
+ * The listener is shared rather than per-instance: two filter boxes on one
+ * page would otherwise both answer, and whichever mounted last would win by
+ * accident. First in document order wins instead, which is the one the
+ * reader is looking at.
+ */
+const filterFields = new Set<HTMLInputElement>()
+let slashListener: ((e: KeyboardEvent) => void) | undefined
+
+function focusFirstFilterField() {
+  let first: HTMLInputElement | undefined
+  for (const el of filterFields) {
+    if (!el.isConnected) continue
+    if (
+      !first ||
+      first.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING
+    ) {
+      first = el
+    }
+  }
+  first?.focus()
+}
+
+function registerFilterField(el: HTMLInputElement) {
+  filterFields.add(el)
+  if (!slashListener) {
+    slashListener = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      // "/" is a character long before it is a shortcut; never take it from
+      // someone who is typing one.
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      e.preventDefault()
+      focusFirstFilterField()
+    }
+    window.addEventListener('keydown', slashListener)
+  }
+  return () => {
+    filterFields.delete(el)
+    if (filterFields.size === 0 && slashListener) {
+      window.removeEventListener('keydown', slashListener)
+      slashListener = undefined
+    }
+  }
+}
+
+/**
+ * A filter box: a field with a search icon and a button to empty it.
+ *
+ * There are three of these — the resource search, the events filter, the log
+ * filter — doing the same job on three pages, and they had each grown their
+ * own chrome. Only one could be cleared without selecting the text and
+ * deleting it, and only one answered "/". Being the same control, they are
+ * one component.
+ *
+ * `className` sits on the positioned wrapper, so callers pass the width
+ * there; the field itself always fills it. `children` render inside that
+ * wrapper, for a caller hanging a suggestion list or a validation panel
+ * beneath the field.
+ */
+export function FilterInput({
+  value,
+  onValueChange,
+  onClear,
+  inputRef,
+  invalid,
+  size = 'sm',
+  className,
+  children,
+  ...rest
+}: {
+  value: string
+  onValueChange: (next: string) => void
+  /** Runs after the text is emptied, for callers that must also commit it. */
+  onClear?: () => void
+  /** Supply one to drive focus from outside; otherwise an internal ref is used. */
+  inputRef?: RefObject<HTMLInputElement | null>
+  /** Draws the danger ring and sets aria-invalid. */
+  invalid?: boolean
+  size?: ControlSize
+  className?: string
+  children?: ReactNode
+} & Omit<
+  ComponentPropsWithRef<'input'>,
+  'size' | 'value' | 'onChange' | 'className' | 'ref' | 'children'
+>) {
+  const localRef = useRef<HTMLInputElement>(null)
+  const ref = inputRef ?? localRef
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    return registerFilterField(el)
+  }, [ref])
+
+  return (
+    <div className={clsx('relative', className)}>
+      <SearchIcon
+        className={clsx(
+          'pointer-events-none absolute left-2.5 size-3.5 text-ink-faint',
+          size === 'sm' ? 'top-2' : 'top-2.5',
+        )}
+      />
+      <input
+        {...rest}
+        ref={ref}
+        value={value}
+        onChange={(e) => onValueChange(e.target.value)}
+        aria-invalid={invalid}
+        className={clsx(
+          CONTROL_BOX[size],
+          FIELD_SKIN,
+          'w-full pl-7',
+          value === '' ? 'pr-2.5' : 'pr-7',
+          invalid && 'ring-danger',
+        )}
+      />
+      {value !== '' && (
+        <button
+          type="button"
+          aria-label="Clear the filter"
+          title="Clear the filter"
+          // Mousedown would blur the field first, and the click would land on
+          // whatever moved under the cursor.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onValueChange('')
+            onClear?.()
+            ref.current?.focus()
+          }}
+          className={clsx(
+            'absolute top-0 right-0 grid place-items-center text-ink-faint transition-colors hover:text-ink',
+            size === 'sm' ? 'size-7' : 'size-8',
+          )}
+        >
+          <CloseIcon className="size-3.5" />
+        </button>
+      )}
+      {children}
+    </div>
   )
 }
 
