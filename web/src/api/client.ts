@@ -209,7 +209,13 @@ export interface EnvVarRow {
 export interface ContainerEnv {
   name: string
   init?: boolean
-  env: EnvVarRow[]
+  /**
+   * Null from a server old enough to marshal an empty environment as a nil
+   * slice. The type says so because the pane crashed on it — reading
+   * `.length` off null took down the whole page — and a field that can arrive
+   * null is one every reader has to be made to handle.
+   */
+  env: EnvVarRow[] | null
 }
 
 export const api = {

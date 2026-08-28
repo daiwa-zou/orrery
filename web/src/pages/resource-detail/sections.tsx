@@ -187,13 +187,16 @@ export function EnvSection({ cluster, namespace, pod }: { cluster: string; names
               {c.name}
               {c.init && <span className="ml-1.5 text-[10px] text-ink-faint uppercase">init</span>}
             </h3>
-            {c.env.length === 0 ? (
+            {/* ?? [], because a server that predates the fix sends null for a
+                container with no environment, and a missing list must not be
+                allowed to take the page down. */}
+            {(c.env ?? []).length === 0 ? (
               <p className="text-[12px] text-ink-faint">No environment variables.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-[12px]">
                   <tbody>
-                    {c.env.map((e) => {
+                    {(c.env ?? []).map((e) => {
                       const key = `${c.name}/${e.name}`
                       const hidden = e.sensitive && !revealed.has(key)
                       return (
