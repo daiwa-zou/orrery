@@ -368,11 +368,21 @@ export function Pagination({
   const pages = Math.max(1, Math.ceil(total / pageSize))
   const first = total === 0 ? 0 : (page - 1) * pageSize + 1
   const last = Math.min(page * pageSize, total)
+  // Past the last page the range formula runs backwards — page 3 of 15 rows
+  // reads "101–15 of 15" — which is not a range at all. Say what is true
+  // instead: this page holds nothing, and here is how much there is.
+  const pastEnd = page > pages
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-3 py-2 text-xs text-ink-faint">
       <span className="tabular-nums">
-        {first.toLocaleString()}–{last.toLocaleString()} of {total.toLocaleString()}
+        {pastEnd ? (
+          <>Nothing on page {page.toLocaleString()} of {pages.toLocaleString()}</>
+        ) : (
+          <>
+            {first.toLocaleString()}–{last.toLocaleString()} of {total.toLocaleString()}
+          </>
+        )}
       </span>
 
       <div className="flex items-center gap-3">

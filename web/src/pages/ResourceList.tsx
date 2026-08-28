@@ -6,7 +6,7 @@ import { useAccess, useFacets, useLiveList, usePodMetrics } from '../api/hooks'
 import type { AccessCheck, Column, Row } from '../api/types'
 import { cpu as formatCpu, memory as formatMemory, RESTARTABLE_RESOURCES } from '../lib/format'
 import { toggleSelectorTerm } from '../lib/labels'
-import type { SearchQuery } from '../lib/searchQuery'
+import { queryTerms, removeQueryTerm, type SearchQuery } from '../lib/searchQuery'
 import { rowKey } from '../lib/selection'
 import { DataTable, Pagination } from '../components/DataTable'
 import { RefreshIcon, TagIcon, TrashIcon, ColumnsIcon} from '../components/icons'
@@ -507,6 +507,18 @@ export function ResourceList() {
   // permission, so a read-only viewer sees the affordance and why it is inert.
   const bulkEnabled = canDelete || canRestart
 
+  // The bar is capped at max-w-md, so a committed multi-term query scrolls
+  // out of a box whose end the reader cannot see. Listing the terms outside
+  // it is what makes an active filter legible; the cross is what makes one
+  // undoable without retyping the others.
+  const activeTerms = useMemo(() => queryTerms(searchQuery), [searchQuery])
+
+  // A page past the end is not an empty collection. "No Pod found" there is
+  // the same lie the rest of this codebase works to avoid: there are pods,
+  // this page is simply not where they are.
+  const lastPage = data ? Math.max(1, Math.ceil(data.total / pageSize)) : 1
+  const pastEnd = !!data && data.total > 0 && rows.length === 0 && page > lastPage
+
   if (error) return <ErrorState error={error} retry={refetch} />
   // A parked retry with nothing to show would otherwise fall through to the
   // table's empty state, which asserts that the namespace is empty. Saying
@@ -611,6 +623,38 @@ export function ResourceList() {
         )}
       </div>
 
+      {activeTerms.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface/60 px-4 py-1.5">
+          <Eyebrow as="span" className="mr-0.5">
+            Filtering
+          </Eyebrow>
+          {activeTerms.map((t) => (
+            <button
+              key={`${t.kind}:${t.term}`}
+              type="button"
+              onClick={() => commitSearch(removeQueryTerm(searchQuery, t))}
+              title={`Remove ${t.term} from the search`}
+              aria-label={`Remove ${t.term} from the search`}
+              className="group inline-flex h-7 items-center gap-1.5 bg-surface-2 px-2.5 font-mono text-xs text-ink-muted ring-1 ring-border transition-colors hover:text-ink hover:ring-border-strong"
+            >
+              {t.term}
+              <span aria-hidden className="text-ink-faint group-hover:text-danger">
+                ×
+              </span>
+            </button>
+          ))}
+          {activeTerms.length > 1 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => commitSearch({ q: '', labelSelector: '', fieldSelector: '' })}
+            >
+              Clear all
+            </Button>
+          )}
+        </div>
+      )}
+
       {selectedRows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-accent-soft/25 px-4 py-2">
           <span className="text-sm font-medium text-ink tabular-nums">
@@ -671,16 +715,35 @@ export function ResourceList() {
             onLabelClick={showLabels ? onLabelClick : undefined}
             loading={isLoading}
             emptyTitle={
-              q || labelSelector || fieldSelector
-                ? 'No matches'
-                : `No ${meta?.kind ?? resource} found`
+              pastEnd
+                ? `Nothing on page ${page.toLocaleString()}`
+                : q || labelSelector || fieldSelector
+                  ? 'No matches'
+                  : `No ${meta?.kind ?? resource} found`
             }
             emptyDescription={
-              q || labelSelector || fieldSelector
-                ? 'Try relaxing the filters.'
-                : namespace
-                  ? `Nothing in namespace ${namespace}.`
-                  : undefined
+              pastEnd ? (
+                <>
+                  There {data!.total === 1 ? 'is' : 'are'}{' '}
+                  {data!.total.toLocaleString()}{' '}
+                  {/* `resource` is the API's own plural — "pods", but also
+                      "ingresses" and "networkpolicies", which appending an
+                      "s" to the kind would get wrong. */}
+                  {data!.total === 1 ? (meta?.kind ?? resource) : resource}, on{' '}
+                  {lastPage.toLocaleString()} {lastPage === 1 ? 'page' : 'pages'}.{' '}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => update({ page: '1' })}
+                  >
+                    Back to the first page
+                  </Button>
+                </>
+              ) : q || labelSelector || fieldSelector ? (
+                'Try relaxing the filters.'
+              ) : namespace ? (
+                `Nothing in namespace ${namespace}.`
+              ) : undefined
             }
             selected={bulkEnabled ? selected : undefined}
             onSelectedChange={bulkEnabled ? setSelected : undefined}
