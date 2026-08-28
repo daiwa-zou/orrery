@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { FacetsResponse } from '../api/types'
+import { splitSelector } from '../lib/labels'
 import { FilterInput } from './primitives'
+import { useToast } from './Toast'
 import {
   addQueryTerm,
   freeTextOf,
   isFilterTerm,
+  equalityKey,
+  queryHasTerm,
   splitWhereTerm,
   whereProblem,
   type PredicateColumn,
@@ -43,7 +47,16 @@ function buildSuggestions(
   token: string,
   facets: FacetsResponse | undefined,
   columns: PredicateColumn[] | undefined,
+  applied: SearchQuery,
 ): Suggestion[] {
+  // A key already pinned to a value has nothing left to offer: the same value
+  // again is a repeat, and a different one contradicts the term that is
+  // already there. Either way the reader is being pointed at a dead end.
+  const pinned = new Set(
+    [...splitSelector(applied.labelSelector), ...splitSelector(applied.fieldSelector)]
+      .map(equalityKey)
+      .filter((k): k is string => k !== undefined),
+  )
   // Value position for a predicate whose operator is typed but whose value is
   // not. Only age has a small, guessable vocabulary; a number or a pattern
   // does not, and offering nothing is better than offering noise.
@@ -66,6 +79,7 @@ function buildSuggestions(
     if (!facet) return []
     return facet.values
       .filter((v) => v.toLowerCase().startsWith(prefix.toLowerCase()) && v !== prefix)
+      .filter((v) => !queryHasTerm(applied, `${key}${op}${v}`))
       .slice(0, MAX_SUGGESTIONS)
       .map((v) => ({ token: `${key}${op}${v}`, kind: 'value', display: v }))
   }
@@ -75,10 +89,10 @@ function buildSuggestions(
   const needle = token.toLowerCase()
   const match = (key: string) => needle === '' || key.toLowerCase().includes(needle)
   const fields = facets.fields
-    .filter((f) => match(f.key))
+    .filter((f) => match(f.key) && !pinned.has(f.key))
     .map((f): Suggestion => ({ token: `${f.key}=`, kind: 'field', display: f.key }))
   const labels = facets.labels
-    .filter((f) => match(f.key))
+    .filter((f) => match(f.key) && !pinned.has(f.key))
     .map((f): Suggestion => ({ token: `${f.key}=`, kind: 'label', display: f.key }))
 
   // Columns are how anyone finds out that restarts>3 and age<1h are things
@@ -145,6 +159,7 @@ export function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null)
   const problemsId = useId()
   const [problems, setProblems] = useState<SearchProblem[]>([])
+  const toast = useToast()
   const draftRef = useRef(draft)
   useEffect(() => {
     draftRef.current = draft
@@ -207,11 +222,24 @@ export function SearchBar({
       return false
     }
     const rest = draftRef.current.slice(0, draftRef.current.length - term.length)
+
+    // Already applied: the term is still consumed, because the reader asked
+    // for a state that is already true and leaving their text in the box
+    // would read as a failure. But it is said out loud — otherwise the typing
+    // simply vanishes with nothing on screen changing, which is the one case
+    // where doing the right thing looks like doing nothing.
+    if (queryHasTerm(query, term)) {
+      setDraft(rest)
+      setProblems([])
+      toast.push({ tone: 'ok', title: `${term} is already applied` })
+      return true
+    }
+
     setDraft(rest)
     setProblems([])
     onCommit(addQueryTerm({ ...query, q: freeTextOf(rest) }, term))
     return true
-  }, [onCommit, query, columns])
+  }, [onCommit, query, columns, toast])
 
   // The suggestions are drawn from what is already filtering. That is exactly
   // the committed query now: the term being completed has not been promoted
@@ -235,8 +263,8 @@ export function SearchBar({
   }, [scope, onScopeChange])
 
   const suggestions = useMemo(
-    () => (open ? buildSuggestions(token, facets, columns) : []),
-    [open, token, facets, columns],
+    () => (open ? buildSuggestions(token, facets, columns, query) : []),
+    [open, token, facets, columns, query],
   )
 
   useEffect(() => {

@@ -9,7 +9,9 @@ import {
   removeQueryTerm,
   tokenizeSearch,
   trailingToken,
+  equalityKey,
   parseWhereTerm,
+  queryHasTerm,
   sameQuery,
   whereProblem,
   type SearchQuery,
@@ -441,5 +443,71 @@ describe('whereProblem', () => {
 
   it('has no opinion about a term that is not a predicate', () => {
     expect(whereProblem('app=web', columns)).toBeUndefined()
+  })
+})
+
+describe('adding a term that is already there', () => {
+  const of = (text: string) => parseSearchInput(text)
+
+  it('does not repeat a label term', () => {
+    const once = of('app=web')
+    expect(addQueryTerm(once, 'app=web').labelSelector).toBe('app=web')
+  })
+
+  it('does not repeat a field term or a predicate', () => {
+    expect(addQueryTerm(of('status.phase=Running'), 'status.phase=Running').fieldSelector).toBe(
+      'status.phase=Running',
+    )
+    expect(addQueryTerm(of('restarts>3'), 'restarts>3').where).toEqual(['restarts>3'])
+  })
+
+  it('leaves exactly one chip, not two', () => {
+    const twice = addQueryTerm(of('app=web'), 'app=web')
+    expect(queryTerms(twice).map((t) => t.term)).toEqual(['app=web'])
+  })
+
+  // An object cannot have two values for one label, so the pair would match
+  // nothing at all. Replacing is what clicking a label chip has always done.
+  it('replaces a conflicting equality rather than contradicting itself', () => {
+    expect(addQueryTerm(of('app=web'), 'app=api').labelSelector).toBe('app=api')
+    expect(addQueryTerm(of('app=web tier=front'), 'app=api').labelSelector).toBe(
+      'tier=front,app=api',
+    )
+  })
+
+  it('leaves the terms an equality can legitimately sit beside', () => {
+    expect(addQueryTerm(of('app=web'), 'tier!=cache').labelSelector).toBe('app=web,tier!=cache')
+    expect(addQueryTerm(of('tier!=cache'), 'tier=front').labelSelector).toBe(
+      'tier!=cache,tier=front',
+    )
+    expect(addQueryTerm(of('app=web'), '!canary').labelSelector).toBe('app=web,!canary')
+  })
+
+  // Two predicates on one column are a range, not a contradiction.
+  it('keeps two different predicates on the same column', () => {
+    const range = addQueryTerm(of('restarts>3'), 'restarts<10')
+    expect(range.where).toEqual(['restarts>3', 'restarts<10'])
+  })
+
+  it('reports what is already applied, across all three kinds', () => {
+    const query = of('app=web status.phase=Running restarts>3 nginx')
+    for (const t of ['app=web', 'status.phase=Running', 'restarts>3', 'nginx']) {
+      expect(queryHasTerm(query, t)).toBe(true)
+    }
+    expect(queryHasTerm(query, 'app=api')).toBe(false)
+  })
+})
+
+describe('equalityKey', () => {
+  it('names the key only for terms that pin one value', () => {
+    expect(equalityKey('app=web')).toBe('app')
+    expect(equalityKey('status.phase=Running')).toBe('status.phase')
+    expect(equalityKey('app==web')).toBe('app')
+  })
+
+  it('has no opinion about the terms that can coexist', () => {
+    for (const t of ['tier!=cache', '!canary', 'app in (a,b)', 'restarts>3', 'name=~^web']) {
+      expect(equalityKey(t)).toBeUndefined()
+    }
   })
 })
