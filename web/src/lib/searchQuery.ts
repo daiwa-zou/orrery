@@ -153,3 +153,51 @@ export function sameQuery(a: SearchQuery, b: SearchQuery): boolean {
     a.q === b.q && a.labelSelector === b.labelSelector && a.fieldSelector === b.fieldSelector
   )
 }
+
+/** One removable part of a committed query. */
+export interface QueryTerm {
+  kind: 'text' | 'label' | 'field'
+  /** As it reads in the search bar, which is how it should read on a chip. */
+  term: string
+}
+
+/**
+ * The committed query broken into the parts a reader can drop one at a time.
+ *
+ * The bar itself is capped at max-w-md, so `app=web tier!=cache
+ * status.phase=Running` is committed and then largely invisible — scrolled
+ * out of a box the reader cannot see the end of. Listing the terms outside
+ * the field is what makes an active filter legible, and giving each one a
+ * cross is what makes it undoable without retyping the rest.
+ */
+export function queryTerms(query: SearchQuery): QueryTerm[] {
+  return [
+    ...splitSelector(query.labelSelector).map((term): QueryTerm => ({ kind: 'label', term })),
+    ...splitSelector(query.fieldSelector).map((term): QueryTerm => ({ kind: 'field', term })),
+    ...tokenizeSearch(query.q).map((term): QueryTerm => ({ kind: 'text', term })),
+  ]
+}
+
+/**
+ * The query with one term dropped. Removing by value rather than by index,
+ * so a list that re-rendered between the click and the handler cannot drop
+ * the wrong term; a duplicate term would be removed twice, which is the same
+ * answer either way.
+ */
+export function removeQueryTerm(query: SearchQuery, target: QueryTerm): SearchQuery {
+  const without = (selector: string) =>
+    splitSelector(selector)
+      .filter((t) => t !== target.term)
+      .join(',')
+
+  return {
+    q:
+      target.kind === 'text'
+        ? tokenizeSearch(query.q)
+            .filter((t) => t !== target.term)
+            .join(' ')
+        : query.q,
+    labelSelector: target.kind === 'label' ? without(query.labelSelector) : query.labelSelector,
+    fieldSelector: target.kind === 'field' ? without(query.fieldSelector) : query.fieldSelector,
+  }
+}

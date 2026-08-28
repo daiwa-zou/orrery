@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   composeSearchInput,
   parseSearchInput,
+  queryTerms,
+  removeQueryTerm,
   tokenizeSearch,
 } from './searchQuery'
 
@@ -139,5 +141,79 @@ describe('composeSearchInput', () => {
 
   it('composes an empty query to an empty string', () => {
     expect(composeSearchInput({ q: '', labelSelector: '', fieldSelector: '' })).toBe('')
+  })
+})
+
+describe('queryTerms', () => {
+  const query = {
+    q: 'web frontend',
+    labelSelector: 'app=web,tier!=cache,role in (a,b)',
+    fieldSelector: 'status.phase=Running',
+  }
+
+  it('lists selectors before free text, each tagged with where it came from', () => {
+    expect(queryTerms(query)).toEqual([
+      { kind: 'label', term: 'app=web' },
+      { kind: 'label', term: 'tier!=cache' },
+      { kind: 'label', term: 'role in (a,b)' },
+      { kind: 'field', term: 'status.phase=Running' },
+      { kind: 'text', term: 'web' },
+      { kind: 'text', term: 'frontend' },
+    ])
+  })
+
+  it('is empty for an empty query', () => {
+    expect(queryTerms({ q: '', labelSelector: '', fieldSelector: '' })).toEqual([])
+  })
+
+  it('keeps a set expression whole rather than splitting it at its comma', () => {
+    const terms = queryTerms({ q: '', labelSelector: 'role in (a,b)', fieldSelector: '' })
+    expect(terms).toEqual([{ kind: 'label', term: 'role in (a,b)' }])
+  })
+
+  it('round-trips: every term reappears in the composed input', () => {
+    const text = composeSearchInput(query)
+    for (const { term } of queryTerms(query)) expect(text).toContain(term)
+  })
+})
+
+describe('removeQueryTerm', () => {
+  const query = {
+    q: 'web frontend',
+    labelSelector: 'app=web,tier!=cache',
+    fieldSelector: 'status.phase=Running',
+  }
+
+  it('drops a label term and leaves the rest alone', () => {
+    expect(removeQueryTerm(query, { kind: 'label', term: 'app=web' })).toEqual({
+      q: 'web frontend',
+      labelSelector: 'tier!=cache',
+      fieldSelector: 'status.phase=Running',
+    })
+  })
+
+  it('drops a field term', () => {
+    expect(
+      removeQueryTerm(query, { kind: 'field', term: 'status.phase=Running' }).fieldSelector,
+    ).toBe('')
+  })
+
+  it('drops one free-text word and keeps the other', () => {
+    expect(removeQueryTerm(query, { kind: 'text', term: 'web' }).q).toBe('frontend')
+  })
+
+  it('does not remove a matching string from the wrong kind', () => {
+    const ambiguous = { q: 'app=web', labelSelector: 'app=web', fieldSelector: '' }
+    expect(removeQueryTerm(ambiguous, { kind: 'label', term: 'app=web' })).toEqual({
+      q: 'app=web',
+      labelSelector: '',
+      fieldSelector: '',
+    })
+  })
+
+  it('removing every term leaves a query that composes to an empty string', () => {
+    let next: typeof query = query
+    for (const term of queryTerms(query)) next = removeQueryTerm(next, term)
+    expect(composeSearchInput(next)).toBe('')
   })
 })
