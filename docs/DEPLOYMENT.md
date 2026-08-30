@@ -24,13 +24,35 @@ recognising by symptom:
 
 One container serves everything: the Go backend embeds the compiled SPA
 (`gcr.io/distroless/static` base, no shell, runs as nonroot, read-only root
-filesystem). Two listeners: `:8080` for the app and API, `:9090` for
-Prometheus metrics, kept separate so the scrape endpoint never sits behind
-auth.
+filesystem).
+
+```mermaid
+flowchart LR
+  U["Users"] --> ING["Ingress<br/><i>TLS terminates here</i>"]
+  ING --> P1["orrery pod<br/>:8080 app + API"]
+  ING --> P2["orrery pod<br/>:8080 app + API"]
+
+  P1 --- RD[("Redis<br/><b>sessions — the only<br/>shared state</b>")]
+  P2 --- RD
+
+  PR["Prometheus"] -.-> M1[":9090 metrics<br/><i>separate listener,<br/>never behind auth</i>"]
+  M1 -.- P1
+
+  P1 --> KA["Hub API server"]
+  P1 --> KB["Remote cluster<br/><i>kubeconfig from a secret</i>"]
+  P2 --> KA
+  P2 --> KB
+
+  subgraph perpod["Per-pod, rebuildable from the API servers"]
+    C1["informer caches"]
+    C2["authz verdicts"]
+    C3["discovery"]
+  end
+  P1 -.- perpod
+```
 
 Per-user state lives in exactly one place — the session store. Everything else
-a pod holds (informer caches, authz verdict cache, discovery cache) is a
-per-pod cache that any pod can rebuild from the API servers. Consequences:
+a pod holds is a per-pod cache. Consequences:
 
 - **Any pod can serve any request.** No sticky sessions, no session affinity,
   provided sessions are in Redis and the encryption key is shared.
@@ -168,15 +190,12 @@ Orrery itself speaks plain HTTP inside the cluster and marks its cookies
 
 ## Security posture
 
-Read [the RBAC template](../deploy/helm/orrery/templates/rbac.yaml) before
-installing — the grants are commented and deliberate. It covers only the
-cluster Orrery runs in; every remote cluster needs its own credential, and
-[deploy/remote-cluster](../deploy/remote-cluster/) has ready-made manifests for
-both auth modes plus a `preflight.sh` that verifies one before you register it.
-The short version: the
-dashboard's service account can read broadly (to fill shared caches; per-user
-reads are gated by SubjectAccessReview above the cache) and can **impersonate
-any user or group**. Treat the pod accordingly:
+[RBAC.md](RBAC.md) is the full account of what the service account may do, how
+to narrow it, and the minimum grant that still produces a working read-only
+console. The short version: the dashboard's service account can read broadly
+(to fill shared caches; per-user reads are gated by SubjectAccessReview above
+the cache) and, under impersonation, can **act as any user or group**. Treat
+the pod accordingly:
 
 - Restrict who can `exec` into or read secrets in the release namespace as
   tightly as you restrict cluster-admin, because the pod's credential is a

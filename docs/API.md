@@ -6,9 +6,26 @@ cluster-scoped resources, so a single route serves every group/version/resource
 the cluster advertises — built-in kinds and custom resources alike.
 
 Every read and every write is preceded by a `SubjectAccessReview` against the
-cluster in question — see [How permission works](../README.md#how-permission-works)
-in the README, and [ARCHITECTURE.md](ARCHITECTURE.md) for the caching design
-behind it.
+cluster in question. Which identity makes the onward call, and whether the
+answer comes from a cache or the API server, differs by route:
+
+```mermaid
+flowchart TD
+  RQ["Request under /api/v1"] --> SES{"Session cookie valid?"}
+  SES -- no --> L["401 · sign in"]
+  SES -- yes --> RES["Resolve cluster + resource<br/><i>via discovery: kind, singular<br/>or short name all land here</i>"]
+  RES --> SAR{"SubjectAccessReview<br/>for the caller"}
+  SAR -- denied --> E403["403 forbidden"]
+  SAR -- allowed --> K{"Route kind"}
+  K -- "list · watch · facets<br/>search · overview" --> CA["Shared informer cache<br/><i>filled by the hub SA</i>"]
+  K -- "get one · create · update<br/>delete · exec · logs · proxy" --> AS["API server<br/><i>as the caller</i>"]
+  CA --> J["JSON"]
+  AS --> J
+```
+
+See [How permission works](../README.md#how-permission-works) in the README,
+[RBAC.md](RBAC.md) for the grants each branch needs, and
+[ARCHITECTURE.md](ARCHITECTURE.md) for the caching design behind it.
 
 ## The surface
 
