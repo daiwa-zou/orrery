@@ -21,17 +21,23 @@ an authorization check in front of it.
 
 ## Read path
 
-```
-request ──► SubjectAccessReview (cached 30s) ──► shared informer cache ──► project ──► page
-                    │                                     ▲
-                    │                                     │
-              API server                          one watch per resource,
-           (RBAC is the authority)                  regardless of readers
+```mermaid
+flowchart LR
+  R["Request"] --> S{"SubjectAccessReview<br/><i>LRU, 30s TTL, singleflight</i>"}
+  S -- "denied" --> F["403 · you may not"]
+  S -- "allowed" --> C["Shared informer cache"]
+  C --> P["Project to columns"] --> V["Page"]
+
+  S -. "on miss" .-> K["API server<br/><b>RBAC is the authority</b>"]
+  K -. "one watch per resource,<br/>regardless of readers" .-> C
+
+  W["Writes · exec · logs<br/>single-object gets"] --> K
 ```
 
 A read never touches the API server on the hot path. What it does touch is an
 access review, and those are cached, deduplicated with `singleflight`, and
-batched by the UI into a single `/access` call per screen.
+batched by the UI into a single `/access` call per screen. The dotted edges are
+the only ones that reach the API server, and neither is per-reader.
 
 ### Why this is safe
 
@@ -71,15 +77,32 @@ which during an incident is actively dangerous.
 A cluster with three hundred CRDs should not hold three hundred informers for
 resources nobody looks at.
 
-- Informers start **on first use**, not at boot.
-- Each read stamps a last-used time. A cache idle beyond `cache.idleTimeout`
-  with no WebSocket subscribers is stopped.
-- A live subscriber pins its cache open regardless of read activity.
-- Past `cache.maxInformersPerCluster`, the least recently used unwatched cache
-  is retired to make room.
-- An informer that fails to start — usually the dashboard's own RBAC missing a
-  resource — is not left in place. The next request retries, so a transient
-  failure during a CRD rollout heals on its own.
+```mermaid
+stateDiagram-v2
+  [*] --> Absent
+  Absent --> Syncing: first read of this resource
+  Syncing --> Serving: cache synced
+  Syncing --> Absent: list+watch refused, or cache.syncTimeout
+  Serving --> Serving: read stamps last-used
+  Serving --> Absent: idle past cache.idleTimeout with no subscribers
+  Serving --> Absent: evicted as LRU past cache.maxInformersPerCluster
+
+  note right of Serving
+    A live subscriber pins the cache
+    open regardless of read activity,
+    and is never the eviction victim.
+  end note
+
+  note left of Absent
+    A failed informer is torn down rather
+    than left broken, so the next request
+    retries and a CRD rollout heals itself.
+  end note
+```
+
+The `Syncing --> Absent` edge is the one operators meet: it is almost always
+the *dashboard's* own RBAC missing a resource, and it surfaces as "we could not"
+rather than "you may not" — see [RBAC.md](RBAC.md#what-a-missing-permission-looks-like).
 
 ### What is stored
 

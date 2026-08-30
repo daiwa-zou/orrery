@@ -12,29 +12,43 @@ what your RBAC bindings expect. Everything else has a sensible default.
 
 ## How the flow works
 
-1. The browser hits `/api/v1/auth/login`. Orrery generates a `state`, a
-   `nonce` and a PKCE verifier, seals them into a short-lived (10 minute)
-   encrypted cookie, and redirects to the provider's authorization endpoint.
-   Because the in-flight login lives in the cookie rather than server memory,
-   **any replica can complete a login another replica started** — no sticky
-   sessions needed.
-2. The provider redirects back to `/api/v1/auth/callback`. Orrery verifies
-   the state, exchanges the code (with the PKCE verifier), verifies the ID
-   token's signature, audience and nonce, applies the claim mapping and access
-   rules below, and creates a session.
-3. The session is referenced by an `HttpOnly`, AES-GCM-encrypted cookie.
-   Tokens (ID, access, refresh) are stored server-side in the session store,
-   never in the browser.
-4. When `offlineAccess` is on (the default), Orrery requests a refresh token
-   and renews tokens shortly before expiry, so a 12-hour session survives a
-   provider that issues 5-minute ID tokens. Concurrent refreshes of one
-   session collapse into a single provider round trip, so token-rotation
-   providers (which invalidate the whole token family if a refresh token is
-   replayed) are safe across concurrent requests. Long-lived streams — watches,
-   log follows, terminals — renew on their 60-second re-authorization cycle
-   too, and end when the session ends, so a sign-out closes them. A transient
-   provider failure (5xx, throttling) never signs the user out; only a
-   definitive `invalid_grant` does.
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant O as Orrery<br/>(any replica)
+  participant P as Provider
+  participant S as Session store
+
+  B->>O: GET /api/v1/auth/login
+  Note over O: state + nonce + PKCE verifier,<br/>sealed into a 10-minute encrypted cookie
+  O-->>B: 302 to the authorization endpoint
+  B->>P: authorize
+  P-->>B: 302 to /api/v1/auth/callback?code
+  B->>O: callback
+  Note over O: verify state · exchange code with PKCE<br/>verify signature, audience, nonce<br/>apply claim mapping and access rules
+  O->>S: create session (ID / access / refresh tokens)
+  O-->>B: HttpOnly AES-GCM session cookie
+  loop shortly before expiry, when offlineAccess is on
+    O->>P: refresh (concurrent refreshes collapse into one)
+    P-->>O: new tokens
+  end
+```
+
+Three properties of that picture are worth naming, because each of them is a
+deployment question someone eventually asks:
+
+- **Any replica can complete a login another replica started.** The in-flight
+  login lives in the cookie, not in server memory — no sticky sessions.
+- **No token ever reaches the browser.** The cookie is a reference; ID, access
+  and refresh tokens stay in the session store.
+- **Refreshes are safe to run concurrently.** They collapse into one provider
+  round trip, so token-rotation providers — which invalidate the whole family
+  if a refresh token is replayed — do not trip over parallel requests. A
+  12-hour session therefore survives a provider issuing 5-minute ID tokens.
+  Long-lived streams renew on their 60-second re-authorization cycle and end
+  when the session does. A transient provider failure never signs the user
+  out; only a definitive `invalid_grant` does.
 
 ## Configuration reference
 
@@ -90,14 +104,23 @@ Jane signs in fine and then sees an empty, permission-denied dashboard.
 The mapping rules mirror `kube-apiserver --oidc-username-claim /
 --oidc-username-prefix / --oidc-groups-claim / --oidc-groups-prefix` exactly:
 
-- A **configured prefix always applies**, whatever the claim.
-- A prefix of `-` explicitly disables prefixing.
-- With **no prefix configured**, the default depends on the claim:
-  - `usernameClaim: email` → the bare address (`jane@example.com`).
-  - any other username claim → `<issuer>#<value>`
-    (`https://accounts.example.com#jane`), so usernames from different issuers
-    cannot collide.
-  - groups default to the `oidc:` prefix in Orrery's shipped defaults.
+```mermaid
+flowchart TD
+  T["ID token claim"] --> Q{"usernamePrefix<br/>configured?"}
+  Q -- "yes, e.g. oidc:" --> A["prefix + value<br/><b>oidc:jane@example.com</b><br/><i>applies to every claim, email included</i>"]
+  Q -- "'-'" --> B["no prefix<br/><b>jane@example.com</b>"]
+  Q -- "no" --> C{"which claim?"}
+  C -- "email" --> D["bare value<br/><b>jane@example.com</b>"]
+  C -- "anything else" --> E["issuer # value<br/><b>https://accounts.example.com#jane</b><br/><i>so two issuers cannot collide</i>"]
+
+  A --> R["The string RBAC is evaluated against"]
+  B --> R
+  D --> R
+  E --> R
+```
+
+Groups follow the same rules and default to the `oidc:` prefix in Orrery's
+shipped defaults.
 
 **Recommendation:** decide the prefixes once, and configure the kube-apiserver
 (or your managed equivalent — GKE/EKS/AKS OIDC config) and Orrery with the

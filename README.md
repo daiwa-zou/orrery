@@ -134,8 +134,22 @@ shared cache — the reason it stays cheap as users are added. The trade is real
 and worth stating plainly: **the dashboard's service account can impersonate
 anyone**, so the pod must be treated as a sensitive workload.
 
-Claim mapping mirrors the kube-apiserver's own flags, so an impersonated
-identity matches your existing bindings exactly — see [docs/OIDC.md](docs/OIDC.md).
+Two credentials are in play, and they answer different questions:
+
+```mermaid
+flowchart LR
+  H["Hub service account"] --> HQ["<b>Does this surface exist?</b><br/>discovery · informer caches<br/>list · watch · search · counts"]
+  U["Signed-in user"] --> UQ["<b>May you see it?</b><br/>every access review<br/>single-object gets · writes<br/>exec · logs · secret values"]
+  HQ --> P["The page"]
+  UQ --> P
+```
+
+Narrowing the hub's grants is how you keep a resource family — certificates,
+secrets, a whole API group — out of the dashboard's caches entirely;
+[docs/RBAC.md](docs/RBAC.md) covers that and the minimum grant for a read-only
+install. Claim mapping mirrors the kube-apiserver's own flags, so an
+impersonated identity matches your existing bindings exactly — see
+[docs/OIDC.md](docs/OIDC.md).
 
 ## Quick start
 
@@ -281,6 +295,9 @@ surface to keep stable, and `cmd/orrery` is the only binary.
 - [DEPLOYMENT.md](docs/DEPLOYMENT.md) — production topologies, scaling, tuning
   and security posture.
 - [OIDC.md](docs/OIDC.md) — provider setup, claim mapping, troubleshooting.
+- [RBAC.md](docs/RBAC.md) — what the service account may do, how to switch a
+  resource family such as certificates on or off, and the minimum grant for a
+  read-only console.
 - [DECISIONS.md](docs/DECISIONS.md) — what was considered and deliberately not
   built, and what would change the answer.
 - [RELEASING.md](docs/RELEASING.md) — what a `v*` tag produces, and the one

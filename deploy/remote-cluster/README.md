@@ -11,23 +11,31 @@ cluster, in two variants matching the two auth modes.
 | [`rbac-impersonation.yaml`](rbac-impersonation.yaml) | `authMode: impersonation` | cluster-wide read, SubjectAccessReview, impersonate |
 | [`preflight.sh`](preflight.sh) | either | verifies one cluster before you register it |
 
+Both manifests grant cluster-wide read with a wildcard. To narrow that — to
+keep certificates, secrets or a whole API group out of the dashboard's caches —
+see [docs/RBAC.md](../../docs/RBAC.md), which also carries the minimum grant for
+a read-only install.
+
 ## Which variant
 
 Both modes need a read credential here — informer caches and discovery are
 always filled with the dashboard's own identity, whichever mode a cluster
 uses. The difference is what else the hub is trusted to do.
 
-**Impersonation** adds `impersonate` and `subjectaccessreviews`. The hub acts
-as the signed-in user for writes, exec, logs and single-object reads, so this
-cluster never has to know about your identity provider — nothing changes on
-the API server. The cost is that anyone who can use this token can act as any
-identity here, cluster-admin included.
+```mermaid
+flowchart TD
+  Q{"Can you reconfigure<br/>this API server to trust<br/>your OIDC issuer?"}
+  Q -- yes --> P["<b>passthrough</b><br/>rbac-passthrough.yaml"]
+  Q -- "no — managed cluster,<br/>someone else's platform" --> I["<b>impersonation</b><br/>rbac-impersonation.yaml"]
 
-**Passthrough** adds neither. The user's own ID token is the bearer token for
-everything user-scoped, and authorization is a SelfSubjectAccessReview made
-with their credential — which every authenticated user may already create. The
-hub holds a fleet-wide *read* credential and nothing more. The cost is
-configuring this API server to trust your issuer:
+  P --> PG["get · list · watch<br/><i>cache filling only</i>"]
+  PG --> PC["Hub holds a fleet-wide<br/><b>read</b> credential and nothing more.<br/>User-scoped calls carry the user's own token."]
+
+  I --> IG["get · list · watch<br/>+ create subjectaccessreviews<br/>+ impersonate users / groups"]
+  IG --> IC["Nothing changes on the API server.<br/><b>Anyone who can use this token<br/>can act as any identity here.</b>"]
+```
+
+Passthrough's cost is the configuration it demands of this API server:
 
 ```
 --oidc-issuer-url=https://accounts.example.com
