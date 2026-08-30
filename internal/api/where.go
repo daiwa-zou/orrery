@@ -64,6 +64,44 @@ var whereOps = []whereOp{opGTE, opLTE, opMatch, opNotMatch, opGT, opLT}
 // the note in parseWhere for why the number matters at all.
 const maxWherePredicates = 16
 
+// maxPatternBytes and maxPatternBudget bound the *size* of the patterns, which
+// is a separate quantity from how many of them there are and was the half this
+// file originally left open.
+//
+// Counting predicates bounds the wrong term. A regular expression is matched by
+// simulating its program over the cell, so the cost of one comparison is
+// proportional to the length of the pattern as well as the length of the text —
+// and a pattern is not a dozen bytes unless its author wants it to be. Measured
+// against a 224-byte event message, with a pattern built from nothing but
+// alternation and character classes behind a leading `.*`:
+//
+//	pattern      per cell     20k events
+//	  256 B         40 µs           0.8 s
+//	   16 KB       5.2 ms         1m 44 s
+//	    1 MB       1.18 s        6h 35 m
+//
+// It is linear, with no threshold to hide behind: every byte of pattern buys
+// the same multiple of every row in scope. One predicate — comfortably inside
+// the count cap — carries the whole request line, and the filter runs before
+// the limit and never consults the request context, so the client may hang up
+// and the core keeps going. Nothing else stops it either: writeTimeout is
+// deliberately zero so that watches and log follows are not severed mid-stream.
+//
+// Two numbers are needed because either alone is undone by the other. A
+// per-pattern cap is what makes the refusal legible — it names the term that is
+// too long — but sixteen patterns at the cap cost sixteen times one. A budget
+// over their total is what actually bounds the work, and stating it separately
+// is what lets the message say which of the two was exceeded.
+//
+// The values are generous by the standard of anything anyone writes. The
+// patterns this parameter exists for are `^web-`, `canary$|1$`, `^Failed`:
+// tens of bytes. Two hundred and fifty-six is a pattern nobody types and a
+// generated one would have to work at.
+const (
+	maxPatternBytes  = 256
+	maxPatternBudget = 512
+)
+
 // wherePredicate is one parsed comparison, ready to run against a row.
 type wherePredicate struct {
 	column string
@@ -103,6 +141,7 @@ func parseWhere(raw []string, cols []Column) ([]wherePredicate, error) {
 	}
 
 	out := make([]wherePredicate, 0, len(raw))
+	budget := 0
 	for _, term := range raw {
 		term = strings.TrimSpace(term)
 		if term == "" {
@@ -111,6 +150,17 @@ func parseWhere(raw []string, cols []Column) ([]wherePredicate, error) {
 		p, err := parseWhereTerm(term, byKey, cols)
 		if err != nil {
 			return nil, err
+		}
+		if p.re != nil {
+			// Spent after the term parsed, so the number in the message counts
+			// pattern bytes and not the column name and operator in front of
+			// them — which is what the caller would have to shorten.
+			budget += len(p.value)
+			if budget > maxPatternBudget {
+				return nil, badRequest(
+					"at most %d bytes of pattern per request across all where terms (given %d)",
+					maxPatternBudget, budget)
+			}
 		}
 		out = append(out, p)
 	}
@@ -143,6 +193,14 @@ func parseWhereTerm(term string, byKey map[string]Column, cols []Column) (whereP
 	p.kind = col.Type
 
 	if !op.ordering() {
+		// Checked before compiling, not after: compiling is itself linear in
+		// the pattern, so a megabyte of it costs eighty milliseconds to find
+		// out we did not want it.
+		if len(p.value) > maxPatternBytes {
+			return p, badRequest(
+				"where: the pattern for %q is %d bytes; at most %d are accepted",
+				p.column, len(p.value), maxPatternBytes)
+		}
 		re, err := regexp.Compile(p.value)
 		if err != nil {
 			return p, badRequest("where: %q is not a valid pattern: %v", p.value, err)

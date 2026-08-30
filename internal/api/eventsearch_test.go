@@ -27,7 +27,11 @@ func TestParseSearchTerms(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got := parseSearchTerms(c.in)
+		got, err := parseSearchTerms(c.in)
+		if err != nil {
+			t.Errorf("parseSearchTerms(%q): unexpected error: %v", c.in, err)
+			continue
+		}
 		if len(got) != len(c.want) {
 			t.Errorf("parseSearchTerms(%q) = %+v, want %+v", c.in, got, c.want)
 			continue
@@ -50,7 +54,11 @@ func TestRowMatchesSearch(t *testing.T) {
 	}
 
 	match := func(q string) bool {
-		return rowMatchesSearch(row, parseSearchTerms(q), eventSearchKeys)
+		terms, err := parseSearchTerms(q)
+		if err != nil {
+			t.Fatalf("parseSearchTerms(%q): %v", q, err)
+		}
+		return rowMatchesSearch(row, terms, eventSearchKeys)
 	}
 
 	// Words are ANDed across columns: "web" is in the object and "back-off"

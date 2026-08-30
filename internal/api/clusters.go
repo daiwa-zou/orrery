@@ -264,7 +264,11 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("involvedName")
 	kind := r.URL.Query().Get("involvedKind")
 	onlyWarnings := queryBool(r, "warningsOnly", false)
-	terms := parseSearchTerms(r.URL.Query().Get("q"))
+	terms, err := parseSearchTerms(r.URL.Query().Get("q"))
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 
 	set := a.tableFor(ctx, res.cluster, eventRes)
 	// Column predicates are bound to the event table's own columns, so

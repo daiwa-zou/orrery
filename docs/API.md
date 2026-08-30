@@ -107,6 +107,14 @@ List endpoints take `namespace`, `q`, `labelSelector`, `fieldSelector`,
 Unsupported `fieldSelector` fields are rejected with a 400 naming the
 supported set, rather than silently matching nothing.
 
+`where` is repeatable and takes the column predicates described under Events.
+It is bounded in two directions, because they are separate quantities: at most
+16 predicates per request, and at most 256 bytes in any one `=~` / `!~` pattern
+with 512 across all of them. Both run against every object in scope before the
+page is cut, and the cost of matching is proportional to the length of the
+pattern as well as the length of the list — so a count on its own would leave
+one predicate free to carry the whole request line.
+
 The page arrives under `items` for `view=table` and under `objects` for
 `view=full`, and **the requested one is always present** — an empty namespace, a
 page past the end and a filter that matches nothing all return `[]` rather than
@@ -225,7 +233,9 @@ dropped a namespace reads as everything that happened.
 `involvedKind`) — the last of which is what an object's own event list uses.
 
 `q` is a search box rather than one substring: its words are ANDed and each may
-match a different column, `"a phrase"` is one word, and `-word` excludes. The
+match a different column, `"a phrase"` is one word, and `-word` excludes. At
+most 16 words: each is looked for in every searched column of every event in
+scope, so the words multiply rather than add. The
 same `where` predicates the resource lists take apply here too, bound to the
 event columns — `count>3`, `lastSeen<15m`, `reason=~^Failed`, `type!~Normal`.
 Both are applied before `limit`, so a match older than the newest few hundred
@@ -275,7 +285,9 @@ Each entry carries a `relation` — `owner`, `child`, `descendant`, `node`,
 serving it, already assembled, so a caller follows a link rather than rebuilding
 one out of placeholders. `depth` (default 2, max 4) bounds the ownership walk in
 each direction; `childResource` names an extra resource to scan, for custom
-controllers whose children are not one of the built-in edges; `events=false`
+controllers whose children are not one of the built-in edges, and is capped at
+8 per request for the reason `/search` caps its scan set — a named resource is
+listed through the shared cache, which starts an informer for it; `events=false`
 drops the bundled events.
 
 `events` distinguishes its three states, which matters most to the callers this
