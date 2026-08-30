@@ -24,6 +24,11 @@ const stateCookieName = "orrery_oidc_state"
 
 const stateTTL = 10 * time.Minute
 
+// refreshTimeout bounds one token exchange. It outlives the request that
+// started it — that is the point — so it needs a limit of its own; without one
+// a provider that never answers holds a goroutine for the life of the process.
+const refreshTimeout = 30 * time.Second
+
 // loginState is the sealed payload carried across the provider round trip.
 type loginState struct {
 	State    string `json:"s"`
@@ -331,11 +336,26 @@ func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 		return errors.New("session has no refresh token")
 	}
 
-	v, err, _ := a.refreshSF.Do(s.ID, func() (any, error) {
+	// The exchange runs on a context detached from whichever request happened
+	// to start it, because abandoning a token exchange half-way is the exact
+	// thing the note above says must not happen. The provider may already have
+	// rotated the refresh token when the cancellation lands; the new one then
+	// never reaches the store, the session keeps the spent one, and the next
+	// refresh is answered with invalid_grant — which RefreshFatal correctly
+	// reads as "the grant is gone" and signs the user out. A browser tab
+	// closing during a refresh is enough, and the session it ends may belong
+	// to another tab entirely.
+	//
+	// Callers still wait on their own context, so nobody is held by a request
+	// they no longer care about.
+	ch := a.refreshSF.DoChan(s.ID, func() (any, error) {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+		defer cancel()
+
 		// Re-read from the store: s is this caller's private copy, so checking
 		// it again learns nothing. Another request may have refreshed while we
 		// waited to enter the group.
-		fresh, err := a.sessions.Get(ctx, s.ID)
+		fresh, err := a.sessions.Get(rctx, s.ID)
 		if err != nil {
 			return nil, fmt.Errorf("session gone: %w", err)
 		}
@@ -343,13 +363,13 @@ func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 			return fresh, nil
 		}
 
-		src := a.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: fresh.RefreshToken})
+		src := a.oauth.TokenSource(rctx, &oauth2.Token{RefreshToken: fresh.RefreshToken})
 		tok, err := src.Token()
 		if err != nil {
 			return nil, fmt.Errorf("refresh token: %w", err)
 		}
 		if raw, ok := tok.Extra("id_token").(string); ok && raw != "" {
-			if _, err := a.verifier.Verify(ctx, raw); err != nil {
+			if _, err := a.verifier.Verify(rctx, raw); err != nil {
 				return nil, fmt.Errorf("refreshed id_token invalid: %w", err)
 			}
 			fresh.IDToken = raw
@@ -359,16 +379,22 @@ func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 			fresh.RefreshToken = tok.RefreshToken
 		}
 		fresh.TokenExpiry = tok.Expiry
-		if err := a.sessions.Save(ctx, fresh); err != nil {
+		if err := a.sessions.Save(rctx, fresh); err != nil {
 			return nil, err
 		}
 		return fresh, nil
 	})
-	if err != nil {
-		return err
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return r.Err
+		}
+		*s = *r.Val.(*Session)
+		return nil
 	}
-	*s = *v.(*Session)
-	return nil
 }
 
 // RefreshFatal reports whether a refresh failure is definitive — the grant

@@ -44,6 +44,18 @@ type columnSet struct {
 	row     rowFunc
 }
 
+// sortable reports whether key names a column of this table. Tables are short
+// — a couple of dozen columns at the outside — so this is a scan, and it runs
+// once per request rather than once per object.
+func (s columnSet) sortable(key string) bool {
+	for _, c := range s.columns {
+		if c.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // identityColumns are prepended to every table.
 func identityColumns(namespaced bool) []Column {
 	cols := []Column{{Key: "name", Label: "Name", Type: ColText}}
@@ -286,8 +298,8 @@ func init() {
 		{Key: "keys", Label: "Keys", Type: ColNumber, Align: "right"},
 	}, func(u *unstructured.Unstructured) map[string]any {
 		r := baseRow(u)
-		data, _, _ := unstructured.NestedMap(u.Object, "data")
-		bin, _, _ := unstructured.NestedMap(u.Object, "binaryData")
+		data, _ := mapAt(u, "data")
+		bin, _ := mapAt(u, "binaryData")
 		r["keys"] = int64(len(data) + len(bin))
 		return r
 	})
@@ -299,10 +311,10 @@ func init() {
 		r := baseRow(u)
 		r["type"] = str(u, "type")
 		// The cache holds redacted secrets: key names survive, values do not.
-		if red, ok, _ := unstructured.NestedMap(u.Object, "orrery.io/redacted", "data"); ok {
+		if red, ok := mapAt(u, "orrery.io/redacted", "data"); ok {
 			r["keys"] = int64(len(red))
 		} else {
-			data, _, _ := unstructured.NestedMap(u.Object, "data")
+			data, _ := mapAt(u, "data")
 			r["keys"] = int64(len(data))
 		}
 		return r

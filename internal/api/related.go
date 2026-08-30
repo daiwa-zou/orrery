@@ -417,8 +417,9 @@ func (a *API) walkChildren(
 				if err != nil {
 					continue
 				}
+				parentUID := parent.obj.GetUID()
 				for _, o := range objs {
-					if !ownedBy(o, parent.obj.GetUID()) {
+					if !ownedBy(o, parentUID) {
 						continue
 					}
 					relation := "child"
@@ -479,12 +480,21 @@ func (a *API) scanFor(
 	return ar, objs, nil
 }
 
+// ownedBy reports whether o names uid among its owner references.
+//
+// It reads the raw references rather than calling GetOwnerReferences, which
+// builds a []metav1.OwnerReference and pulls apiVersion, kind, name, uid,
+// controller and blockOwnerDeletion out of every entry — the whole struct, to
+// compare one string. walkChildren asks this of every object of every
+// candidate resource for every parent in the frontier, so it is asked far more
+// often than there are objects to ask about, and the answer is one field.
 func ownedBy(o *unstructured.Unstructured, uid types.UID) bool {
 	if uid == "" {
 		return false
 	}
-	for _, ref := range o.GetOwnerReferences() {
-		if ref.UID == uid {
+	raw, _, _ := unstructured.NestedFieldNoCopy(o.Object, "metadata", "ownerReferences")
+	for _, ref := range slice2(raw) {
+		if mstr(mapOf(ref), "uid") == string(uid) {
 			return true
 		}
 	}

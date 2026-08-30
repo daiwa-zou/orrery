@@ -479,7 +479,7 @@ export function useListAccess(
   cluster: string | undefined,
   namespace: string,
   items: { group: string; version: string; resource: string }[],
-): Map<string, boolean> | undefined {
+): Map<string, boolean | undefined> | undefined {
   const key = items.map((i) => `${i.group}/${i.resource}`).join(',')
   const query = useQuery({
     queryKey: ['nav-access', cluster, namespace, key],
@@ -491,12 +491,19 @@ export function useListAccess(
         resource: i.resource,
         namespace: namespace || undefined,
       }))
-      const out = new Map<string, boolean>()
+      const out = new Map<string, boolean | undefined>()
       // The server answers at most 64 questions per request.
       for (let i = 0; i < checks.length; i += 64) {
         const slice = checks.slice(i, i + 64)
         const decisions = await api.access(cluster!, slice, signal)
-        slice.forEach((c, j) => out.set(`${c.group}/${c.resource}`, decisions[j]?.allowed ?? false))
+        slice.forEach((c, j) => {
+          const d = decisions[j]
+          // undefined is "we could not ask", which the navigation renders the
+          // same as not knowing yet. A review the API server failed to perform
+          // says nothing about permission, and dimming the row would tell the
+          // reader they cannot list something they very likely can.
+          out.set(`${c.group}/${c.resource}`, d && !d.unavailable ? d.allowed : undefined)
+        })
       }
       return out
     },

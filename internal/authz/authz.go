@@ -62,9 +62,19 @@ func (s Subject) key() string {
 
 // Decision is a cached verdict.
 type Decision struct {
-	Allowed bool   `json:"allowed"`
-	Denied  bool   `json:"denied,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Allowed bool `json:"allowed"`
+	Denied  bool `json:"denied,omitempty"`
+	// Unavailable marks a verdict that was never reached: the review itself
+	// failed. Allowed is false either way, and that is the whole difficulty —
+	// a batch of questions has to answer every one of them, so the answer to
+	// an unaskable question used to be the same false as a refusal, and the
+	// console greyed a button out with "you cannot list this" because the API
+	// server was busy for a moment. Reason then carries the failure.
+	//
+	// It is the distinction countSummary draws for counts, in the one place
+	// the UI decides what a user may do.
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 type cacheEntry struct {
@@ -113,6 +123,12 @@ func NewChecker(size int, ttl time.Duration, scanLimit int) (*Checker, error) {
 	return &Checker{cache: c, ttl: ttl, nsCache: make(map[string]nsEntry), scanLimit: scanLimit}, nil
 }
 
+// reviewTimeout bounds one deduplicated access review. It exists because the
+// review outlives the caller that started it, so nothing else would ever stop
+// it; it is deliberately longer than any page load is willing to wait, since
+// its job is to bound a leak and not to decide how patient a caller is.
+const reviewTimeout = 30 * time.Second
+
 // Allowed reports whether the subject may perform the action. client must be
 // the dashboard's own client for SubjectAccessReview, or the user's client
 // when Subject.Self is set.
@@ -124,18 +140,36 @@ func (c *Checker) Allowed(ctx context.Context, client kubernetes.Interface, subj
 	}
 
 	// Collapse the stampede that a table of fifty rows would otherwise cause.
-	v, err, _ := c.sf.Do(key, func() (any, error) {
-		d, err := c.review(ctx, client, subj, attrs)
+	//
+	// The shared review runs on a context detached from whichever caller
+	// happened to start it, and every caller waits on its own. Running it on
+	// the first caller's context makes one request's cancellation the other
+	// requests' answer: a tab closed mid-flight cancels the review that two
+	// other tabs are waiting on, and they are handed "context canceled" for a
+	// question RBAC would have answered. That reads downstream as "we could
+	// not check", which is at least honest, but it is a failure invented
+	// entirely by the deduplication — and it costs the cache entry too, so
+	// the next request pays for the round trip again.
+	ch := c.sf.DoChan(key, func() (any, error) {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reviewTimeout)
+		defer cancel()
+		d, err := c.review(rctx, client, subj, attrs)
 		if err != nil {
 			return Decision{}, err
 		}
 		c.cache.Add(key, cacheEntry{decision: d, expires: time.Now().Add(c.ttl)})
 		return d, nil
 	})
-	if err != nil {
-		return Decision{}, err
+
+	select {
+	case <-ctx.Done():
+		return Decision{}, ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return Decision{}, r.Err
+		}
+		return r.Val.(Decision), nil
 	}
-	return v.(Decision), nil
 }
 
 func (c *Checker) review(ctx context.Context, client kubernetes.Interface, subj Subject, attrs Attributes) (Decision, error) {
@@ -178,21 +212,28 @@ func (c *Checker) AllowedMany(ctx context.Context, client kubernetes.Interface, 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// Taken before the goroutine starts, so a batch of sixty-four questions is
+	// eight goroutines rather than sixty-four waiting for eight.
 	sem := make(chan struct{}, 8)
 	for _, attrs := range list {
 		wg.Add(1)
-		go func(a Attributes) {
+		sem <- struct{}{}
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
-			d, err := c.Allowed(ctx, client, subj, a)
+			d, err := c.Allowed(ctx, client, subj, attrs)
 			if err != nil {
-				d = Decision{Allowed: false, Reason: err.Error()}
+				// A question that could not be put is not a "no". Recording it
+				// as one is how a busy API server greys out a button and tells
+				// the user they lack a permission they hold — and the console
+				// asks these in batches precisely where it decides what a user
+				// may do.
+				d = Decision{Unavailable: true, Reason: err.Error()}
 			}
 			mu.Lock()
-			out[a.key()] = d
+			out[attrs.key()] = d
 			mu.Unlock()
-		}(attrs)
+		}()
 	}
 	wg.Wait()
 	return out

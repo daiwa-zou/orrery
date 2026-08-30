@@ -229,7 +229,11 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	// Authorized one at a time, like every other read narrowed to namespaces:
 	// permission is granted that way, so being allowed two of the three asked
 	// for is a narrower feed rather than a refused one.
-	namespaces := queryNamespaces(r)
+	namespaces, err := queryNamespaces(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	var (
 		scoped   map[string]struct{}
 		warnings []string

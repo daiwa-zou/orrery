@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
@@ -180,6 +181,10 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 	// the filter applied to the response below. "May list pods in at least one
 	// namespace" must never gate a cluster-wide answer.
 	var permitted map[string]struct{}
+	// permittedOrder is the same set in the order VisibleNamespaces sorted it,
+	// so the per-namespace fallback below reads namespaces — and reports the
+	// ones it could not read — in a stable order rather than a map's.
+	var permittedOrder []string
 	var warnings []string
 	if namespace != "" {
 		if err := a.authorize(ctx, res, "list", namespace, "", ""); err != nil {
@@ -210,6 +215,7 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 			for _, ns := range allowed {
 				permitted[ns] = struct{}{}
 			}
+			permittedOrder = allowed
 		}
 	}
 
@@ -222,9 +228,18 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 			merged = &v1beta1.PodMetricsList{}
 		}
 		merged.Items = nil
-		for ns := range permitted {
+		for _, ns := range permittedOrder {
 			nsList, nsErr := res.clients.Metrics.MetricsV1beta1().PodMetricses(ns).List(ctx, metav1.ListOptions{})
 			if nsErr != nil {
+				// Skipping in silence makes the totals below quietly short,
+				// and a total that is short without saying so does not read as
+				// "some pods are missing" — it reads as "these pods are using
+				// less than you thought", which is the wrong conclusion to
+				// hand someone looking at capacity. Every other read on this
+				// surface names what it could not reach; this one did not.
+				warnings = append(warnings, fmt.Sprintf(
+					"pod metrics for namespace %s could not be read, so its pods are not counted: %v",
+					ns, nsErr))
 				continue
 			}
 			merged.Items = append(merged.Items, nsList.Items...)

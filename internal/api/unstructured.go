@@ -31,9 +31,24 @@ func boolean(u *unstructured.Unstructured, fields ...string) bool {
 	return v
 }
 
+// slice reads a list field without copying it.
+//
+// unstructured.NestedSlice deep-copies everything it hands back — for
+// spec.containers that is each container's whole spec: env, mounts, probes,
+// resources, the lot — and every caller in this package iterates the result
+// read-only and drops it. The pod projector reads two of these per row, so a
+// page of a thousand pods copied two thousand container lists to count how
+// many were ready; the overview walks spec.containers for every pod in the
+// cluster to sum their requests.
+//
+// The elements belong to the shared cache and are not ours to change, which is
+// exactly what makes not copying them safe. It is the same bargain labelsOf
+// and objectFields strike a few files over: a read-only walk is not a reason
+// to own anything.
 func slice(u *unstructured.Unstructured, fields ...string) []any {
-	v, _, _ := unstructured.NestedSlice(u.Object, fields...)
-	return v
+	v, _, _ := unstructured.NestedFieldNoCopy(u.Object, fields...)
+	s, _ := v.([]any)
+	return s
 }
 
 func strSlice(u *unstructured.Unstructured, fields ...string) []string {
@@ -44,6 +59,27 @@ func strSlice(u *unstructured.Unstructured, fields ...string) []string {
 func mapOf(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	return m
+}
+
+// mapAt reads an object field without copying it, reporting whether the field
+// was there at all.
+//
+// unstructured.NestedMap deep-copies, for the same reason NestedSlice does and
+// with the same consequence: a ConfigMap's data is up to a megabyte, and the
+// projector that reads it only ever wanted the number of keys. A page of fifty
+// copied fifty megabytes to produce fifty integers, and sorting on that column
+// did it for every object in the namespace rather than for the page.
+//
+// found is separate from the map being empty, because "no such field" and "a
+// field holding nothing" are different answers — the secret projector tells
+// them apart to know whether it is looking at a redacted object.
+func mapAt(u *unstructured.Unstructured, fields ...string) (m map[string]any, found bool) {
+	v, ok, _ := unstructured.NestedFieldNoCopy(u.Object, fields...)
+	if !ok {
+		return nil, false
+	}
+	m, ok = v.(map[string]any)
+	return m, ok
 }
 
 func mstr(m map[string]any, key string) string {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -277,5 +278,71 @@ func TestFreshSessionFailsWhenSessionGone(t *testing.T) {
 	_ = m.Destroy(context.Background(), sess.ID)
 	if _, err := mw.FreshSession(context.Background(), sess.ID); err == nil {
 		t.Error("a destroyed session must end the stream")
+	}
+}
+
+// A token exchange must not be abandoned because the request that started it
+// went away, and the caller must not be held by an exchange it has stopped
+// caring about. Those pull in opposite directions, which is why the exchange
+// runs on its own context and each caller waits on its own.
+//
+// The cost of getting it wrong is not a lost round trip. A provider that
+// rotates refresh tokens has already spent the old one by the time the
+// cancellation lands; if the new one never reaches the store, the session goes
+// on presenting a token the provider has retired, and the next refresh comes
+// back invalid_grant — which is fatal, and signs the user out. One closing tab
+// is enough, and the session it ends may belong to a different tab entirely.
+func TestRefreshOutlivesTheRequestThatStartedIt(t *testing.T) {
+	m := newTestManager(t)
+	sess := staleSession(t, m)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// The httptest server's Close waits for handlers to return, so the gate has
+	// to open on every path out of this test, t.Fatal included.
+	releaseOnce := sync.OnceFunc(func() { close(release) })
+	defer releaseOnce()
+
+	var enteredOnce sync.Once
+	a, calls := newRefreshAuthenticator(t, m, func(w http.ResponseWriter, _ *http.Request) {
+		enteredOnce.Do(func() { close(entered) })
+		<-release
+		writeToken(w, "rotated-access")
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Refresh(ctx, sess) }()
+
+	<-entered
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Refresh returned %v, want the caller's own cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a caller was held by an exchange it had already given up on")
+	}
+
+	releaseOnce()
+
+	// The exchange finishes on its own and the rotated token lands in the
+	// store, where the next request will find it.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		stored, err := m.Get(context.Background(), sess.ID)
+		if err == nil && stored.AccessToken == "rotated-access" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the abandoned exchange never reached the store (session = %+v, err = %v)", stored, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if n := calls.Load(); n != 1 {
+		t.Errorf("provider round trips = %d, want exactly 1", n)
 	}
 }

@@ -55,18 +55,27 @@ func lineDiff(before, after []string, context int) []diffLine {
 
 	// Longest common subsequence, built from the end so the walk forward reads
 	// in document order.
-	lcs := make([][]int, len(before)+1)
-	for i := range lcs {
-		lcs[i] = make([]int, len(after)+1)
-	}
+	//
+	// One flat table rather than a slice of rows. The fill and the walk both
+	// read lcs[i+1][j] next to lcs[i][j+1], so a row-major array keeps the two
+	// neighbours near each other instead of behind a pointer each; and int32
+	// is more than enough for a count that cannot exceed maxDiffInput. The
+	// row-of-slices shape allocated a header and a backing array per row —
+	// two thousand allocations and twice the bytes at the cap — every time a
+	// rollout page asked for one more revision's diff.
+	stride := len(after) + 1
+	lcs := make([]int32, (len(before)+1)*stride)
+
 	for i := len(before) - 1; i >= 0; i-- {
+		row, next := i*stride, (i+1)*stride
 		for j := len(after) - 1; j >= 0; j-- {
-			if before[i] == after[j] {
-				lcs[i][j] = lcs[i+1][j+1] + 1
-			} else if lcs[i+1][j] >= lcs[i][j+1] {
-				lcs[i][j] = lcs[i+1][j]
-			} else {
-				lcs[i][j] = lcs[i][j+1]
+			switch {
+			case before[i] == after[j]:
+				lcs[row+j] = lcs[next+j+1] + 1
+			case lcs[next+j] >= lcs[row+j+1]:
+				lcs[row+j] = lcs[next+j]
+			default:
+				lcs[row+j] = lcs[row+j+1]
 			}
 		}
 	}
@@ -79,7 +88,7 @@ func lineDiff(before, after []string, context int) []diffLine {
 			full = append(full, diffLine{Op: diffContext, Text: before[i]})
 			i++
 			j++
-		case lcs[i+1][j] >= lcs[i][j+1]:
+		case lcs[(i+1)*stride+j] >= lcs[i*stride+j+1]:
 			full = append(full, diffLine{Op: diffRemoved, Text: before[i]})
 			i++
 		default:

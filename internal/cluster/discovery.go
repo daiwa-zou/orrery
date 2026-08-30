@@ -75,6 +75,12 @@ func NewDiscoveryCache(client discovery.DiscoveryInterface, ttl time.Duration) *
 }
 
 // Resources returns the cluster's discoverable resources, refreshing on TTL.
+//
+// The slice is the cache's own and must be treated as read-only, along with
+// the slices inside each APIResource. A refresh replaces it wholesale rather
+// than editing it, which is what makes handing it out safe — and what a caller
+// sorting or filtering it in place would quietly undo, for every other reader
+// at once.
 func (d *DiscoveryCache) Resources(ctx context.Context) ([]APIResource, error) {
 	d.mu.RLock()
 	fresh := time.Since(d.fetchedAt) < d.ttl && d.resources != nil
@@ -98,9 +104,16 @@ func (d *DiscoveryCache) Resources(ctx context.Context) ([]APIResource, error) {
 	return d.resources, nil
 }
 
-// Refresh forces a discovery reload, collapsing concurrent callers.
+// refresh forces a discovery reload, collapsing concurrent callers.
+//
+// The reload itself cannot be cancelled — client-go's ServerGroupsAndResources
+// takes no context — so ctx bounds the waiting rather than the work: a caller
+// that has gone away stops waiting, and the reload it started carries on for
+// whoever is still here. The parameter was previously accepted and ignored
+// outright, which on a cold or slow cluster meant every reader of discovery
+// was held for the full round trip no matter who had already left.
 func (d *DiscoveryCache) refresh(ctx context.Context) error {
-	_, err, _ := d.sf.Do("discovery", func() (any, error) {
+	ch := d.sf.DoChan("discovery", func() (any, error) {
 		// ServerGroupsAndResources returns partial results alongside an error
 		// when an aggregated API is unavailable; that is common (a broken
 		// metrics-server) and must not blank out the whole resource list.
@@ -171,7 +184,13 @@ func (d *DiscoveryCache) refresh(ctx context.Context) error {
 		d.mu.Unlock()
 		return nil, nil
 	})
-	return err
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case r := <-ch:
+		return r.Err
+	}
 }
 
 // register records every spelling that should resolve to this resource.

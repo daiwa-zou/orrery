@@ -232,6 +232,12 @@ export interface AccessCheck {
 export interface Decision {
   allowed: boolean
   denied?: boolean
+  /**
+   * The review never happened — `allowed` is false because nothing was
+   * decided, not because anything was refused. Never render this as a
+   * permission problem; `reason` says what actually went wrong.
+   */
+  unavailable?: boolean
   reason?: string
 }
 

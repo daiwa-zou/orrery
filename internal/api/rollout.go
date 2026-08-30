@@ -98,12 +98,13 @@ func (a *API) deploymentRevisions(ctx context.Context, res *resolved, namespace,
 		return nil, nil, err
 	}
 	owned := make([]*unstructured.Unstructured, 0, 8)
+	// The deployment's UID is read once rather than per replica set per owner
+	// reference, and ownedBy compares the raw references rather than rebuilding
+	// each one as a struct — this walks every replica set in the namespace.
+	depUID := dep.GetUID()
 	for _, rs := range all {
-		for _, o := range rs.GetOwnerReferences() {
-			if o.UID == dep.GetUID() {
-				owned = append(owned, rs)
-				break
-			}
+		if ownedBy(rs, depUID) {
+			owned = append(owned, rs)
 		}
 	}
 	sort.Slice(owned, func(i, j int) bool {

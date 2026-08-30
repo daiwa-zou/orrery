@@ -423,3 +423,78 @@ func TestVisibleNamespacesDoesNotCacheAFailureAsAnEmptyScope(t *testing.T) {
 		t.Errorf("recovered scope = %v, want [team-a] — a failure was cached", namespaces)
 	}
 }
+
+// A batch has to return something for every question, and the answer to one
+// that could not be asked used to be the same `allowed: false` as a refusal.
+// The console reads these to decide which buttons exist, so a busy API server
+// told users they lacked permissions they hold.
+func TestAllowedManySaysWhenAQuestionCouldNotBePut(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "subjectaccessreviews",
+		func(ktesting.Action) (bool, runtime.Object, error) {
+			return true, nil, errors.New("apiserver is busy")
+		})
+	c, _ := NewChecker(128, time.Minute, 50)
+
+	q := Attributes{Verb: "list", Resource: "pods", Namespace: "demo"}
+	got := c.AllowedMany(context.Background(), client, Subject{User: "alice"}, []Attributes{q})
+
+	d, ok := got[AttributesKey(q)]
+	if !ok {
+		t.Fatal("a question that failed got no verdict at all")
+	}
+	if d.Allowed {
+		t.Error("a failed review was reported as permission")
+	}
+	if d.Denied {
+		t.Error("a failed review was reported as an explicit denial")
+	}
+	if !d.Unavailable {
+		t.Error("a failed review was indistinguishable from a refusal")
+	}
+	if d.Reason == "" {
+		t.Error("nothing said why the review did not happen")
+	}
+}
+
+// Deduplicating identical reviews must not tie one caller's fate to another's.
+// The flight belongs to no single request: a caller that has given up waits no
+// longer, and the review it walked away from still finishes for whoever else
+// is waiting on it.
+func TestACallerIsNotHeldByAnothersInFlightReview(t *testing.T) {
+	client, _ := fakeClient(func(*authzv1.ResourceAttributes) bool { return true })
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	var once sync.Once
+	client.PrependReactor("create", "*", func(ktesting.Action) (bool, runtime.Object, error) {
+		once.Do(func() { close(entered) })
+		<-release
+		return false, nil, nil
+	})
+
+	c, _ := NewChecker(128, time.Minute, 50)
+	subj := Subject{User: "alice"}
+	attrs := Attributes{Verb: "list", Resource: "pods"}
+
+	go func() { _, _ = c.Allowed(context.Background(), client, subj, attrs) }()
+	<-entered
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Allowed(ctx, client, subj, attrs)
+		done <- err
+	}()
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Allowed returned %v, want the caller's own cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a caller was held by a review it had already given up on")
+	}
+}

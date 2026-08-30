@@ -179,8 +179,10 @@ func (c *Cluster) AuthSubject(id Identity) authz.Subject {
 		// the token itself if it is somehow absent.
 		selfID := id.Username
 		if selfID == "" {
+			// Whole digest, for the reason ClientsFor gives: this is what keeps
+			// one user's cached verdict from being served to another.
 			sum := sha256.Sum256([]byte(id.BearerToken))
-			selfID = "tok:" + hex.EncodeToString(sum[:16])
+			selfID = "tok:" + hex.EncodeToString(sum[:])
 		}
 		return authz.Subject{Self: true, SelfID: selfID}
 	}
@@ -212,8 +214,14 @@ func (c *Cluster) ClientsFor(id Identity) (*Clients, error) {
 		if id.BearerToken == "" {
 			return nil, fmt.Errorf("cluster %s: passthrough mode requires an id_token", c.Cfg.Name)
 		}
+		// The whole digest, not a prefix of it. What this key selects is a
+		// clientset carrying someone's bearer token, so two tokens sharing a
+		// key is one user served as another. Sixty-four bits of it were almost
+		// certainly enough — the cache holds five hundred entries — but the
+		// only way to know that is to do the birthday arithmetic, and the
+		// twenty-four bytes it saves buy nothing.
 		sum := sha256.Sum256([]byte(id.BearerToken))
-		key := "pt:" + hex.EncodeToString(sum[:8])
+		key := "pt:" + hex.EncodeToString(sum[:])
 		return c.cachedClients(key, func() *rest.Config {
 			rc := rest.AnonymousClientConfig(c.base.Rest)
 			rc.BearerToken = id.BearerToken

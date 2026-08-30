@@ -57,7 +57,11 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespaces := queryNamespaces(r)
+	namespaces, err := queryNamespaces(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	if !res.resource.Namespaced {
 		namespaces = nil
 	}
@@ -86,6 +90,9 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	events := newWatchEventFilter(filter)
+	// Read once, not once per event: queryBool reparses the request's whole
+	// query string, and this loop runs for as long as the socket is open.
+	withLabels := queryBool(r, "labels", true)
 
 	// Authorize before upgrading: a plain HTTP error is far easier for the
 	// client to handle than a socket that opens and immediately closes.
@@ -124,7 +131,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		if !visible.permits(o) || !events.admitInitial(o) {
 			continue
 		}
-		items = append(items, buildRow(o, set, r))
+		items = append(items, buildRow(o, set, withLabels))
 	}
 	if err := ws.WriteJSON(map[string]any{
 		"type":     "INIT",
@@ -187,7 +194,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 				}
 				if err := ws.WriteJSON(map[string]any{
 					"type": string(send),
-					"item": buildRow(ev.Object, set, r),
+					"item": buildRow(ev.Object, set, withLabels),
 				}); err != nil {
 					return
 				}
@@ -293,12 +300,14 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		if len(access.allowed) == 0 {
 			return vis, access.firstErr
 		}
-		// A single namespace is already all the informer will deliver, so the
-		// stream needs no filter of its own.
-		if len(namespaces) == 1 {
-			vis.all = true
-			return vis, nil
-		}
+		// Every allowed namespace goes in the filter, including when there is
+		// only one. Asking the informer for a single namespace looks like it
+		// makes the filter redundant, and it does for the INIT snapshot, which
+		// is a namespace-indexed List. It does nothing for the events after
+		// it: there is one informer per resource, listing and watching at
+		// NamespaceAll, and its broadcaster fans every change out to every
+		// subscriber. Without this filter a viewer of one namespace was sent
+		// live objects from all of them.
 		vis.namespaces = make(map[string]struct{}, len(access.allowed))
 		for _, ns := range access.allowed {
 			vis.namespaces[ns] = struct{}{}

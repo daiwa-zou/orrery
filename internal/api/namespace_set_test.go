@@ -27,7 +27,11 @@ func TestQueryNamespaces(t *testing.T) {
 
 	for _, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/x"+c.query, nil)
-		got := queryNamespaces(r)
+		got, err := queryNamespaces(r)
+		if err != nil {
+			t.Errorf("queryNamespaces(%q) = %v", c.query, err)
+			continue
+		}
 		if len(got) != len(c.want) {
 			t.Errorf("queryNamespaces(%q) = %v, want %v", c.query, got, c.want)
 			continue

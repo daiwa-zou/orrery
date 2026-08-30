@@ -53,7 +53,13 @@ func (a *API) resolveTarget(r *http.Request, t targetRef) (*resolved, error) {
 
 type scaleRequest struct {
 	targetRef
-	Replicas int32 `json:"replicas"`
+	// A pointer so that "scale to zero" and "you did not say" are different
+	// requests. As a plain int32 they were the same one: a body that omitted
+	// the field — or misspelled it, which JSON decoding does not complain
+	// about — arrived as zero and scaled the workload down to nothing. This is
+	// a surface meant to be driven by programs as well as by the console, and
+	// nothing about the request as written said that is what would happen.
+	Replicas *int32 `json:"replicas"`
 }
 
 // scaleWorkload sets replicas through the scale subresource, which is the
@@ -66,7 +72,12 @@ func (a *API) scaleWorkload(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	if req.Replicas < 0 {
+	if req.Replicas == nil {
+		a.writeErr(w, r, badRequest(
+			"replicas is required; send it explicitly, including to scale to zero"))
+		return
+	}
+	if *req.Replicas < 0 {
 		a.writeErr(w, r, badRequest("replicas must not be negative"))
 		return
 	}
@@ -82,7 +93,7 @@ func (a *API) scaleWorkload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, req.Replicas)
+	patch := fmt.Sprintf(`{"spec":{"replicas":%d}}`, *req.Replicas)
 	updated, err := res.clients.Dynamic.
 		Resource(res.resource.GVR()).Namespace(req.Namespace).
 		Patch(ctx, req.Name, types.MergePatchType, []byte(patch), metav1.PatchOptions{}, "scale")
@@ -92,7 +103,7 @@ func (a *API) scaleWorkload(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scaled": true, "name": req.Name, "namespace": req.Namespace,
-		"replicas": req.Replicas, "object": cluster.TrimForResponse(updated),
+		"replicas": *req.Replicas, "object": cluster.TrimForResponse(updated),
 	})
 }
 

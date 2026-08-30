@@ -5,8 +5,17 @@
 server:
   addr: ':8080'
   publicURL: 'http://localhost:5173'
+  # The vite port range, for the reason orrery.dev.yaml gives. publicURL stays
+  # 5173 because it also anchors the OIDC redirect URL, which Dex has
+  # registered; a session on another port signs in through 5173 and works from
+  # there.
   corsOrigins:
     - 'http://localhost:5173'
+    - 'http://localhost:5174'
+    - 'http://localhost:5175'
+    - 'http://localhost:5176'
+    - 'http://localhost:5177'
+    - 'http://localhost:5178'
   metricsAddr: ':9090'
 
 oidc:

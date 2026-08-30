@@ -4,7 +4,7 @@ import "testing"
 
 // computeFacets walks every object the caller may see, and the search bar
 // triggers it. It was building two maps per object — GetLabels copies the
-// label map, fieldSetFor builds a fields.Set — to read three labels and four
+// label map, and a fields.Set was built beside it — to read three labels and four
 // field keys, which is the cost the list path removed with labelsOf and
 // objectFields and this walk never adopted.
 func BenchmarkComputeFacets50k(b *testing.B) {
