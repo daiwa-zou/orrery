@@ -150,9 +150,20 @@ The watch endpoint accepts the same `q` / `labelSelector` / `fieldSelector` as
 listing, and translates edits across the filter boundary into ADDED/DELETED,
 so a filtered page only hears about the objects it shows.
 
+The `INIT` frame carries `warnings` when the snapshot is partial, in the same
+sentences the list endpoint uses — a namespace denied, or one whose access
+review could not be performed. A stream that narrows in silence is worse than a
+list that does: nothing further ever arrives for the missing rows, so the table
+stays wrong for as long as the socket is open and reads as a quiet cluster.
+
 A subscriber whose buffer fills is dropped with an `OVERFLOW` message telling
 it to reload, rather than being allowed to stall the shared cache for everyone
-else.
+else. The re-authorization check sends the same message when the caller's
+visible namespaces have *changed* since the stream opened, in either direction.
+A snapshot plus deltas cannot express that: rows already sent for a namespace
+since lost are never retracted, and a namespace regained was excluded from
+`INIT`, so the next edit to one of its objects would arrive as `MODIFIED` for a
+row the client has never seen.
 
 ## Facets
 

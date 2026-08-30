@@ -68,6 +68,15 @@ type hndFake struct {
 	// denyNamespace denies reviews scoped to one namespace, which is what a
 	// partial answer is made of: several namespaces asked for, some allowed.
 	denyNamespace string
+	// failReviewNamespace makes reviews scoped to one namespace fail outright.
+	//
+	// It is a separate knob from denyNamespace for the reason
+	// failReviewResource is separate from denyResource, and the distinction is
+	// sharper here: a scan across namespaces that is denied in one of them has
+	// measured the scope, and a scan that could not ask in one of them has
+	// measured a lower bound on it. Only the second is a partial answer, and
+	// only code that can tell them apart says so.
+	failReviewNamespace string
 	// trace, when set, records every path the fake is asked for, so a test can
 	// assert on where a request actually landed rather than only on its status.
 	trace func(string)
@@ -659,8 +668,12 @@ func (f *hndFake) serveAccessReview(w http.ResponseWriter, r *http.Request, path
 			allowed = false
 		}
 		f.mu.Lock()
-		denyNS := f.denyNamespace
+		denyNS, failNS := f.denyNamespace, f.failReviewNamespace
 		f.mu.Unlock()
+		if failNS != "" && attrs.Namespace == failNS {
+			hndStatus(w, 500, "InternalError", "the access review could not be performed")
+			return
+		}
 		if denyNS != "" && attrs.Namespace == denyNS {
 			allowed = false
 		}

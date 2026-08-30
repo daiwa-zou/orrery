@@ -53,7 +53,7 @@ func watchScopeFor(t *testing.T, rig *hndRig, namespaces []string) watchVisibili
 	if len(namespaces) == 1 {
 		watched = namespaces[0]
 	}
-	vis, err := rig.api.watchScope(ctx, res, authz.Attributes{
+	vis, _, err := rig.api.watchScope(ctx, res, authz.Attributes{
 		Verb: "watch", Group: ar.Group, Version: ar.Version,
 		Resource: ar.Name, Namespace: watched,
 	}, namespaces)
