@@ -177,10 +177,33 @@ type podLogSnapshot struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// maxSnapshotLines caps one pod's share of a snapshot. TailLines already
-// bounds what the API server sends, but a single line can be arbitrarily long
-// and a JSON reply is held whole in memory at both ends.
-const maxSnapshotLines = 10000
+// maxSnapshotLines and maxSnapshotBytes cap one pod's share of a snapshot.
+//
+// The line count alone was the wrong half of the product, and its own comment
+// said so: TailLines bounds what the API server sends, "but a single line can
+// be arbitrarily long and a JSON reply is held whole in memory at both ends."
+// It then bounded only the count. The scanner accepts a megabyte in one line,
+// so ten thousand lines is ten gigabytes from one pod, and this endpoint reads
+// twenty of them concurrently into one reply that is marshalled whole. Nothing
+// else was in the way: limitBytes defaults to unset, which means unbounded, and
+// a pod that logs structured JSON reaches an ordinary few kilobytes a line
+// without trying — twenty pods at ten kilobytes is two gigabytes of Lines and
+// as much again to encode it, which is a dashboard that dies rather than
+// answers.
+//
+// A megabyte a pod is twenty for a full batch, which is a large JSON reply and
+// not a fatal one. It is also five thousand lines of ordinary log at two
+// hundred bytes each — well past the five hundred that tailLines defaults to,
+// so the cap is reached by pathological output rather than by normal use.
+//
+// Truncated already exists to say a pod's share was cut, and it is reported
+// whichever ceiling did the cutting: a cut log must never read as the whole
+// story, and which of the two limits stopped it is not a distinction the reader
+// has to care about.
+const (
+	maxSnapshotLines = 10000
+	maxSnapshotBytes = 1 << 20
+)
 
 func (a *API) readPodLog(
 	ctx context.Context,
@@ -200,11 +223,19 @@ func (a *API) readPodLog(
 
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	held := 0
 	for scanner.Scan() {
 		if len(out.Lines) >= maxSnapshotLines {
 			out.Truncated = true
 			break
 		}
+		// Measured before the copy, so the line that would cross the ceiling is
+		// the one dropped rather than the one after it.
+		if held+len(scanner.Bytes()) > maxSnapshotBytes {
+			out.Truncated = true
+			break
+		}
+		held += len(scanner.Bytes())
 		out.Lines = append(out.Lines, scanner.Text())
 	}
 	if err := scanner.Err(); err != nil && !isClientGone(err) {

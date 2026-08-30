@@ -202,7 +202,10 @@ can be terminating while its siblings are healthy.
 Both accept `container`, `previous`, `timestamps`, `tailLines`,
 `sinceSeconds` and `limitBytes`. `tailLines` is clamped (default 500, max
 100000) and there is deliberately no "all lines" mode: unbounded scrollback
-belongs to the log store, not a browser tab. Lines are batched for up to 100ms
+belongs to the log store, not a browser tab. The snapshot additionally holds
+each pod to 10000 lines *and* 1 MiB, since a single line may be a megabyte on
+its own and the reply is held whole in memory at both ends; a pod cut by either
+ceiling is flagged `truncated`. Lines are batched for up to 100ms
 before being sent, so a pod logging ten thousand lines a second does not become
 ten thousand WebSocket frames a second.
 

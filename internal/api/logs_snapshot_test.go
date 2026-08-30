@@ -115,3 +115,51 @@ func TestLogSnapshotSharesTheStreamCap(t *testing.T) {
 	hndWantStatus(t, rig.get(t, "/api/v1/clusters/fake/logs?"+query), http.StatusBadRequest)
 	hndWantStatus(t, rig.get(t, "/api/v1/clusters/fake/ws/logs?"+query), http.StatusBadRequest)
 }
+
+// The line ceiling was the wrong half of the product, and its own comment said
+// so before bounding only the count: the scanner accepts a megabyte in a single
+// line, so ten thousand lines is ten gigabytes from one pod, twenty pods are
+// read into one reply concurrently, and the reply is marshalled whole. A pod
+// logging structured JSON reaches kilobytes a line without trying.
+func TestLogSnapshotStopsAtTheByteCeiling(t *testing.T) {
+	rig := hndNewRig(t)
+
+	// Long lines, few of them: under the line ceiling and past the byte one.
+	const lineLen = 64 * 1024
+	var b strings.Builder
+	for range (maxSnapshotBytes / lineLen) + 8 {
+		b.WriteString(strings.Repeat("x", lineLen))
+		b.WriteByte('\n')
+	}
+	rig.fake.logText = b.String()
+
+	got := snapshot(t, rig, "namespace=demo&pod=web-1")
+	if len(got.Pods) != 1 {
+		t.Fatalf("pods = %+v", got.Pods)
+	}
+	pod := got.Pods[0]
+
+	if len(pod.Lines) >= maxSnapshotLines {
+		t.Fatalf("%d lines: this case is meant to be under the line ceiling", len(pod.Lines))
+	}
+	if !pod.Truncated {
+		t.Error("a cut log reported itself as the whole story")
+	}
+	held := 0
+	for _, l := range pod.Lines {
+		held += len(l)
+	}
+	if held > maxSnapshotBytes {
+		t.Errorf("held %d bytes, past the %d ceiling", held, maxSnapshotBytes)
+	}
+}
+
+// And an ordinary read is untouched: the ceiling is reached by pathological
+// output, not by the five hundred lines tailLines defaults to.
+func TestLogSnapshotDoesNotTruncateAnOrdinaryRead(t *testing.T) {
+	rig := hndNewRig(t)
+	got := snapshot(t, rig, "namespace=demo&pod=web-1")
+	if got.Pods[0].Truncated {
+		t.Error("an ordinary read reported itself as truncated")
+	}
+}
