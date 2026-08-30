@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -318,5 +319,83 @@ func TestInformerManagerCapSparesWatched(t *testing.T) {
 	// exceeded rather than cutting off a live stream.
 	if stats := m.Stats(); len(stats) != 2 {
 		t.Errorf("stats = %+v, want both informers to survive", stats)
+	}
+}
+
+// Stats measures each informer by asking its indexer for a slice of every key
+// it holds, because a shared informer offers no way to ask a store for its
+// size. That allocation used to happen inside m.mu — the lock entry() takes on
+// the path of every list, get and watch — and the Prometheus collector calls
+// Stats for every cluster on every scrape, so it was a periodic stall on all
+// reads rather than an occasional one.
+//
+// Measuring outside the lock means an entry can be evicted between the snapshot
+// and the count. That is safe, and this is the test of it: a shut-down informer
+// keeps its store, so the number is one scrape stale rather than a race or a
+// panic. Run under -race, which is where a reader touching a torn entry shows
+// up.
+func TestStatsRunsAlongsideCacheChurn(t *testing.T) {
+	cfg := testCacheConfig()
+	m, _ := newTestInformerManager(t, cfg,
+		cmObj("ns1", "a"), cmObj("ns1", "b"), cmObj("ns2", "c"))
+	ctx := context.Background()
+
+	// Both resources resident, so there is something to evict.
+	if _, err := m.List(ctx, cmAR, ""); err != nil {
+		t.Fatalf("List configmaps: %v", err)
+	}
+	if _, err := m.List(ctx, secretAR, ""); err != nil {
+		t.Fatalf("List secrets: %v", err)
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Churn: read and evict underneath the reporter.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			_, _ = m.List(ctx, cmAR, "ns1")
+			m.mu.Lock()
+			for gvr, e := range m.entries {
+				if gvr.Resource == "secrets" {
+					e.shutdown()
+					delete(m.entries, gvr)
+				}
+			}
+			m.mu.Unlock()
+			_, _ = m.List(ctx, secretAR, "")
+		}
+	}()
+
+	for range 200 {
+		for _, s := range m.Stats() {
+			if s.Objects < 0 {
+				t.Errorf("%s reported %d objects", s.GVR, s.Objects)
+			}
+		}
+	}
+	close(done)
+	wg.Wait()
+
+	// And it still reports what it is supposed to report.
+	stats := m.Stats()
+	var cm *InformerStat
+	for i := range stats {
+		if stats[i].Resource == "configmaps" {
+			cm = &stats[i]
+		}
+	}
+	if cm == nil {
+		t.Fatal("configmaps informer missing from Stats")
+	}
+	if cm.Objects != 3 {
+		t.Errorf("configmaps Objects = %d, want 3", cm.Objects)
 	}
 }

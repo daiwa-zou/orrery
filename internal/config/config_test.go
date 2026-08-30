@@ -252,3 +252,98 @@ clusters:
 		t.Errorf("a wildcard CORS origin must be rejected, got err=%v", err)
 	}
 }
+
+// A value that looks accepted, is not the value that takes effect, and is never
+// mentioned again is the failure this configuration is most careful about —
+// finalize has refused an unknown authMode since it was written. These four
+// settings sat beside it, each matched case-sensitively against a literal with
+// a default underneath, so `Strict`, `Redis` and `DEBUG` were all quietly
+// something else.
+func TestUnknownEnumSettingsAreRefusedRatherThanDowngraded(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		names string
+	}{
+		{
+			// The protection asked for is not the one that was applied.
+			"sameSite spelled as Go spells it",
+			"session:\n  sameSite: Strict\n",
+			"sameSite",
+		},
+		{
+			// And an HA deployment then keeps sessions in one replica's memory.
+			"store spelled with a capital",
+			"session:\n  store: Redis\n  redisURL: redis://localhost:6379\n",
+			"store",
+		},
+		{
+			"a store nobody implements",
+			"session:\n  store: postgres\n",
+			"store",
+		},
+		{
+			// Discovered while trying to debug something else.
+			"level shouted",
+			"log:\n  level: DEBUG\n",
+			"log.level",
+		},
+		{
+			"a format nobody implements",
+			"log:\n  format: logfmt\n",
+			"log.format",
+		},
+	}
+
+	for _, c := range cases {
+		body := c.body + "clusters:\n  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}\n"
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Errorf("%s: accepted silently", c.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.names) {
+			t.Errorf("%s: err = %v, want it to name %q", c.name, err, c.names)
+		}
+	}
+}
+
+// A SameSite=None cookie that is not Secure is dropped by every current
+// browser, so the session is never stored and sign-in bounces forever. Nothing
+// in any response says so — the refusal happens in the browser — which makes it
+// exactly the kind of misconfiguration worth refusing at boot.
+func TestSameSiteNoneWithoutSecureIsRefused(t *testing.T) {
+	body := `
+session:
+  sameSite: none
+  secure: false
+clusters:
+  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}
+`
+	_, err := Load(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "sameSite") {
+		t.Fatalf("err = %v, want a refusal naming sameSite", err)
+	}
+	if !strings.Contains(err.Error(), "secure") {
+		t.Errorf("err = %v, want it to name the setting that fixes it", err)
+	}
+}
+
+// The spellings that were always right stay right, and an unset value still
+// means the default rather than a misread one.
+func TestValidEnumSettingsAreAccepted(t *testing.T) {
+	for _, body := range []string{
+		"session:\n  sameSite: strict\n",
+		"session:\n  sameSite: lax\n",
+		"session:\n  sameSite: none\n  secure: true\n",
+		"session:\n  store: memory\n",
+		"session:\n  store: redis\n  redisURL: redis://localhost:6379\n",
+		"log:\n  level: debug\n  format: json\n",
+		"log: {}\n",
+	} {
+		full := body + "clusters:\n  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}\n"
+		if _, err := Load(writeConfig(t, full)); err != nil {
+			t.Errorf("%q: %v", body, err)
+		}
+	}
+}
