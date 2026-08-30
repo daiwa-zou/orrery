@@ -161,6 +161,91 @@ func queryNamespaces(r *http.Request) []string {
 	return out
 }
 
+// listAcross reads one resource from the cache across several namespaces and
+// concatenates what it finds.
+//
+// A failure is returned, never skipped. InformerManager.List fails when the
+// resource's informer cannot be started or synced, which is a property of the
+// resource and not of the namespace — so the first namespace to fail is a
+// promise that the rest will too, and skipping them yields an empty slice and
+// a nil error: "we could not read this" delivered as "there is nothing here".
+// The overview page's counts are built entirely on telling those two apart.
+func listAcross(
+	ctx context.Context,
+	c *cluster.Cluster,
+	ar cluster.APIResource,
+	namespaces []string,
+) ([]*unstructured.Unstructured, error) {
+	var out []*unstructured.Unstructured
+	for _, ns := range namespaces {
+		part, err := c.Informers.List(ctx, ar, ns)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, part...)
+	}
+	return out, nil
+}
+
+// namespaceAccess is the answer to "which of these namespaces may I read?",
+// with the three possible outcomes kept apart.
+//
+// Two of them are easy to run together and must not be. A denial is a fact
+// about RBAC, and "You may not list pods in team-b" is a sentence its reader
+// can act on. A review that could not be performed is a fact about the API
+// server and says nothing whatever about permission — dressing it as a denial
+// sends people to change bindings that were never the problem, and the
+// bindings they change will not help.
+type namespaceAccess struct {
+	allowed   []string
+	denied    []string
+	unchecked []string
+	// firstErr is what to return when nothing was allowed: the caller has no
+	// partial answer to serve, so the reason is all there is.
+	firstErr error
+}
+
+// authorizeNamespaces asks about each namespace on its own, because permission
+// is granted that way — being allowed three of four is a narrower answer
+// rather than a refused one.
+func (a *API) authorizeNamespaces(ctx context.Context, res *resolved, verb string, namespaces []string) namespaceAccess {
+	var na namespaceAccess
+	for _, ns := range namespaces {
+		err := a.authorize(ctx, res, verb, ns, "", "")
+		switch {
+		case err == nil:
+			na.allowed = append(na.allowed, ns)
+			continue
+		case isForbidden(err):
+			na.denied = append(na.denied, ns)
+		default:
+			na.unchecked = append(na.unchecked, ns)
+		}
+		if na.firstErr == nil {
+			na.firstErr = err
+		}
+	}
+	return na
+}
+
+// warnings describes a partial answer, in one sentence per kind of gap, so the
+// missing namespaces are named rather than silently absent.
+func (na namespaceAccess) warnings(resource string) []string {
+	var out []string
+	if len(na.denied) > 0 {
+		out = append(out, fmt.Sprintf(
+			"You may not list %s in %s, so nothing from there is shown.",
+			resource, strings.Join(na.denied, ", ")))
+	}
+	if len(na.unchecked) > 0 {
+		out = append(out, fmt.Sprintf(
+			"Your access to %s in %s could not be checked, so nothing from there is shown. "+
+				"This is not a permission problem; try again.",
+			resource, strings.Join(na.unchecked, ", ")))
+	}
+	return out
+}
+
 // visibleScope collects the objects the caller is allowed to list, together
 // with the scope actually granted and any partial-scan warnings. Every read
 // that serves cached objects must come through here (or perform the same
@@ -172,49 +257,24 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []stri
 	)
 
 	if len(namespaces) > 0 {
-		// Each namespace is authorized on its own, because permission is
-		// granted that way. Asking for four and being allowed three is a
-		// partial answer, not a failure — but it must not be served as though
-		// it were the whole one, so the namespaces that were dropped are named
-		// in a warning rather than silently missing.
-		var (
-			allowed  []string
-			denied   []string
-			firstErr error
-		)
-		for _, ns := range namespaces {
-			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				denied = append(denied, ns)
-				continue
-			}
-			allowed = append(allowed, ns)
-		}
+		// Asking for four and being allowed three is a partial answer, not a
+		// failure — but it must not be served as though it were the whole one,
+		// so what was dropped is named in a warning rather than silently
+		// missing, and said to be missing for the reason it actually is.
+		access := a.authorizeNamespaces(ctx, res, "list", namespaces)
+		allowed := access.allowed
 		if len(allowed) == 0 {
-			return nil, scope, nil, firstErr
+			return nil, scope, nil, access.firstErr
 		}
-		if len(denied) > 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"You may not list %s in %s, so nothing from there is shown.",
-				res.resource.Name, strings.Join(denied, ", ")))
-		}
+		warnings = append(warnings, access.warnings(res.resource.Name)...)
 
 		if len(allowed) == 1 {
 			scope.Namespace = allowed[0]
 		} else {
 			scope.Namespaces = allowed
 		}
-		var objs []*unstructured.Unstructured
-		for _, ns := range allowed {
-			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
-			if err != nil {
-				return nil, scope, warnings, err
-			}
-			objs = append(objs, part...)
-		}
-		return objs, scope, warnings, nil
+		objs, err := listAcross(ctx, res.cluster, res.resource, allowed)
+		return objs, scope, warnings, err
 	}
 
 	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
@@ -243,15 +303,8 @@ func (a *API) visibleScope(ctx context.Context, res *resolved, namespaces []stri
 		return nil, scope, nil, &forbiddenError{verb: "list", resource: res.resource.Name}
 	default:
 		scope.Namespaces = allowed
-		var objs []*unstructured.Unstructured
-		for _, ns := range allowed {
-			part, err := res.cluster.Informers.List(ctx, res.resource, ns)
-			if err != nil {
-				return nil, scope, warnings, err
-			}
-			objs = append(objs, part...)
-		}
-		return objs, scope, warnings, nil
+		objs, err := listAcross(ctx, res.cluster, res.resource, allowed)
+		return objs, scope, warnings, err
 	}
 }
 
@@ -309,8 +362,6 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sortByCell(objs, set, sortKey, desc)
 	}
-	rows := projectPage(objs, set, page, pageSize, r)
-
 	resp := listResponse{
 		Total:    total,
 		Page:     page,
@@ -320,15 +371,19 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		Warnings: warnings,
 	}
 
+	// Each view projects only what it serves. Building both cost a row map per
+	// object on the page — up to a thousand of them — that view=full then threw
+	// away unread.
 	if r.URL.Query().Get("view") == "full" {
 		start, end := pageBounds(total, page, pageSize)
 		// Never nil: an empty page is an empty list, not an absent one.
-		page := make([]*unstructured.Unstructured, 0, end-start)
+		full := make([]*unstructured.Unstructured, 0, end-start)
 		for _, o := range objs[start:end] {
-			page = append(page, cluster.TrimForResponse(o))
+			full = append(full, cluster.TrimForResponse(o))
 		}
-		resp.Objects = &page
+		resp.Objects = &full
 	} else {
+		rows := projectPage(objs, set, page, pageSize, r)
 		resp.Items = &rows
 		resp.Columns = set.columns
 	}
@@ -365,11 +420,6 @@ func pageBounds(total, page, pageSize int) (int, int) {
 		end = total
 	}
 	return start, end
-}
-
-func pageOf(rows []map[string]any, page, pageSize int) []map[string]any {
-	start, end := pageBounds(len(rows), page, pageSize)
-	return rows[start:end]
 }
 
 func isMetaSortKey(key string) bool {
@@ -450,24 +500,6 @@ func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, de
 		sorted[dst] = objs[src]
 	}
 	copy(objs, sorted)
-}
-
-// rowLess builds the comparison used for both row sorting paths.
-func rowLess(rows []map[string]any, key string, desc bool) func(i, j int) bool {
-	if key == "" {
-		key = "name"
-	}
-	return func(i, j int) bool {
-		c := compareCell(rows[i][key], rows[j][key])
-		if c == 0 {
-			// Ties break on name so paging is deterministic.
-			return fmt.Sprint(rows[i]["name"]) < fmt.Sprint(rows[j]["name"])
-		}
-		if desc {
-			return c > 0
-		}
-		return c < 0
-	}
 }
 
 // compareCell orders two cells: numerically when both are numbers (zero-padded

@@ -159,22 +159,47 @@ func TestRelatedBundlesTheObjectsEvents(t *testing.T) {
 	rig := hndNewRig(t)
 	got := related(t, rig, "/api/v1/clusters/fake/resources/core/v1/pods/demo/web-1/related")
 
-	if len(got.Events) != 1 {
-		t.Fatalf("events = %v, want the one recorded against uid-web-1", got.Events)
+	if got.Events == nil {
+		t.Fatal("the events scan ran but no events field came back")
+	}
+	if len(*got.Events) != 1 {
+		t.Fatalf("events = %v, want the one recorded against uid-web-1", *got.Events)
 	}
 	if len(got.EventColumns) == 0 {
 		t.Error("events came without columns; a caller cannot render them")
 	}
 	// Another pod's event must not leak in on a name or kind coincidence.
-	for _, e := range got.Events {
+	for _, e := range *got.Events {
 		if msg, _ := e["message"].(string); strings.Contains(msg, "Back-off") {
 			t.Errorf("web-2's event was attributed to web-1: %v", e)
 		}
 	}
 
+	// Not asked for is a missing field, which is what a client checks to know
+	// it did not ask.
 	off := related(t, rig, "/api/v1/clusters/fake/resources/core/v1/pods/demo/web-1/related?events=false")
-	if len(off.Events) != 0 {
-		t.Errorf("events=false still returned %d events", len(off.Events))
+	if off.Events != nil {
+		t.Errorf("events=false still returned %v", *off.Events)
+	}
+}
+
+// An object nothing has happened to must say so as an empty list, not by
+// leaving the field out. Absent means "not asked for", and a reader that
+// cannot tell the two apart reads a scan it never requested as a quiet object
+// — which is the reassurance overview.go grew warningsForbidden to withhold.
+func TestRelatedReportsAnObjectWithNoEventsAsAnEmptyList(t *testing.T) {
+	rig := hndNewRig(t)
+	// node-1 has no events recorded against it in the fixture.
+	got := related(t, rig, "/api/v1/clusters/fake/resources/core/v1/nodes/_/node-1/related")
+
+	if got.Events == nil {
+		t.Fatal("an object with no events returned no events field at all")
+	}
+	if len(*got.Events) != 0 {
+		t.Fatalf("events = %v, want none for this fixture", *got.Events)
+	}
+	if len(got.EventColumns) == 0 {
+		t.Error("an empty event list came without columns; the table has no headings")
 	}
 }
 

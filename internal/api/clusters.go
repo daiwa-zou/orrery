@@ -230,22 +230,23 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	// permission is granted that way, so being allowed two of the three asked
 	// for is a narrower feed rather than a refused one.
 	namespaces := queryNamespaces(r)
-	var scoped map[string]struct{}
+	var (
+		scoped   map[string]struct{}
+		warnings []string
+	)
 	if len(namespaces) > 0 {
-		var firstErr error
-		scoped = make(map[string]struct{}, len(namespaces))
-		for _, ns := range namespaces {
-			if err := a.authorize(ctx, res, "list", ns, "", ""); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			scoped[ns] = struct{}{}
-		}
-		if len(scoped) == 0 {
-			a.writeErr(w, r, firstErr)
+		access := a.authorizeNamespaces(ctx, res, "list", namespaces)
+		if len(access.allowed) == 0 {
+			a.writeErr(w, r, access.firstErr)
 			return
+		}
+		// The feed was being narrowed in silence: ask for three namespaces,
+		// be allowed two, and read the result as everything that happened.
+		// The list endpoint has always said so; this one now says it too.
+		warnings = access.warnings(eventRes.Name)
+		scoped = make(map[string]struct{}, len(access.allowed))
+		for _, ns := range access.allowed {
+			scoped[ns] = struct{}{}
 		}
 	}
 
@@ -321,6 +322,7 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listResponse{
 		Items: &rows, Columns: set.columns, Total: matched,
 		Page: 1, PageSize: limit, Resource: metaOf(eventRes),
+		Warnings: warnings,
 	})
 }
 

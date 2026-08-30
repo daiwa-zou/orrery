@@ -365,7 +365,7 @@ func (a *API) streamPodLogs(w http.ResponseWriter, r *http.Request) {
 			for _, pod := range pods {
 				if err := a.authorizeLogs(ctx, res, namespace, pod); err != nil {
 					flush()
-					ws.wsError("access to this pod's logs was revoked")
+					ws.wsError(streamClosedBecause(err, "access to this pod's logs was revoked"))
 					return
 				}
 			}

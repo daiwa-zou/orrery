@@ -87,15 +87,7 @@ func (a *API) visibleObjects(ctx context.Context, res *resolved, group, version,
 		}
 		return nil, &forbiddenError{verb: "list", resource: ar.Name}
 	}
-	var out []*unstructured.Unstructured
-	for _, ns := range allowed {
-		part, err := res.cluster.Informers.List(ctx, ar, ns)
-		if err != nil {
-			continue
-		}
-		out = append(out, part...)
-	}
-	return out, nil
+	return listAcross(ctx, res.cluster, ar, allowed)
 }
 
 // isForbidden distinguishes "you may not" from "we could not".

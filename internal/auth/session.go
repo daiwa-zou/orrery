@@ -79,14 +79,13 @@ func (m *MemoryStore) Get(_ context.Context, id string) (*Session, error) {
 		_ = m.Delete(context.Background(), id)
 		return nil, ErrNoSession
 	}
-	cp := *s
-	return &cp, nil
+	return s.Clone(), nil
 }
 
 func (m *MemoryStore) Put(_ context.Context, s *Session) error {
-	cp := *s
+	cp := s.Clone()
 	m.mu.Lock()
-	m.sessions[s.ID] = &cp
+	m.sessions[s.ID] = cp
 	m.mu.Unlock()
 	return nil
 }

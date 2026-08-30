@@ -22,6 +22,28 @@ const watchBuffer = 512
 // refresh.
 const reauthorizeInterval = 60 * time.Second
 
+// streamClosedBecause is the sentence a live stream leaves behind when a
+// re-authorization check ends it.
+//
+// Closing is right either way: a review that could not be performed is not a
+// pass, and a socket held open on one is a socket serving data nobody
+// re-checked. The sentence is what was wrong. "Access was revoked" names a
+// cause the reader can act on, and the action it points at is asking whoever
+// administers their RBAC about a permission that was never withdrawn — while
+// the real fault, an API server that could not answer for a moment, would have
+// been fixed by reconnecting.
+//
+// These streams stay open for hours, which is exactly where a transient
+// failure is most likely to be met, and it was the one place the distinction
+// this console is built on had not reached.
+func streamClosedBecause(err error, revoked string) string {
+	if isForbidden(err) {
+		return revoked
+	}
+	return "your access could not be re-checked, so this stream was closed; " +
+		"reconnecting will try again (" + err.Error() + ")"
+}
+
 // watchResources streams a resource's changes over a WebSocket, projected into
 // the same rows the table endpoint returns so the client can apply them
 // directly.
@@ -136,7 +158,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			// streaming, and only total revocation closes the socket.
 			next, err := a.watchScope(ctx, res, attrs, namespaces)
 			if err != nil {
-				ws.wsError("access to this resource was revoked")
+				ws.wsError(streamClosedBecause(err, "access to this resource was revoked"))
 				return
 			}
 			visible = next
@@ -267,21 +289,9 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		// Authorized one at a time, like the list endpoint: permission is
 		// granted per namespace, and being allowed two of the three asked for
 		// is a narrower stream rather than a refused one.
-		var (
-			allowed  []string
-			firstErr error
-		)
-		for _, ns := range namespaces {
-			if err := a.authorize(ctx, res, "watch", ns, "", ""); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			allowed = append(allowed, ns)
-		}
-		if len(allowed) == 0 {
-			return vis, firstErr
+		access := a.authorizeNamespaces(ctx, res, "watch", namespaces)
+		if len(access.allowed) == 0 {
+			return vis, access.firstErr
 		}
 		// A single namespace is already all the informer will deliver, so the
 		// stream needs no filter of its own.
@@ -289,8 +299,8 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 			vis.all = true
 			return vis, nil
 		}
-		vis.namespaces = make(map[string]struct{}, len(allowed))
-		for _, ns := range allowed {
+		vis.namespaces = make(map[string]struct{}, len(access.allowed))
+		for _, ns := range access.allowed {
 			vis.namespaces[ns] = struct{}{}
 		}
 		return vis, nil

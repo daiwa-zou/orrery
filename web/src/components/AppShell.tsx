@@ -22,6 +22,7 @@ import {
   type Theme,
 } from '../lib/storage'
 import {
+  namespaceListReason,
   namespaceSearch,
   namespacesIn,
   onlyNamespace,
@@ -176,7 +177,7 @@ function ClusterSwitcher({ current }: { current?: string }) {
 
 /** The neutral first row: no namespace filter at all. */
 function NamespacePicker({ cluster }: { cluster: string }) {
-  const { names } = useNamespaces(cluster)
+  const { names, isLoading, error } = useNamespaces(cluster)
   const [params, setParams] = useSearchParams()
   const labelId = useId()
 
@@ -197,6 +198,8 @@ function NamespacePicker({ cluster }: { cluster: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ticked.join('\u0000')],
   )
+
+  const emptyListReason = names.length > 0 ? undefined : namespaceListReason(isLoading, error)
 
   // Namespaces only. "All namespaces" used to lead the list, from when this
   // was a single-select and picking one row was the only way to change the
@@ -225,6 +228,17 @@ function NamespacePicker({ cluster }: { cluster: string }) {
         // stuck Terminating, and the actions that operate on them.
         footer={
           <div className="text-[13px]">
+            {/* An empty list of namespaces has three quite different causes
+                and used to look the same for all of them: this cluster really
+                has none, you may not list them, or the request did not come
+                back. The last two are the common ones — a narrowly bound user
+                is exactly who cannot list namespaces — and a picker that shows
+                nothing without saying why reads as the first. */}
+            {emptyListReason && (
+              <p className="border-b border-border px-3 py-2 text-[12px] text-warn">
+                {emptyListReason}
+              </p>
+            )}
             {/* Two rows rather than one: this popup is as wide as a 250px
                 sidebar, and three controls on a line wrap into each other. */}
             <div className="flex items-center gap-3 border-b border-border px-3 py-1.5 text-[12px]">

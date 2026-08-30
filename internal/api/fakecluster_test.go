@@ -61,6 +61,13 @@ type hndFake struct {
 	// nsOnlyResource denies only the cluster-wide review for one resource,
 	// which forces the per-namespace fallback scan.
 	nsOnlyResource string
+	// failReviewResource makes access reviews for one resource fail outright
+	// rather than come back denied — the difference between "you may not" and
+	// "we could not ask", which callers must not collapse.
+	failReviewResource string
+	// denyNamespace denies reviews scoped to one namespace, which is what a
+	// partial answer is made of: several namespaces asked for, some allowed.
+	denyNamespace string
 	// trace, when set, records every path the fake is asked for, so a test can
 	// assert on where a request actually landed rather than only on its status.
 	trace func(string)
@@ -68,6 +75,11 @@ type hndFake struct {
 	// lookup for it fails the way it would on a cluster that does not serve
 	// it — or on one whose discovery is not answering.
 	hideResource string
+	// breakCacheResource fails the informer's watch for one resource while
+	// discovery keeps advertising it, which is what an unsynced cache looks
+	// like from the API's side: the resource resolves, and then reading it
+	// returns an error rather than an empty list.
+	breakCacheResource string
 }
 
 func hndKey(group, version, resource string) string {
@@ -629,11 +641,22 @@ func (f *hndFake) serveAccessReview(w http.ResponseWriter, r *http.Request, path
 	if attrs != nil {
 		f.mu.Lock()
 		deny, nsOnly := f.denyResource, f.nsOnlyResource
+		failReview := f.failReviewResource
 		f.mu.Unlock()
+		if failReview != "" && attrs.Resource == failReview {
+			hndStatus(w, 500, "InternalError", "the access review could not be performed")
+			return
+		}
 		if deny != "" && attrs.Resource == deny {
 			allowed = false
 		}
 		if nsOnly != "" && attrs.Resource == nsOnly && attrs.Namespace == "" {
+			allowed = false
+		}
+		f.mu.Lock()
+		denyNS := f.denyNamespace
+		f.mu.Unlock()
+		if denyNS != "" && attrs.Namespace == denyNS {
 			allowed = false
 		}
 	}
@@ -712,6 +735,20 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 	// with sendInitialEvents=true that must deliver ADDED events followed by a
 	// bookmark annotated "initial-events-end" before the cache counts as
 	// synced. After the initial burst the stream hangs until the client goes.
+	// An informer fills its cache from a WatchList and falls back to LIST +
+	// WATCH when that is refused, so refusing only the watch leaves the other
+	// route open and the cache syncs after all — a flake rather than a
+	// fixture, and one that took a CI run to show itself. Every collection
+	// request for the resource fails instead. Reads of a single object still
+	// work, because it is the cache that is broken and not the resource.
+	f.mu.Lock()
+	broken := f.breakCacheResource
+	f.mu.Unlock()
+	if broken != "" && resource == broken && name == "" {
+		hndStatus(w, 500, "InternalError", "the cache for "+resource+" cannot be built")
+		return
+	}
+
 	if r.URL.Query().Get("watch") == "true" {
 		f.mu.Lock()
 		res := f.resources[key]

@@ -62,6 +62,13 @@ naming its target and is authorized as the verb and subresource the equivalent
 drain through the eviction API, `debug` through `patch` on
 `pods/ephemeralcontainers`.
 
+`drain` checks eviction permission per pod and reports what it could not evict
+as counts rather than names — the names are what the caller may not see.
+`notPermitted` counts denials. `notChecked` counts pods whose review the API
+server could not perform, which a drain is a likely moment for; those pods were
+not evicted either, so the node is not fully drained, but the reason is not
+permission and saying it was sends an operator to ask for access they have.
+
 `debug` is one-way: Kubernetes has no API for removing an ephemeral container,
 so it lives until the pod is replaced. Each attempt gets a generated name,
 since a second one would otherwise collide with the first, and the response
@@ -188,6 +195,14 @@ on its own, and the response's `scope` names the namespaces it actually covers.
 A namespace the caller may not list is dropped with a warning rather than
 failing the whole request; being allowed none of them is still a 403.
 
+The warning says which of two things happened, because they are not the same
+and only one of them is worth taking to whoever administers your RBAC. "You may
+not list pods in team-b" is a denial the API server returned. A namespace whose
+access review could not be performed at all gets its own sentence, which says
+so and says it is not a permission problem. The event feed carries these in
+`warnings` too — it used to narrow in silence, and a feed that has quietly
+dropped a namespace reads as everything that happened.
+
 `GET .../events` returns the event feed, filterable by `namespace`, `q`,
 `warningsOnly`, and by the object involved (`involvedUID`, `involvedName`,
 `involvedKind`) — the last of which is what an object's own event list uses.
@@ -245,6 +260,13 @@ one out of placeholders. `depth` (default 2, max 4) bounds the ownership walk in
 each direction; `childResource` names an extra resource to scan, for custom
 controllers whose children are not one of the built-in edges; `events=false`
 drops the bundled events.
+
+`events` distinguishes its three states, which matters most to the callers this
+endpoint was built for — an agent reading the response cannot look at a warning
+and infer what a person would. Asked for and empty is `"events": []`, with the
+columns, so an object nothing has happened to says so. Not asked for is a
+missing field. A scan that could not run is a missing field *and* a warning
+naming it.
 
 Nothing here bypasses a check. Every scan runs the same access review a list
 would, and a scan the caller may not run becomes a `warning` rather than a

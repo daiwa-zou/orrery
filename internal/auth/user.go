@@ -37,6 +37,28 @@ type Session struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+// Clone returns a session that shares nothing with this one.
+//
+// A plain struct copy is not enough: User.Groups is a slice, so two "copies"
+// hold one backing array, and whichever of them is appended to writes into the
+// other. That is a bad property anywhere and a dangerous one here, because
+// Groups is what becomes the impersonation header and the SubjectAccessReview
+// subject — a group written through an alias is a group granted to whoever
+// else is holding that session.
+//
+// It also settles a difference between the two Stores. RedisStore decodes JSON
+// on every read and so has always handed back something independent;
+// MemoryStore copied the struct only. Behaviour that changes when a deployment
+// grows a second replica is behaviour nobody can reproduce locally.
+func (s *Session) Clone() *Session {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.User.Groups = append([]string(nil), s.User.Groups...)
+	return &cp
+}
+
 // Expired reports whether the session is past its absolute lifetime or has
 // been idle longer than allowed.
 func (s *Session) Expired(now time.Time, idleTimeout time.Duration) bool {

@@ -747,6 +747,18 @@ export function DrainButton({
                 not touched.
               </p>
             )}
+            {/*
+              A separate sentence, not a bigger number beside the one above.
+              These pods were not evicted either, so the node is not drained —
+              but the reason is not permission, and saying it was sends the
+              reader to their cluster administrator instead of to a retry.
+            */}
+            {(result.notChecked ?? 0) > 0 && (
+              <p className="text-xs text-warn">
+                {result.notChecked} pod(s) could not be checked against your permissions, so they
+                were not touched. The node is not fully drained; try again.
+              </p>
+            )}
           </div>
         )}
       </Modal>

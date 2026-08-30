@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // Predicates over the projected columns: the comparisons a Kubernetes
@@ -328,22 +327,4 @@ func matchesAll(preds []wherePredicate, row map[string]any) bool {
 		}
 	}
 	return true
-}
-
-// filterRows keeps the objects whose projected row satisfies every predicate.
-func filterRows(
-	objs []*unstructured.Unstructured,
-	set columnSet,
-	preds []wherePredicate,
-) []*unstructured.Unstructured {
-	if len(preds) == 0 {
-		return objs
-	}
-	out := objs[:0:0]
-	for _, o := range objs {
-		if matchesAll(preds, set.row(o)) {
-			out = append(out, o)
-		}
-	}
-	return out
 }

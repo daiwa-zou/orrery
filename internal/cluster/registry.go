@@ -34,6 +34,10 @@ type Registry struct {
 	mu      sync.RWMutex
 	entries map[string]*Entry
 	order   []string
+	// closed is set by Close under the write lock. retryLoop builds clusters
+	// outside that lock, so without this a revival that finished during
+	// shutdown was stored into a registry nobody would ever close again.
+	closed bool
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -163,19 +167,51 @@ func (r *Registry) retryLoop(specs []config.ClusterConfig) {
 				}
 				c, err := New(spec, r.appCfg, r.log)
 				if err != nil {
+					r.recordFailure(name, err)
+					continue
+				}
+				if !r.adopt(name, c) {
+					c.Close()
 					continue
 				}
 				r.log.Info("cluster recovered", "cluster", name)
-				r.mu.Lock()
-				if e, ok := r.entries[name]; ok && e.Cluster == nil {
-					e.Cluster, e.Err = c, nil
-				} else {
-					c.Close()
-				}
-				r.mu.Unlock()
 			}
 		}
 	}
+}
+
+// recordFailure keeps the reason a cluster is unavailable current.
+//
+// Get reports whatever is in Err, and that used to be the failure from
+// startup, however many retries ago. A cluster whose credentials were repaired
+// but whose API server is now down went on being described by the credential
+// error — an explanation nobody could act on any more, and one that hides the
+// fault they could.
+func (r *Registry) recordFailure(name string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[name]; ok && e.Cluster == nil {
+		e.Err = err
+	}
+}
+
+// adopt installs a revived cluster, reporting whether the registry wanted it.
+//
+// New runs outside the lock — it dials an API server, which is not something
+// to hold a registry-wide lock across — so by the time it returns the registry
+// may have been closed, or the entry revived by someone else. A false return
+// means the caller is holding a live cluster that nothing will ever shut down,
+// and must close it: informers, watches and their goroutines otherwise outlive
+// the registry that was supposed to own them.
+func (r *Registry) adopt(name string, c *Cluster) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[name]
+	if !ok || r.closed || e.Cluster != nil {
+		return false
+	}
+	e.Cluster, e.Err = c, nil
+	return true
 }
 
 // Get returns a usable cluster by name.
@@ -213,6 +249,7 @@ func (r *Registry) Close() {
 	r.stopOnce.Do(func() { close(r.stop) })
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.closed = true
 	for _, e := range r.entries {
 		if e.Cluster != nil {
 			e.Cluster.Close()

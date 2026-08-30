@@ -271,22 +271,11 @@ func TestNewDiscoveryCacheDefaultTTL(t *testing.T) {
 	}
 }
 
-func TestDiscoveryResolveMissWithFailedRefresh(t *testing.T) {
-	f := newFakeAPI(t)
-	d := newTestDiscovery(t, f, time.Hour)
-	if _, err := d.Resources(context.Background()); err != nil {
-		t.Fatalf("Resources: %v", err)
-	}
-
-	// The miss triggers a refresh that fails; the answer must still be a
-	// clean unknown-resource error, not a discovery failure.
-	f.setFailDiscovery(true)
-	_, err := d.Resolve(context.Background(), "example.io", "", "widgets")
-	var unknown *UnknownResourceError
-	if !errors.As(err, &unknown) {
-		t.Fatalf("err = %v, want UnknownResourceError", err)
-	}
-}
+// A miss whose refresh fails is covered in resolve_failure_test.go. This test
+// used to live here asserting the opposite — that the answer should still be a
+// clean unknown-resource error — and a clean 404 is exactly what misleads: it
+// says the cluster does not serve the resource, on the strength of a cache
+// already known to be stale plus a lookup that never happened.
 
 func TestDiscoveryServerVersion(t *testing.T) {
 	f := newFakeAPI(t)

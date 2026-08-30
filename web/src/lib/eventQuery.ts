@@ -19,8 +19,6 @@ export interface EventQuery {
   where: string[]
 }
 
-export const EMPTY_EVENT_QUERY: EventQuery = { q: '', where: [] }
-
 /**
  * Splits the box into terms, keeping a quoted phrase together.
  *
@@ -131,14 +129,6 @@ export function addWhereTerm(query: EventQuery, term: string): EventQuery {
 /** The query without one predicate, removed by value rather than by index. */
 export function removeWhereTerm(query: EventQuery, term: string): EventQuery {
   return { ...query, where: query.where.filter((t) => t !== term) }
-}
-
-export function sameEventQuery(a: EventQuery, b: EventQuery): boolean {
-  return (
-    a.q === b.q &&
-    a.where.length === b.where.length &&
-    a.where.every((t, i) => t === b.where[i])
-  )
 }
 
 /** One row of the feed, as far as this module needs to know. */

@@ -73,8 +73,16 @@ type relatedResponse struct {
 	Related []objectRef `json:"related"`
 	// Events are the subject's own events, bundled because they are what the
 	// next request would have asked for anyway.
-	Events       []map[string]any `json:"events,omitempty"`
-	EventColumns []Column         `json:"eventColumns,omitempty"`
+	//
+	// A pointer, for the reason listResponse.Items is one. "You did not ask
+	// for events" and "this object has no events" are different answers, and a
+	// plain slice with omitempty makes them the same absence. An empty event
+	// list is the one field a reader takes as reassurance — it is why
+	// overview.go grew warningsForbidden — and the reader here is often an
+	// agent, which cannot look at the warnings and infer what a person would.
+	// Asked for and empty is now `"events": []`.
+	Events       *[]map[string]any `json:"events,omitempty"`
+	EventColumns []Column          `json:"eventColumns,omitempty"`
 	// Warnings name the scans that were skipped and why, so a short answer is
 	// never mistaken for a complete one.
 	Warnings  []string `json:"warnings,omitempty"`
@@ -233,7 +241,11 @@ func (a *API) relatedResources(w http.ResponseWriter, r *http.Request) {
 		out.Related = []objectRef{}
 	}
 	if queryBool(r, "events", true) {
-		out.Events, out.EventColumns = a.objectEvents(ctx, res, subject, n)
+		// A nil slice back means the scan could not run, and the warning it
+		// left says so; anything else is an answer, empty or not.
+		if rows, cols := a.objectEvents(ctx, res, subject, n); rows != nil {
+			out.Events, out.EventColumns = &rows, cols
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -792,12 +804,12 @@ func (a *API) objectEvents(
 	if len(matched) > maxRelatedEvents {
 		matched = matched[:maxRelatedEvents]
 	}
+	// Never nil on the way out: a nil slice here is how the caller recognises
+	// a scan that could not run, and an object that is genuinely quiet is not
+	// that. The columns come too, so an empty table still has its headings.
 	rows := make([]map[string]any, 0, len(matched))
 	for _, e := range matched {
 		rows = append(rows, set.row(e))
-	}
-	if len(rows) == 0 {
-		return nil, nil
 	}
 	return rows, set.columns
 }

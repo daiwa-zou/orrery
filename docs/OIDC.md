@@ -57,7 +57,7 @@ mechanisms for the client secret rather than writing it into the file.
 | `groupsClaim` | `groups` | Which claim carries group membership. Accepts an array or a single string. |
 | `usernamePrefix` | *(empty)* | Prefix applied to the username. See [claim mapping](#claim-mapping-getting-identities-to-match-rbac). |
 | `groupsPrefix` | `oidc:` | Prefix applied to every group. |
-| `requiredClaims` | `{}` | Map of claim → exact required value. Login is refused unless every listed claim matches (e.g. `hd: example.com` to pin a Google Workspace domain). |
+| `requiredClaims` | `{}` | Map of claim → exact required value. Login is refused unless every listed claim matches (e.g. `hd: example.com` to pin a Google Workspace domain). Values are compared as **text**, like `--oidc-required-claim` on the apiserver, so a boolean claim such as `email_verified` cannot be required this way — the login page says so rather than blaming the person signing in. |
 | `allowedGroups` | `[]` | When non-empty, only members of at least one listed group may sign in. Compared against the *unprefixed* claim values. |
 | `offlineAccess` | `true` | Request a refresh token so sessions outlive short ID-token lifetimes. |
 | `insecureSkipIssuerVerify` | `false` | Tolerate a discovery document whose `issuer` differs from the URL it was fetched from. Needed for some multi-tenant providers; see [Entra ID](#microsoft-entra-id-azure-ad). |

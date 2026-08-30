@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 
 import { readRaw, subscribeToKey } from './storage'
 
@@ -20,8 +20,16 @@ import { readRaw, subscribeToKey } from './storage'
  * starring a view in one tab now updates the star in another.
  */
 export function useStoredRaw(key: string): string | null {
+  // Held steady across renders on purpose. useSyncExternalStore re-subscribes
+  // whenever this function's identity changes, and an inline arrow is a new
+  // one every render — so subscribeToKey was adding and removing a `storage`
+  // listener on every render of whatever used it. ResourceList calls this
+  // twice and re-renders on every watch event, which is a lot of listener
+  // churn for a value that changes when someone edits their columns.
+  const subscribe = useCallback((onChange: () => void) => subscribeToKey(key, onChange), [key])
+
   return useSyncExternalStore(
-    (onChange) => subscribeToKey(key, onChange),
+    subscribe,
     () => readRaw(key),
     () => null,
   )
