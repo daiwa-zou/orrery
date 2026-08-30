@@ -138,16 +138,33 @@ func (a *API) namespaceNames(ctx context.Context, c *cluster.Cluster) ([]string,
 	return out, nil
 }
 
+// maxQueryNamespaces bounds the repeated ?namespace= parameter.
+//
+// Every namespace named costs a SubjectAccessReview against the real API
+// server — one per name, in sequence, and for a name that need not exist. The
+// verdicts are cached, but a distinct name is always a miss, so the parameter
+// converts query-string bytes into API-server round trips at roughly twelve
+// bytes each. A request line may carry about a megabyte, which is some tens of
+// thousands of reviews from one request, run in series, while evicting the
+// real verdicts from the checker's LRU on the way past.
+//
+// Nothing on the far side needed the bound: the console asks about the two
+// namespaces an incident spans, or the four a team owns. Every other
+// repeatable parameter here is already capped — twenty pods on a log follow,
+// twelve resources on a search, sixty-four checks on an access batch — and
+// this one and ?where= were the two that were not.
+const maxQueryNamespaces = 32
+
 // queryNamespaces reads the repeated ?namespace= parameter.
 //
 // It is repeatable because a console is read that way: the two namespaces an
 // incident spans, or the four a team owns, are one question and not four. An
 // empty list still means "everywhere the caller may look", which is what the
 // parameter has always meant when absent.
-func queryNamespaces(r *http.Request) []string {
+func queryNamespaces(r *http.Request) ([]string, error) {
 	raw := r.URL.Query()["namespace"]
-	out := make([]string, 0, len(raw))
-	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, min(len(raw), maxQueryNamespaces))
+	seen := make(map[string]bool, len(out))
 	for _, ns := range raw {
 		ns = strings.TrimSpace(ns)
 		// A repeat is not a second request for the same objects, and an empty
@@ -155,10 +172,16 @@ func queryNamespaces(r *http.Request) []string {
 		if ns == "" || seen[ns] {
 			continue
 		}
+		// Counted after the duplicates are dropped, so a client that repeats
+		// itself is not refused for something it did not ask for.
+		if len(out) == maxQueryNamespaces {
+			return nil, badRequest(
+				"at most %d namespaces per request", maxQueryNamespaces)
+		}
 		seen[ns] = true
 		out = append(out, ns)
 	}
-	return out
+	return out, nil
 }
 
 // listAcross reads one resource from the cache across several namespaces and
@@ -321,7 +344,11 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespaces := queryNamespaces(r)
+	namespaces, err := queryNamespaces(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	// A cluster-scoped resource has no namespaces to be narrowed to, and a
 	// filter that cannot apply must not be allowed to empty the list.
 	if !res.resource.Namespaced {
@@ -357,7 +384,13 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	// any other column needs the projected value, so those rows are built up
 	// front and the object slice is reordered to match — otherwise view=full
 	// would page through a differently ordered list than view=table.
-	if isMetaSortKey(sortKey) {
+	//
+	// A key naming no column at all is the third case, and it used to take the
+	// expensive branch: every object projected to look up a cell that does not
+	// exist, then compared as text against another absent cell — a row map per
+	// object and a formatted "<nil>" per comparison, all to arrive back at the
+	// name order it starts from. ?sort=anything was enough to ask for it.
+	if isMetaSortKey(sortKey) || !set.sortable(sortKey) {
 		sortByMeta(objs, sortKey, desc)
 	} else {
 		sortByCell(objs, set, sortKey, desc)
@@ -391,10 +424,22 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func buildRow(o *unstructured.Unstructured, set columnSet, r *http.Request) map[string]any {
+// buildRow projects one object into a table row.
+//
+// withLabels is a bool rather than the request it came from, because this runs
+// once per row and once per streamed event. Reading it back out of the request
+// each time meant r.URL.Query() each time, and that is not a cached lookup —
+// net/http reparses the whole query string and builds a fresh url.Values for
+// every call. A page of a thousand rows parsed the query a thousand times, and
+// a busy watch did it once per event for the life of the socket.
+//
+// The label map is the object's own rather than a GetLabels copy, for the
+// reason labelsOf gives: it is read here and encoded, never held or changed,
+// and copying a map per row to serialise it is a copy nobody reads.
+func buildRow(o *unstructured.Unstructured, set columnSet, withLabels bool) map[string]any {
 	row := set.row(o)
-	if queryBool(r, "labels", true) {
-		if l := o.GetLabels(); len(l) > 0 {
+	if withLabels {
+		if l := labelsOf(o); len(l) > 0 {
 			row["_labels"] = l
 		}
 	}
@@ -403,9 +448,10 @@ func buildRow(o *unstructured.Unstructured, set columnSet, r *http.Request) map[
 
 func projectPage(objs []*unstructured.Unstructured, set columnSet, page, pageSize int, r *http.Request) []map[string]any {
 	start, end := pageBounds(len(objs), page, pageSize)
+	withLabels := queryBool(r, "labels", true)
 	out := make([]map[string]any, 0, end-start)
 	for _, o := range objs[start:end] {
-		out = append(out, buildRow(o, set, r))
+		out = append(out, buildRow(o, set, withLabels))
 	}
 	return out
 }
@@ -507,6 +553,14 @@ func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, de
 // case-insensitive text otherwise.
 func compareCell(x, y any) int {
 	switch xv := x.(type) {
+	case string:
+		// The overwhelmingly common case, and the one the fallback served
+		// worst: fmt.Sprint reaches for reflection and a fresh string to hand
+		// back the string it was already given, once per operand and so twice
+		// per comparison, N log N times over.
+		if yv, ok := y.(string); ok {
+			return strings.Compare(strings.ToLower(xv), strings.ToLower(yv))
+		}
 	case int64:
 		if yv, ok := y.(int64); ok {
 			return cmp.Compare(xv, yv)
@@ -586,10 +640,14 @@ func labelsOf(o *unstructured.Unstructured) unstructuredLabels {
 	return unstructuredLabels(m)
 }
 
-// objectFields is the same trick for field selectors: fieldSetFor builds a
-// map per object, which the matcher then only reads. This computes each value
-// on demand instead, and mirrors fieldSetFor's key set exactly — name and
-// namespace are always present, the rest only when non-empty.
+// objectFields is the same trick for field selectors. The obvious shape is a
+// fields.Set built per object, which the matcher then only reads; this
+// computes each value on demand instead and allocates nothing.
+//
+// It is also the only definition of which field selectors this server honours.
+// supportedFieldKeys below is the list the parser rejects against, and the two
+// have to agree: a key accepted there and unknown here matches nothing, which
+// reads as "no such objects" rather than as the unsupported filter it is.
 type objectFields struct{ o *unstructured.Unstructured }
 
 func (f objectFields) Get(field string) string {
@@ -620,7 +678,9 @@ func (f objectFields) Get(field string) string {
 func (f objectFields) Has(field string) bool {
 	switch field {
 	case "metadata.name", "metadata.namespace":
-		// fieldSetFor sets both unconditionally, empty or not.
+		// Both are always present, empty or not — which is what makes
+		// "metadata.namespace=" a usable way to ask for cluster-scoped
+		// objects, rather than a selector over a field that is not there.
 		return true
 	default:
 		return f.Get(field) != ""
@@ -740,6 +800,16 @@ func parseListFilter(r *http.Request, set columnSet) (listFilter, error) {
 }
 
 // filterObjects applies the free-text, label and field filters in one pass.
+//
+// The result is a new slice — `objs[:0:0]` shares nothing but the element type
+// — and deliberately so. Compacting into objs[:0] would save the caller a
+// slice of pointers per request, which on the fifty-thousand-object lists this
+// code keeps being asked about is four hundred kilobytes, and both production
+// callers happen to satisfy the ownership that would require. What no call
+// site shows is that they have to: the parameter looks like an input, filtering
+// twice from one list is the obvious thing to write, and the second answer is
+// then drawn from the first one's leftovers. A saving that size does not buy
+// an invariant nobody can see.
 func filterObjects(
 	objs []*unstructured.Unstructured,
 	r *http.Request,
@@ -761,7 +831,8 @@ func filterObjects(
 	return out, nil
 }
 
-// supportedFieldKeys mirrors exactly what fieldSetFor projects.
+// supportedFieldKeys is what parseListFilter accepts, and it must list exactly
+// the keys objectFields.Get answers — see the note there.
 var supportedFieldKeys = map[string]bool{
 	"metadata.name":            true,
 	"metadata.namespace":       true,
@@ -781,31 +852,6 @@ func supportedFieldKeyList() []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// fieldSetFor exposes the field selectors the API server supports for the
-// common resources, so a saved kubectl-style filter behaves the same here.
-func fieldSetFor(o *unstructured.Unstructured) fields.Set {
-	set := fields.Set{
-		"metadata.name":      o.GetName(),
-		"metadata.namespace": o.GetNamespace(),
-	}
-	if v := str(o, "status", "phase"); v != "" {
-		set["status.phase"] = v
-	}
-	if v := str(o, "spec", "nodeName"); v != "" {
-		set["spec.nodeName"] = v
-	}
-	if v := str(o, "type"); v != "" {
-		set["type"] = v
-	}
-	if v := str(o, "involvedObject", "name"); v != "" {
-		set["involvedObject.name"] = v
-		set["involvedObject.kind"] = str(o, "involvedObject", "kind")
-		set["involvedObject.namespace"] = str(o, "involvedObject", "namespace")
-		set["involvedObject.uid"] = str(o, "involvedObject", "uid")
-	}
-	return set
 }
 
 // getResource returns a single object, always read live rather than from the

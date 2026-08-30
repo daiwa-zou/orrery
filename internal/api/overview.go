@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -111,8 +112,41 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		Workloads: map[string]countSummary{},
 	}
 
+	// Every section below is an independent question, and asking them in
+	// sequence made the landing page cost the sum of eleven answers instead of
+	// the slowest one.
+	//
+	// What is being summed is not arithmetic on a warm cache. Each resource's
+	// first reader is the one that starts its informer and waits out the
+	// initial LIST — on a cold dashboard that is eleven syncs end to end. A
+	// user with namespace-scoped bindings pays worse: VisibleNamespaces
+	// memoises per resource, so each section runs its own per-namespace scan,
+	// and eleven scans of up to two hundred namespaces is a landing page that
+	// looks broken.
+	//
+	// visibleObjects already takes its own copy of res, and everything under it
+	// — the discovery cache, the access checker, the informer manager — is
+	// built to be shared. The only thing here that is not is the workloads map,
+	// which has a lock of its own.
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
+	section := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+
 	// Nodes: capacity and readiness.
-	if nodes, err := a.visibleObjects(ctx, res, "", "v1", "nodes"); err == nil {
+	section(func() {
+		nodes, err := a.visibleObjects(ctx, res, "", "v1", "nodes")
+		if err != nil {
+			out.Nodes.mark(err)
+			return
+		}
 		out.Nodes = countSummary{Total: len(nodes), ByStatus: map[string]int{}}
 		capacity := usage{}
 		for _, n := range nodes {
@@ -122,19 +156,25 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 			capacity.MemoryMiB += c.MemoryMiB
 		}
 		out.Capacity = &capacity
-	} else {
-		out.Nodes.mark(err)
-	}
+	})
 
-	if ns, err := a.visibleObjects(ctx, res, "", "v1", "namespaces"); err == nil {
+	section(func() {
+		ns, err := a.visibleObjects(ctx, res, "", "v1", "namespaces")
+		if err != nil {
+			out.Namespaces.mark(err)
+			return
+		}
 		out.Namespaces = countSummary{Total: len(ns)}
-	} else {
-		out.Namespaces.mark(err)
-	}
+	})
 
 	// Pods: phase breakdown plus the sum of container requests, which is the
 	// number that actually explains scheduling pressure.
-	if pods, err := a.visibleObjects(ctx, res, "", "v1", "pods"); err == nil {
+	section(func() {
+		pods, err := a.visibleObjects(ctx, res, "", "v1", "pods")
+		if err != nil {
+			out.Pods.mark(err)
+			return
+		}
 		out.Pods = countSummary{Total: len(pods), ByStatus: map[string]int{}}
 		requested := usage{}
 		for _, p := range pods {
@@ -147,9 +187,7 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 			requested.MemoryMiB += mem
 		}
 		out.Requested = &requested
-	} else {
-		out.Pods.mark(err)
-	}
+	})
 
 	for _, wl := range []struct{ key, group, version, resource string }{
 		{"deployments", "apps", "v1", "deployments"},
@@ -160,29 +198,36 @@ func (a *API) clusterOverview(w http.ResponseWriter, r *http.Request) {
 		{"services", "", "v1", "services"},
 		{"ingresses", "networking.k8s.io", "v1", "ingresses"},
 	} {
-		objs, err := a.visibleObjects(ctx, res, wl.group, wl.version, wl.resource)
-		if err != nil {
-			s := countSummary{}
-			s.mark(err)
-			out.Workloads[wl.key] = s
-			continue
-		}
-		summary := countSummary{Total: len(objs), ByStatus: map[string]int{}}
-		for _, o := range objs {
-			summary.ByStatus[workloadHealth(o)]++
-		}
-		out.Workloads[wl.key] = summary
+		section(func() {
+			summary := countSummary{}
+			if objs, err := a.visibleObjects(ctx, res, wl.group, wl.version, wl.resource); err != nil {
+				summary.mark(err)
+			} else {
+				summary.Total = len(objs)
+				summary.ByStatus = map[string]int{}
+				for _, o := range objs {
+					summary.ByStatus[workloadHealth(o)]++
+				}
+			}
+			mu.Lock()
+			out.Workloads[wl.key] = summary
+			mu.Unlock()
+		})
 	}
 
-	warnings, err := a.recentWarnings(ctx, res, 20)
-	out.Warnings = warnings
-	if err != nil {
-		if isForbidden(err) {
-			out.WarningsForbidden = true
-		} else {
-			out.WarningsUnavailable = true
+	section(func() {
+		warnings, err := a.recentWarnings(ctx, res, 20)
+		out.Warnings = warnings
+		if err != nil {
+			if isForbidden(err) {
+				out.WarningsForbidden = true
+			} else {
+				out.WarningsUnavailable = true
+			}
 		}
-	}
+	})
+
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
 }
 

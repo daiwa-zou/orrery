@@ -322,8 +322,13 @@ function NavGroup({
   onToggle: () => void
   /** Appends the API group to each row — needed where kinds are unfamiliar. */
   showGroup?: boolean
-  /** "group/resource" → may list, from useListAccess; undefined while loading. */
-  listAccess?: Map<string, boolean>
+  /**
+   * "group/resource" → may list, from useListAccess. The map itself is
+   * undefined while loading, and an undefined *entry* is a review that could
+   * not be performed — neither is a "no", which is why the rows below test
+   * for `=== false` rather than falsiness.
+   */
+  listAccess?: Map<string, boolean | undefined>
 }) {
   if (items.length === 0) return null
 

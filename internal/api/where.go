@@ -60,6 +60,10 @@ func (o whereOp) ordering() bool {
 // a value beginning "=".
 var whereOps = []whereOp{opGTE, opLTE, opMatch, opNotMatch, opGT, opLT}
 
+// maxWherePredicates bounds how many comparisons one request may ask for. See
+// the note in parseWhere for why the number matters at all.
+const maxWherePredicates = 16
+
 // wherePredicate is one parsed comparison, ready to run against a row.
 type wherePredicate struct {
 	column string
@@ -81,6 +85,17 @@ type wherePredicate struct {
 func parseWhere(raw []string, cols []Column) ([]wherePredicate, error) {
 	if len(raw) == 0 {
 		return nil, nil
+	}
+	// Each predicate is compiled once and then run against every object in the
+	// list, so the parameter multiplies: predicates times objects. A pattern
+	// term costs about a dozen bytes of query string, a request line carries
+	// about a megabyte, and the lists this filters are measured in tens of
+	// thousands — which is a product large enough to hold a core for as long
+	// as the client cares to keep asking. Nobody writing a filter by hand goes
+	// past a handful.
+	if len(raw) > maxWherePredicates {
+		return nil, badRequest("at most %d where predicates per request (given %d)",
+			maxWherePredicates, len(raw))
 	}
 	byKey := make(map[string]Column, len(cols))
 	for _, c := range cols {

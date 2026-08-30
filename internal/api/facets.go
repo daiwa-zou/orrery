@@ -131,7 +131,11 @@ func (a *API) listFacets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespaces := queryNamespaces(r)
+	namespaces, err := queryNamespaces(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	if !res.resource.Namespaced {
 		namespaces = nil
 	}
@@ -184,7 +188,16 @@ func searchKey(r *http.Request) string {
 	q := r.URL.Query()
 	return "q=" + strings.ToLower(strings.TrimSpace(q.Get("q"))) +
 		"|l=" + q.Get("labelSelector") +
-		"|f=" + q.Get("fieldSelector")
+		"|f=" + q.Get("fieldSelector") +
+		// where is repeatable and every term of it narrows, so all of them
+		// belong in the key. Leaving it out was not a near miss: listFacets
+		// filters with parseListFilter, the same predicate the list endpoint
+		// uses, so `where=status=~Succeeded` and `where=status=~Running`
+		// computed different vocabularies over the same resource and scope and
+		// then collided on one entry — and whichever ran first inside the TTL
+		// answered for both. Joined on a unit separator, which cannot occur in
+		// a URL query value.
+		"|w=" + strings.Join(q["where"], "\x1f")
 }
 
 func computeFacets(objs []*unstructured.Unstructured) facetsResponse {
@@ -192,7 +205,7 @@ func computeFacets(objs []*unstructured.Unstructured) facetsResponse {
 	fieldVals := map[string]map[string]int{}
 
 	// Two maps per object were being built and thrown away here — GetLabels
-	// copies the label map, fieldSetFor builds a fields.Set — to read the
+	// copies the label map, and a fields.Set was built beside it — to read the
 	// labels once and four field keys. The list path stopped doing that a
 	// while ago and left labelsOf and objectFields behind for the purpose;
 	// this walk, which the file above calls the most expensive read in the

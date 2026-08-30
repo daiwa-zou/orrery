@@ -36,7 +36,7 @@ func benchObjects(n int) []*unstructured.Unstructured {
 func benchFilter(b *testing.B, n int, query string) {
 	objs := benchObjects(n)
 	r := httptest.NewRequest("GET", "/?"+query, nil)
-	f, err := parseListFilter(r, podSet)
+	f, err := parseListFilter(r, podSet())
 	if err != nil {
 		b.Fatalf("parseListFilter: %v", err)
 	}
@@ -83,7 +83,7 @@ func BenchmarkFreeTextLabelMiss50k(b *testing.B) { benchFilterNoMatch(b, 50_000,
 func benchFilterNoMatch(b *testing.B, n int, query string) {
 	objs := benchObjects(n)
 	r := httptest.NewRequest("GET", "/?"+query, nil)
-	f, err := parseListFilter(r, podSet)
+	f, err := parseListFilter(r, podSet())
 	if err != nil {
 		b.Fatalf("parseListFilter: %v", err)
 	}
@@ -103,14 +103,20 @@ func benchFilterNoMatch(b *testing.B, n int, query string) {
 // column has to compute that column for every object, because that is what
 // sorting means. What it must not do is keep the resulting row for every
 // object alive in order to render fifty of them.
+//
+// The branch is the one listResources takes, over the real pod table, so a key
+// naming no column measures what the handler actually does with it rather than
+// what the benchmark chose to do on its behalf. The previous version passed a
+// table with no columns and asked it to sort by "status": every corpus in it
+// took the projected path, and none of them had a "status" cell to find.
 func benchSort(b *testing.B, n int, sortKey string) {
 	objs := benchObjects(n)
-	set := columnSet{row: baseRow}
+	set := podSet()
 	r := httptest.NewRequest("GET", "/", nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if isMetaSortKey(sortKey) {
+		if isMetaSortKey(sortKey) || !set.sortable(sortKey) {
 			sortByMeta(objs, sortKey, false)
 		} else {
 			sortByCell(objs, set, sortKey, false)
@@ -121,3 +127,8 @@ func benchSort(b *testing.B, n int, sortKey string) {
 
 func BenchmarkSortByMeta50k(b *testing.B)      { benchSort(b, 50_000, "name") }
 func BenchmarkSortByProjected50k(b *testing.B) { benchSort(b, 50_000, "status") }
+
+// ?sort= carries whatever the client sends. A key that names no column is the
+// cheapest possible sort — there is nothing to project — and it used to be the
+// most expensive one on offer.
+func BenchmarkSortByUnknownKey50k(b *testing.B) { benchSort(b, 50_000, "no-such-column") }

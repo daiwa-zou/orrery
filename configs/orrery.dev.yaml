@@ -8,8 +8,20 @@
 server:
   addr: ':8080'
   publicURL: 'http://localhost:5173'
+  # Vite picks the next free port when 5173 is taken, so a second checkout —
+  # or a second person — lands on 5174 and upwards. That origin is not a
+  # cosmetic difference: it is what the WebSocket upgrader checks, and what
+  # the write routes check, so a dev server on an unlisted port gets every
+  # socket refused and every write refused while plain reads keep working.
+  # Listing the range costs nothing here and removes a failure that reads as
+  # "streaming is broken".
   corsOrigins:
     - 'http://localhost:5173'
+    - 'http://localhost:5174'
+    - 'http://localhost:5175'
+    - 'http://localhost:5176'
+    - 'http://localhost:5177'
+    - 'http://localhost:5178'
   metricsAddr: ':9090'
 
 oidc:

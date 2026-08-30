@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/daiwa-zou/orrery/internal/auth"
 	"github.com/daiwa-zou/orrery/internal/webfs"
 )
 
@@ -110,6 +112,7 @@ func (a *API) Router() http.Handler {
 
 				// ---- writes ----
 				r.Group(func(r chi.Router) {
+					r.Use(a.sameOriginWrite)
 					r.Use(a.mw.CSRF)
 
 					r.Post("/access", a.checkAccess)
@@ -160,6 +163,48 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 				})
 			}
 		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOriginWrite refuses a state-changing request sent by a page on another
+// origin.
+//
+// The CSRF token is the defence on these routes, and it is skipped entirely
+// when OIDC is off — on the reasoning that a deployment with no sessions has
+// no session to forge. What that reasoning leaves out is which machine the
+// request comes from. A dashboard on localhost is reachable by the developer's
+// own browser and by nothing else on the internet, so a page they happen to
+// have open is the one attacker positioned to reach it, and it needs no token
+// to send a form post. Nor is a preflight in the way: none of these handlers
+// looks at Content-Type, so text/plain carries a manifest perfectly well and
+// text/plain is a request the browser sends without asking permission first.
+//
+// The Origin header is what separates the console's own page from somebody
+// else's, and it is the same check the WebSocket upgrader already stands on
+// for streams that cannot carry a token. A request with no Origin at all is
+// not a browser page — curl, a script, a test — and is left alone; the ambient
+// cookie is what a cross-site request has and a command-line client does not.
+//
+// In OIDC mode this is a second lock on a door the CSRF token already holds.
+func (a *API) sameOriginWrite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && !auth.OriginAllowed(origin, a.cfg.Server.PublicURL, a.cfg.Server.CORSOrigins) {
+			// The origin and the expected one are both named, because the
+			// other way to arrive here is a publicURL that does not match
+			// where the console is actually served from — and a bare
+			// "forbidden" sends that reader to look at RBAC, which is not
+			// where the problem is.
+			writeJSON(w, http.StatusForbidden, errorBody{
+				Error: "cross_origin",
+				Reason: fmt.Sprintf(
+					"this write came from %s, which is not %q and not a configured allowed origin",
+					origin, a.cfg.Server.PublicURL),
+				Code: http.StatusForbidden,
+			})
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

@@ -76,7 +76,22 @@ func (t *tableCache) get(key string) (columnSet, bool) {
 func (t *tableCache) put(key string, set columnSet) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.entries[key] = tableCacheEntry{set: set, expires: time.Now().Add(t.ttl)}
+	// Expired entries are never read again — get treats them as a miss — but
+	// nothing was removing them, so the map only ever grew. It is bounded by
+	// what the clusters actually serve rather than by anything a caller sends,
+	// which is why this is housekeeping and not a leak; on the deployment this
+	// project is built for, though, that bound is every CRD on every cluster,
+	// and it keeps the compiled printer-column programs of resources that were
+	// uninstalled months ago. A write happens once per resource per TTL, so
+	// sweeping here costs nothing worth measuring. The namespace-scan cache in
+	// internal/authz does the same thing for the same reason.
+	now := time.Now()
+	for k, e := range t.entries {
+		if now.After(e.expires) {
+			delete(t.entries, k)
+		}
+	}
+	t.entries[key] = tableCacheEntry{set: set, expires: now.Add(t.ttl)}
 }
 
 // tableFor resolves the columns for a resource: a hand-tuned builtin when one

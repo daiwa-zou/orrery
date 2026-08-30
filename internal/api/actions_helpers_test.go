@@ -19,8 +19,45 @@ func TestDecodeBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Resource != "deployments" || got.Name != "web" || got.Replicas != 3 {
+	if got.Resource != "deployments" || got.Name != "web" {
 		t.Errorf("decoded = %+v", got)
+	}
+	if got.Replicas == nil || *got.Replicas != 3 {
+		t.Errorf("decoded replicas = %v, want 3", got.Replicas)
+	}
+}
+
+// Scaling to zero and forgetting to say how many are different requests, and a
+// plain int32 made them the same one. The field is misspelled here, which is
+// how it happens: JSON decoding says nothing, and the workload used to go to
+// zero replicas on the strength of a typo.
+func TestScaleRequiresAnExplicitReplicaCount(t *testing.T) {
+	got, err := decodeBody[scaleRequest](postJSON(`{"resource":"deployments","name":"web","replica":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Replicas != nil {
+		t.Fatalf("replicas = %v, want it absent", *got.Replicas)
+	}
+
+	rig := hndNewRig(t)
+	rec := rig.do(t, http.MethodPost, "/api/v1/clusters/fake/actions/scale",
+		`{"group":"apps","version":"v1","resource":"deployments","namespace":"demo","name":"web","replica":3}`, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "replicas") {
+		t.Errorf("body = %s, want it to name the missing field", rec.Body.String())
+	}
+}
+
+// Zero is a real answer when it is given.
+func TestScaleAcceptsAnExplicitZero(t *testing.T) {
+	rig := hndNewRig(t)
+	rec := rig.do(t, http.MethodPost, "/api/v1/clusters/fake/actions/scale",
+		`{"group":"apps","version":"v1","resource":"deployments","namespace":"demo","name":"web","replicas":0}`, nil)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("an explicit zero was refused: %s", rec.Body.String())
 	}
 }
 

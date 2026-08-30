@@ -70,10 +70,21 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 		}
 	}
 
+	// Everything from here on has two things to unwind, and each failure below
+	// used to close only the registry: a MemoryStore left its expiry sweep
+	// running, and a RedisStore its whole connection pool, for the lifetime of
+	// a process that had just been told it could not start. It matters because
+	// New is a constructor and not a program — a caller that reports the error
+	// and tries a different configuration accumulates one of these each time.
+	fail := func(err error) (*Server, error) {
+		registry.Close()
+		_ = store.Close()
+		return nil, err
+	}
+
 	sessions, err := auth.NewSessionManager(cfg, store)
 	if err != nil {
-		registry.Close()
-		return nil, err
+		return fail(err)
 	}
 
 	var authn *auth.Authenticator
@@ -83,8 +94,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 		authn, err = auth.NewAuthenticator(discoveryCtx, cfg, sessions)
 		cancel()
 		if err != nil {
-			registry.Close()
-			return nil, err
+			return fail(err)
 		}
 		log.Info("OIDC enabled", "issuer", cfg.OIDC.Issuer, "clientID", cfg.OIDC.ClientID)
 	} else {
@@ -96,7 +106,15 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	mw := auth.NewMiddleware(sessions, authn, anon)
 	apiSrv := api.New(cfg, registry, authn, mw, log)
 
-	prometheus.MustRegister(api.NewCacheCollector(apiSrv))
+	// Registered, not MustRegistered. The collector goes into the process-wide
+	// default registry, so a second New in one process — a test, a caller
+	// retrying with different configuration — is a duplicate registration, and
+	// MustRegister answers that by panicking the process rather than by
+	// failing the call that caused it. New already returns an error; a
+	// constructor that cannot construct should use it.
+	if err := prometheus.Register(api.NewCacheCollector(apiSrv)); err != nil {
+		return fail(fmt.Errorf("register cache metrics: %w", err))
+	}
 
 	s := &Server{
 		cfg:      cfg,

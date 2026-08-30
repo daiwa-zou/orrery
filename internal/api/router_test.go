@@ -68,6 +68,43 @@ func TestRouterAndStreamErrorPathsHTTP(t *testing.T) {
 		hndWantStatus(t, rec, 204)
 	})
 
+	// Refusing to put CORS headers on the response only stops the attacker
+	// reading the answer. The write has already happened by then, and with
+	// authentication off there is no CSRF token in the way — the rig runs
+	// anonymous, which is exactly the mode this guards.
+	//
+	// text/plain is the shape that matters: it is a CORS "simple request", so
+	// the browser sends it with no preflight to refuse, and the manifest
+	// decoder never looks at Content-Type anyway.
+	t.Run("crossOriginWriteRefused", func(t *testing.T) {
+		body := `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"pwned","namespace":"demo"}}`
+		rec := rig.do(t, http.MethodPost, "/api/v1/clusters/fake/resources/_/v1/configmaps", body,
+			map[string]string{
+				"Origin":       "http://evil.example",
+				"Content-Type": "text/plain",
+			})
+		hndWantStatus(t, rec, 403)
+		if !strings.Contains(rec.Body.String(), "cross_origin") {
+			t.Errorf("body = %s, want it to name the cross-origin refusal", rec.Body.String())
+		}
+	})
+
+	// A client with no Origin at all is not a browser page, and the console's
+	// own page must still be able to write.
+	t.Run("sameOriginAndOriginlessWritesPass", func(t *testing.T) {
+		body := `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"ok","namespace":"demo"}}`
+		for _, hdr := range []map[string]string{
+			nil,
+			{"Origin": "http://cors.example"},
+		} {
+			rec := rig.do(t, http.MethodPost, "/api/v1/clusters/fake/resources/_/v1/configmaps", body, hdr)
+			if rec.Code == http.StatusForbidden &&
+				strings.Contains(rec.Body.String(), "cross_origin") {
+				t.Errorf("headers %v were refused as cross-origin: %s", hdr, rec.Body.String())
+			}
+		}
+	})
+
 	t.Run("watchPreUpgradeErrors", func(t *testing.T) {
 		// A bad selector must be a plain 400 before any upgrade is attempted.
 		rec := rig.get(t, "/api/v1/clusters/fake/ws/watch/_/v1/pods?labelSelector=%3D%3Dbad")

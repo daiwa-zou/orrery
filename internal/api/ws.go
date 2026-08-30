@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,10 @@ const (
 	pingPeriod = 25 * time.Second
 
 	maxClientMessage = 1 << 20
+
+	// maxCloseReason leaves room inside the 125-byte close payload for the
+	// two-byte status code, with a little slack.
+	maxCloseReason = 120
 )
 
 // upgrader validates the handshake. A WebSocket handshake carries cookies but
@@ -117,12 +122,25 @@ func (w *wsConn) drain() {
 	}
 }
 
+// closeReason fits a sentence into a close frame.
+//
+// The payload is at most 125 bytes, two of which are the status code, and the
+// reason must be valid UTF-8 or the peer is entitled to fail the connection.
+// Cutting at a byte count can land in the middle of a rune — these carry error
+// text from the API server, which is not guaranteed to be ASCII — so the
+// partial rune left at the end is dropped rather than sent as a mangled one. A
+// browser that rejects the frame reports a protocol error, and the sentence
+// saying why the stream ended is exactly what gets lost.
+func closeReason(reason string) string {
+	if len(reason) <= maxCloseReason {
+		return reason
+	}
+	return strings.ToValidUTF8(reason[:maxCloseReason], "")
+}
+
 // closeWith sends a close frame carrying a human-readable reason.
 func (w *wsConn) closeWith(code int, reason string) {
-	if len(reason) > 120 {
-		reason = reason[:120]
-	}
-	_ = w.write(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason))
+	_ = w.write(websocket.CloseMessage, websocket.FormatCloseMessage(code, closeReason(reason)))
 	w.close()
 }
 

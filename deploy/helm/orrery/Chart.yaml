@@ -6,8 +6,8 @@ type: application
 # defaults to, so a mismatch means the chart points at an image that was
 # never published. The release workflow fails a tag whose version disagrees
 # with these, rather than letting the two drift apart silently.
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 icon: https://raw.githubusercontent.com/daiwa-zou/orrery/main/docs/assets/orrery-mark.svg
 home: https://github.com/daiwa-zou/orrery
 sources:

@@ -47,7 +47,7 @@ func TestTopValuesReadsAlphabetically(t *testing.T) {
 	}
 }
 
-// The projection swapped GetLabels and fieldSetFor for the no-copy views the
+// The projection swapped GetLabels and a per-object fields.Set for the no-copy views the
 // list path uses. Same answers, or the optimisation is a regression.
 func TestComputeFacetsStillSeesLabelsAndFields(t *testing.T) {
 	objs := []*unstructured.Unstructured{

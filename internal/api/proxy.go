@@ -127,7 +127,29 @@ func (a *API) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		upstream.Header.Set("Accept", accept)
 	}
 
-	resp, err := (&http.Client{Transport: transport}).Do(upstream)
+	// A redirect from the proxied workload is handed to the browser, never
+	// followed here — which is why Location is copied through below.
+	//
+	// Following it would send the redirect target our Kubernetes credentials.
+	// net/http strips Authorization when a redirect crosses to another host,
+	// but the header is not ours to begin with: client-go's transport adds it
+	// inside RoundTrip, to every request it is given that does not already
+	// carry one, and a redirected request is exactly that. The impersonation
+	// headers ride along the same way. So a workload that answers with
+	// "Location: http://somewhere-else/" collects the dashboard's bearer
+	// token, and in impersonation mode the name of the user who opened the
+	// page — from any workload the caller may reach a proxied port on, which
+	// on a shared cluster is one they can deploy themselves.
+	//
+	// ErrUseLastResponse returns the 3xx as it stands. The browser then
+	// resolves it under its own rules, with none of our credentials.
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(upstream)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return

@@ -75,6 +75,11 @@ type hndFake struct {
 	// lookup for it fails the way it would on a cluster that does not serve
 	// it — or on one whose discovery is not answering.
 	hideResource string
+	// proxyRedirectTo makes the proxy subresource answer with a redirect to
+	// this URL instead of a page, which is how a workload sends whoever is
+	// talking to it somewhere else — and the dashboard is talking to it with
+	// the cluster's credentials.
+	proxyRedirectTo string
 	// breakCacheResource fails the informer's watch for one resource while
 	// discovery keeps advertising it, which is what an unsynced cache looks
 	// like from the API's side: the resource resolves, and then reading it
@@ -724,6 +729,14 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 		hndWriteJSON(w, 200, pod)
 		return
 	case strings.HasPrefix(sub, "proxy"):
+		f.mu.Lock()
+		to := f.proxyRedirectTo
+		f.mu.Unlock()
+		if to != "" {
+			w.Header().Set("Location", to)
+			w.WriteHeader(http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("hello-from-proxy"))
 		return
