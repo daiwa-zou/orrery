@@ -306,7 +306,6 @@ surface to keep stable, and `cmd/orrery` is the only binary.
   cluster: RBAC manifests for both auth modes, and a preflight check.
 - [web/README.md](web/README.md) — working in the SPA: layout, conventions,
   and the gotchas specific to the frontend.
-- [BRAND.md](docs/BRAND.md) — the mark, the palette and the type.
 
 ## License
 

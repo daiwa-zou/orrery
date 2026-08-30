@@ -51,8 +51,9 @@ nothing at all and passes on anything. `make web-typecheck` and CI use `-b`.
 
 **Colours come from tokens, never literals.** `src/index.css` defines the dark
 palette on `:root` and the light one under `:root[data-theme='light']`; a
-hard-coded hex breaks the light theme silently. The tokens and their roles are
-documented in [docs/BRAND.md](../docs/BRAND.md).
+hard-coded hex breaks the light theme silently. Each token's role is named in a
+comment beside it, and `contrast.test.ts` holds the pairings that matter to
+4.5:1.
 
 **Server state belongs to TanStack Query, not `useState`.** Lists then keep
 their data while a filter changes (`keepPreviousData`) instead of flashing

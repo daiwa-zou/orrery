@@ -6,8 +6,8 @@
 > work in the future tense and names the stack as it stood then (React 18; the
 > app is on 19). **Do not treat it as current.** The live palette is
 > `web/src/index.css` — which has since gained a light theme this brief does
-> not mention — documented in [BRAND.md](../BRAND.md); frontend conventions
-> are in [web/README.md](../../web/README.md).
+> not mention; frontend conventions are in
+> [web/README.md](../../web/README.md).
 
 ## Overview
 A full UI redesign of **Orrery**, the multi-cluster Kubernetes dashboard in this repo (`orrery/web`). It restyles the existing SPA in an "Industry" dark-blueprint visual language (steel-blue accent, Barlow Condensed/Barlow, square corners, hairline borders, `+` corner registration marks) and adds a fleet orbital diagram, an incident walkthrough, and several new states. Structure and copy were derived from the real source in `orrery/web/src` — this is a re-skin plus additions, not a rebuild.
