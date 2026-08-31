@@ -470,8 +470,14 @@ func TestParseChildResource(t *testing.T) {
 func TestNeighbourhoodCapsAndDeduplicates(t *testing.T) {
 	n := newNeighbourhood("c")
 	ref := objectRef{Kind: "Pod", Resource: "pods", Namespace: "demo", Name: "web-1"}
-	if !n.add(ref) || !n.add(ref) {
-		t.Fatal("add refused a reference before the cap")
+	// Written out rather than ORed together: the two calls are asking different
+	// questions, and `!n.add(ref) || !n.add(ref)` both hides that and only
+	// makes the second call at all because the first happened to succeed.
+	if !n.add(ref) {
+		t.Fatal("add refused the first reference, well before the cap")
+	}
+	if !n.add(ref) {
+		t.Fatal("add refused a reference it already holds; a repeat is not a rejection")
 	}
 	if len(n.refs) != 1 {
 		t.Errorf("the same object was recorded %d times", len(n.refs))

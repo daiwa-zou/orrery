@@ -183,6 +183,14 @@ func (a *API) execIntoPod(w http.ResponseWriter, r *http.Request) {
 	go ws.ping(ctx)
 
 	session := newTerminalSession(ctx, ws)
+	// Unconditionally, and not only after the stream returns below. The session
+	// owns a derived context, and on the error paths between here and there
+	// nothing closes it directly — it was reached only through readLoop's own
+	// defer, which fires because closing the socket happens to break the read.
+	// That chain holds today; it is not something the next edit to this handler
+	// should have to know about. close is guarded by a sync.Once, so the call
+	// at the end of a normal session is still the one that matters.
+	defer session.close()
 	go session.readLoop()
 
 	// An interactive shell is the most privileged stream the dashboard offers;
@@ -267,7 +275,11 @@ func newFallbackExecutor(u *url.URL, res *resolved) (remotecommand.Executor, err
 	}
 	websocketExec, err := remotecommand.NewWebSocketExecutor(res.clients.Rest, "GET", u.String())
 	if err != nil {
-		// An older cluster without the WebSocket subprotocol still works.
+		// Not the version fallback — that one happens below, at stream time,
+		// when an old API server refuses the upgrade and IsUpgradeFailure says
+		// so. This constructor only builds a round tripper from the same
+		// rest.Config SPDY was just built from, so failing here is a client
+		// configuration problem and SPDY alone is the best that can be offered.
 		return spdy, nil
 	}
 	return remotecommand.NewFallbackExecutor(websocketExec, spdy, func(err error) bool {

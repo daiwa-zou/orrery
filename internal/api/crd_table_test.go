@@ -14,7 +14,7 @@ import "testing"
 
 func TestTableForDoesNotCacheACRDItCouldNotRead(t *testing.T) {
 	rig := hndNewRig(t)
-	rig.fake.breakCacheResource = "customresourcedefinitions"
+	rig.fake.breakCacheResource = "apiextensions.k8s.io/customresourcedefinitions"
 
 	c, err := rig.api.registry.Get("fake")
 	if err != nil {
@@ -61,7 +61,7 @@ func TestTableForCachesAResourceWithNoPrinterColumns(t *testing.T) {
 
 	// Breaking the CRD cache now must not change the answer, because the
 	// successful resolution is remembered.
-	rig.fake.breakCacheResource = "customresourcedefinitions"
+	rig.fake.breakCacheResource = "apiextensions.k8s.io/customresourcedefinitions"
 	if second := rig.api.tableFor(t.Context(), c, ar); !hasColumn(second, "x_color") {
 		t.Errorf("columns = %v, want the cached answer", keysOf(second))
 	}

@@ -23,6 +23,21 @@ export type MetricsState =
   | { kind: 'loading' }
   /** We could not ask, or never heard back. Says so, and can be retried. */
   | { kind: 'unreachable'; reason: string }
+  /**
+   * The cluster answered, and the answer is that this viewer may not read
+   * metrics.
+   *
+   * Distinct from `unreachable`, which is where a 403 used to land — so a
+   * permission the viewer will never hold was drawn as a transient failure
+   * with a "Try again" link beside it. That is visible on any cluster in
+   * impersonation mode where the user is not bound to metrics.k8s.io: the
+   * panel reads "you are not allowed to list nodes cluster-wide · Try again",
+   * and trying again does the same thing forever. The tiles either side of it
+   * get this right — countSummary has carried Forbidden separately from
+   * Unavailable since the beginning — and this was the panel the distinction
+   * had not reached.
+   */
+  | { kind: 'forbidden'; reason: string }
   /** The cluster answered, and the answer is that it serves no metrics. */
   | { kind: 'absent'; reason: string }
   /** There is data to draw. */
@@ -35,6 +50,17 @@ export interface MetricsQueryLike {
   isPaused?: boolean
   error?: unknown
   failureReason?: unknown
+}
+
+/**
+ * Recognises the API client's 403 without importing it.
+ *
+ * Read structurally, like `message` below, so MetricsQueryLike stays the plain
+ * shape it advertises and a test can hand this a bare `{ status: 403 }`.
+ */
+function isForbidden(reason: unknown): boolean {
+  const withStatus = reason as { status?: unknown } | null | undefined
+  return !!withStatus && withStatus.status === 403
 }
 
 function message(reason: unknown, fallback: string): string {
@@ -60,6 +86,9 @@ export function metricsState(query: MetricsQueryLike): MetricsState {
         }
   }
   if (query.error) {
+    if (isForbidden(query.error)) {
+      return { kind: 'forbidden', reason: message(query.error, 'You may not read metrics on this cluster.') }
+    }
     return { kind: 'unreachable', reason: message(query.error, 'Could not read metrics.') }
   }
   // A parked retry does not resume on its own, so "loading" would be a spinner

@@ -152,16 +152,32 @@ func (a *API) Router() http.Handler {
 
 // recoverer turns a handler panic into a 500 rather than killing the process,
 // and logs it with the request path so it can be found again.
+//
+// http.ErrAbortHandler is passed back up rather than merely left unlogged.
+// Recovering it at all is what breaks it: net/http gives that value its meaning
+// in its own deferred recover, where it drops the connection without a reply
+// and without a stack trace, and a panic this middleware has already caught
+// never reaches there. Skipping the log and returning normally is therefore not
+// "quietly aborting" — it is the opposite. The handler stops mid-response and
+// the server finishes the response for it, so a client that was supposed to see
+// a broken connection sees a complete and truncated one instead, which is the
+// state ErrAbortHandler exists to avoid. Re-panicking is what chi's own
+// Recoverer does, for this reason.
 func (a *API) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if rec := recover(); rec != nil && rec != http.ErrAbortHandler {
-				a.log.Error("panic serving request",
-					"path", r.URL.Path, "method", r.Method, "panic", rec)
-				writeJSON(w, http.StatusInternalServerError, errorBody{
-					Error: "internal", Reason: "the server hit an unexpected error", Code: 500,
-				})
+			rec := recover()
+			if rec == nil {
+				return
 			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			a.log.Error("panic serving request",
+				"path", r.URL.Path, "method", r.Method, "panic", rec)
+			writeJSON(w, http.StatusInternalServerError, errorBody{
+				Error: "internal", Reason: "the server hit an unexpected error", Code: 500,
+			})
 		}()
 		next.ServeHTTP(w, r)
 	})

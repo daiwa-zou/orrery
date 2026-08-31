@@ -786,6 +786,20 @@ export function ResourceList() {
           {w}
         </p>
       ))}
+      {/*
+        The CPU and memory columns are joined in from a second request, and it
+        has its own gaps: a namespace whose metrics could not be read, or a pod
+        cache that could not supply the limits the bars fill against. Those
+        warnings used to stop at the client type, which meant the page drew an
+        empty bar — the console's own way of saying "no limit is declared" —
+        for a reason that had nothing to do with the pod.
+      */}
+      {isPods &&
+        metrics.data?.warnings?.map((w) => (
+          <p key={w} className="border-b border-border bg-warn/8 px-4 py-1.5 text-xs text-warn">
+            {w}
+          </p>
+        ))}
 
       <div className="min-h-0 flex-1 overflow-auto">
         {isLoading && rows.length === 0 ? (

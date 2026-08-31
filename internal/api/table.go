@@ -142,7 +142,7 @@ func finalize(set columnSet, ar cluster.APIResource) columnSet {
 func genericColumns() columnSet {
 	return columnSet{
 		columns: nil,
-		row:     func(u *unstructured.Unstructured) map[string]any { return baseRow(u) },
+		row:     baseRow,
 	}
 }
 

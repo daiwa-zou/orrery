@@ -53,8 +53,17 @@ func TestHasContainerCoversInitContainers(t *testing.T) {
 		t.Error("hasContainer reported a container that is not in the spec")
 	}
 
-	// The error message names the real containers so a typo is self-correcting.
-	if got := containerNames(pod); got != "app, sidecar" {
-		t.Errorf("containerNames = %q, want %q", got, "app, sidecar")
+	// The error message names the real containers so a typo is self-correcting
+	// — which means it has to name every container the check above accepts.
+	// Listing only Spec.Containers answered a misspelt init container with a
+	// parenthesis that omitted init containers entirely, read as "those cannot
+	// be targeted" rather than "you have spelt this one wrong".
+	if got, want := containerNames(pod), "app, sidecar, migrate"; got != want {
+		t.Errorf("containerNames = %q, want %q", got, want)
+	}
+	for _, name := range targetableContainers(pod) {
+		if !hasContainer(pod, name) {
+			t.Errorf("the refusal offers %q as a choice that hasContainer rejects", name)
+		}
 	}
 }

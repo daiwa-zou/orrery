@@ -411,7 +411,17 @@ func (m *InformerManager) List(ctx context.Context, ar APIResource, namespace st
 	if err != nil {
 		return nil, err
 	}
-	var raw []any
+	return e.list(ar, namespace)
+}
+
+// list reads one entry's store. It is split out because Watch has to snapshot
+// the very entry it subscribed to, and not merely an entry for the same
+// resource — see the note there.
+func (e *informerEntry) list(ar APIResource, namespace string) ([]*unstructured.Unstructured, error) {
+	var (
+		raw []any
+		err error
+	)
 	if namespace != "" && ar.Namespaced {
 		raw, err = e.informer.GetIndexer().ByIndex(cache.NamespaceIndex, namespace)
 		if err != nil {
@@ -462,13 +472,26 @@ func (s *Subscription) Close() {
 
 // Watch attaches a subscriber to a resource's shared informer and replays the
 // current cache contents so the client starts from a complete picture.
+//
+// The order is load-bearing: subscribing first and snapshotting second means a
+// change landing between the two arrives twice, which a client keyed by object
+// is free to ignore. The reverse order loses it entirely, and a row that was
+// created during the handshake then sits missing from the table until something
+// else touches it.
+//
+// The snapshot is read from the entry that was subscribed to, not fetched again
+// by resource. Going back through entry() looks equivalent and is not: it can
+// hand back a *different* informer — one built after this one failed and was
+// retired — and the guarantee above is then between a subscription on one cache
+// and a snapshot of another, which is no guarantee at all. It also repeats the
+// whole sync wait for a cache this call has already waited on.
 func (m *InformerManager) Watch(ctx context.Context, ar APIResource, namespace string, buffer int) (*Subscription, []*unstructured.Unstructured, error) {
 	e, err := m.entry(ctx, ar)
 	if err != nil {
 		return nil, nil, err
 	}
 	id, ch := e.bc.Subscribe(buffer)
-	initial, err := m.List(ctx, ar, namespace)
+	initial, err := e.list(ar, namespace)
 	if err != nil {
 		e.bc.Unsubscribe(id)
 		return nil, nil, err

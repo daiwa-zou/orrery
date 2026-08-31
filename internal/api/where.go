@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -215,6 +217,10 @@ func parseWhereTerm(term string, byKey map[string]Column, cols []Column) (whereP
 		if err != nil {
 			return p, badRequest("where: %q is not a number, and %q is numeric", p.value, p.column)
 		}
+		if err := finite(n); err != nil {
+			return p, badRequest("where: %q is not a bound %q can be compared against: %v",
+				p.value, p.column, err)
+		}
 		p.num = n
 	case ColAge:
 		d, err := parseAgeBound(p.value)
@@ -276,22 +282,63 @@ func parseNumber(s string) (float64, error) {
 	return q.AsApproximateFloat64(), nil
 }
 
+// finite rejects the float values that parse without meaning anything as a
+// bound.
+//
+// strconv.ParseFloat accepts "nan", "inf" and "+Infinity" and returns no
+// error, so `?where=restarts>nan` reaches the row loop as a well-formed
+// predicate. Every comparison against NaN is false, so the filter matches
+// nothing; `restarts<inf` is true everywhere, so it matches everything and the
+// filter the caller wrote is silently not applied. Both are served as a
+// perfectly successful 200, and an empty table is the one answer a reader takes
+// at face value — the same conflation of "there is nothing" with "that was not
+// a question" the rest of this package refuses to make. A 400 naming the term
+// is the only honest reply.
+func finite(v float64) error {
+	switch {
+	case math.IsNaN(v):
+		return errors.New("not a number")
+	case math.IsInf(v, 0):
+		return errors.New("infinite")
+	}
+	return nil
+}
+
 // parseAgeBound reads a duration, extending Go's units with the days and weeks
 // that any question about a cluster is actually asked in.
+//
+// time.ParseDuration already refuses a non-finite or overflowing value; the two
+// units added here are scaled by hand, so they have to make the same refusals
+// themselves. Without them `age>infd` saturates to the largest representable
+// duration and reads as "older than anything", and `age>nand` compares false
+// against every row — a filter that quietly answers nothing.
 func parseAgeBound(s string) (time.Duration, error) {
-	if n, ok := strings.CutSuffix(s, "d"); ok {
+	for _, u := range []struct {
+		suffix string
+		scale  time.Duration
+	}{
+		{"d", 24 * time.Hour},
+		{"w", 7 * 24 * time.Hour},
+	} {
+		n, ok := strings.CutSuffix(s, u.suffix)
+		if !ok {
+			continue
+		}
 		v, err := strconv.ParseFloat(n, 64)
 		if err != nil {
 			return 0, err
 		}
-		return time.Duration(v * float64(24*time.Hour)), nil
-	}
-	if n, ok := strings.CutSuffix(s, "w"); ok {
-		v, err := strconv.ParseFloat(n, 64)
-		if err != nil {
+		if err := finite(v); err != nil {
 			return 0, err
 		}
-		return time.Duration(v * float64(7*24*time.Hour)), nil
+		scaled := v * float64(u.scale)
+		// Checked before the conversion: out of range, float-to-int is not
+		// defined to do anything in particular, and on the platforms it does
+		// saturate the result is a bound nobody asked for rather than an error.
+		if scaled > math.MaxInt64 || scaled < math.MinInt64 {
+			return 0, fmt.Errorf("%s%s is out of range", n, u.suffix)
+		}
+		return time.Duration(scaled), nil
 	}
 	return time.ParseDuration(s)
 }

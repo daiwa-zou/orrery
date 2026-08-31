@@ -304,13 +304,18 @@ func (c *Checker) VisibleNamespaces(
 		failed   int
 		firstErr error
 	)
+	// Taken before the goroutine starts, for the reason AllowedMany gives:
+	// otherwise a two-hundred-namespace scan is two hundred goroutines waiting
+	// on sixteen slots, and the ones at the back exist only to hold a stack.
+	// This is the larger of the two batches in this file, so it was the one
+	// paying for it.
 	sem := make(chan struct{}, 16)
 
 	for _, ns := range scan {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(ns string) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 			a := attrs
 			a.Namespace = ns

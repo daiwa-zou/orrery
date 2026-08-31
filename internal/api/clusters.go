@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -181,6 +182,21 @@ func (a *API) checkAccess(w http.ResponseWriter, r *http.Request) {
 
 // cacheStats exposes what the dashboard is currently caching. It is the first
 // thing to look at when a deployment's memory use is surprising.
+//
+// Every informer is filtered through an access review, because the set of
+// running caches reveals which CRDs exist and how many objects each holds. The
+// reviews are asked as one batch rather than one after another: a busy cluster
+// runs dozens of informers, and a serial scan is dozens of round trips to the
+// API server for a panel showing two numbers.
+//
+// A review that could not be *performed* is reported, not dropped. Silently
+// omitting it is the same shape of mistake this package refuses everywhere
+// else — the resource disappears from the list and its objects vanish from the
+// total, and the console renders both as plain facts. "Cached objects: 4,102"
+// is read as a measurement, so a number quietly missing a cache is worse than
+// no number: the reader is looking at this page precisely because they doubt
+// the memory figure, and the one thing it must not do is under-report without
+// saying so.
 func (a *API) cacheStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	res, err := a.clusterOnly(r)
@@ -188,26 +204,50 @@ func (a *API) cacheStats(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	// The stats come straight from the shared cache, and the set of running
-	// informers reveals which CRDs exist and how many objects each holds. Only
-	// report the resources this user could list cluster-wide themselves.
+
 	stats := res.cluster.Informers.Stats()
+	attrs := make([]authz.Attributes, 0, len(stats))
+	for _, s := range stats {
+		attrs = append(attrs, authz.Attributes{
+			Verb: "list", Group: s.Group, Version: s.Version, Resource: s.Resource,
+		})
+	}
+	verdicts := res.cluster.Authz.AllowedMany(ctx,
+		res.cluster.AuthzClient(res.clients),
+		res.cluster.AuthSubject(res.identity),
+		attrs)
+
+	// Filtered in place: Stats returns a slice nothing else holds, and the
+	// write index never overtakes the read index.
 	visible := stats[:0]
 	totalObjects := 0
-	for _, s := range stats {
-		check := *res
-		check.resource = cluster.APIResource{Group: s.Group, Version: s.Version, Name: s.Resource}
-		if err := a.authorize(ctx, &check, "list", "", "", ""); err != nil {
-			continue
+	unchecked := 0
+	for i, s := range stats {
+		switch d := verdicts[authz.AttributesKey(attrs[i])]; {
+		case d.Allowed:
+			visible = append(visible, s)
+			totalObjects += s.Objects
+		case d.Unavailable:
+			unchecked++
 		}
-		visible = append(visible, s)
-		totalObjects += s.Objects
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+
+	out := map[string]any{
 		"cluster":      res.cluster.Cfg.Name,
 		"informers":    visible,
 		"totalObjects": totalObjects,
-	})
+	}
+	if unchecked > 0 {
+		// Named as the count it is, so the reader can tell a short list from a
+		// narrow permission — and told that retrying is the fix, because
+		// nothing about their RBAC is.
+		out["unchecked"] = unchecked
+		out["warning"] = fmt.Sprintf(
+			"Your access to %d of the %d running caches could not be checked, so they are "+
+				"not counted here. This is not a permission problem; try again.",
+			unchecked, len(stats))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // listEvents returns events, optionally narrowed to one object. Event lists

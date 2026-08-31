@@ -192,6 +192,14 @@ export interface MetricsResponse {
     limits?: Usage
   }[]
   totals?: Usage
+  /**
+   * What the reading is missing: a namespace whose metrics could not be read,
+   * or a pod cache that could not be consulted for limits. `available` is true
+   * and the numbers are real — they are simply a lower bound, and a total that
+   * is short without saying so does not read as "some pods are missing", it
+   * reads as "these pods are using less than you thought".
+   */
+  warnings?: string[]
 }
 
 export interface Me {

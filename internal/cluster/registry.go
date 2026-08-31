@@ -223,7 +223,13 @@ func (r *Registry) Get(name string) (*Cluster, error) {
 		return nil, &UnknownClusterError{Name: name}
 	}
 	if e.Cluster == nil {
-		return nil, fmt.Errorf("cluster %q is not available: %v", name, e.Err)
+		// Wrapped, not formatted in. writeErr classifies by walking the chain
+		// with errors.As — an APIStatus becomes that status, a cancellation
+		// becomes a 499 — and %v flattens whatever New failed with into text,
+		// so every unavailable cluster arrived at the client as a plain 500
+		// whatever had actually gone wrong. The reason a cluster is down is the
+		// one thing this error exists to carry.
+		return nil, fmt.Errorf("cluster %q is not available: %w", name, e.Err)
 	}
 	return e.Cluster, nil
 }

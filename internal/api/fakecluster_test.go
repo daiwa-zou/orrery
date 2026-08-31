@@ -93,7 +93,32 @@ type hndFake struct {
 	// discovery keeps advertising it, which is what an unsynced cache looks
 	// like from the API's side: the resource resolves, and then reading it
 	// returns an error rather than an empty list.
+	//
+	// It is written "group/resource", with the core group left off:
+	// "pods", "apps/deployments", "apiextensions.k8s.io/crds". The group is not
+	// decoration. Matching on the bare resource name matched it in *every*
+	// group, and resource names are not unique across groups — "pods" also
+	// names the aggregated metrics API's PodMetrics. Breaking the pod cache
+	// therefore also broke the metrics endpoint, which reads live from
+	// metrics-server and has no cache to break, so a test aiming at one of them
+	// silently hit both and the endpoint under test never ran at all.
 	breakCacheResource string
+}
+
+// breaksCache reports whether the cache knob names this resource. See the note
+// on the field for why the group is part of the answer.
+func (f *hndFake) breaksCache(group, resource string) bool {
+	f.mu.Lock()
+	broken := f.breakCacheResource
+	f.mu.Unlock()
+	if broken == "" {
+		return false
+	}
+	want := resource
+	if group != "" {
+		want = group + "/" + resource
+	}
+	return broken == want
 }
 
 func hndKey(group, version, resource string) string {
@@ -572,6 +597,22 @@ func (f *hndFake) tracer() func(string) {
 	return f.trace
 }
 
+// set applies a knob change under the lock, for a test that has to flip one
+// after the rig is already serving.
+//
+// Setting a field directly is fine before the first request and is how most of
+// these tests do it. It stops being fine once something has read from the fake:
+// informers keep a watch open for the rest of the test, so a bare assignment
+// then races the handler goroutine reading the same field, and the race
+// detector is right to say so. Tests that need a failure mode to appear
+// *partway through* — a resource that listed fine and whose review then stops
+// answering — go through here.
+func (f *hndFake) set(fn func(*hndFake)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn(f)
+}
+
 // filterDiscovery applies hideResource to an APIResourceList.
 func (f *hndFake) filterDiscovery(doc any) any {
 	f.mu.Lock()
@@ -767,10 +808,7 @@ func (f *hndFake) serveResource(w http.ResponseWriter, r *http.Request, group, v
 	// fixture, and one that took a CI run to show itself. Every collection
 	// request for the resource fails instead. Reads of a single object still
 	// work, because it is the cache that is broken and not the resource.
-	f.mu.Lock()
-	broken := f.breakCacheResource
-	f.mu.Unlock()
-	if broken != "" && resource == broken && name == "" {
+	if name == "" && f.breaksCache(group, resource) {
 		hndStatus(w, 500, "InternalError", "the cache for "+resource+" cannot be built")
 		return
 	}
