@@ -486,9 +486,28 @@ func safeReturnTo(v string) string {
 			return home
 		}
 	}
-	// With those gone, anything that still parses to a bare path — no scheme,
-	// no host — is same-origin by construction. This also catches "//host",
-	// which url.Parse reads as a host rather than a path.
+	// A second slash in the authority position is refused here rather than left
+	// to url.Parse, because on this exact question Go and browsers disagree.
+	//
+	// "//evil.example" parses with Host set and was caught below. "///evil.example"
+	// does not: Go reads the third slash as an empty authority and hands back
+	// Host "" and Path "/evil.example", so every check below passed and the
+	// value was returned unchanged. A browser does not read it that way —
+	// resolved against https://console.example.com/login, Chrome makes
+	// "///evil.example" into https://evil.example/, exactly as it does the
+	// two-slash form. So did "////evil.example". That is the open redirect this
+	// function exists to prevent, reachable by adding one character to a string
+	// it already knew to refuse.
+	//
+	// Counting slashes is the check that does not depend on a parser agreeing
+	// with a browser about where an authority begins. A same-origin path starts
+	// with exactly one slash; "/.//evil.example" keeps its dot segment and stays
+	// on this origin, which the browser confirms.
+	if len(v) > 1 && (v[1] == '/' || v[1] == '\\') {
+		return home
+	}
+	// Whatever is left that still parses to a bare path — no scheme, no host —
+	// is same-origin by construction.
 	u, err := url.Parse(v)
 	if err != nil || u.Scheme != "" || u.Host != "" || !strings.HasPrefix(u.Path, "/") {
 		return home
