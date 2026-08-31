@@ -239,15 +239,15 @@ func (c *Checker) AllowedMany(ctx context.Context, client kubernetes.Interface, 
 	return out
 }
 
-// candidates supplies the namespaces to scan, and is called only when a scan
-// is actually needed — never for a cluster-wide subject and never on a cache
-// hit. An error from it aborts the answer rather than being read as an empty
-// scope; see the note at the call.
-//
 // VisibleNamespaces returns the namespaces in which the subject may perform a
 // verb on a resource. It first tries the cluster-wide question, which is one
 // round trip and covers most users, and only falls back to a per-namespace
 // scan for users with narrowly scoped bindings.
+//
+// candidates supplies the namespaces to scan, and is called only when a scan
+// is actually needed — never for a cluster-wide subject and never on a cache
+// hit. An error from it aborts the answer rather than being read as an empty
+// scope; see the note at the call.
 func (c *Checker) VisibleNamespaces(
 	ctx context.Context,
 	client kubernetes.Interface,

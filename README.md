@@ -307,6 +307,10 @@ surface to keep stable, and `cmd/orrery` is the only binary.
 - [web/README.md](web/README.md) — working in the SPA: layout, conventions,
   and the gotchas specific to the frontend.
 - [BRAND.md](docs/BRAND.md) — the mark, the palette and the type.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — the gate to run before pushing, the
+  traps that cost a red CI run, and the distinction this codebase is built on.
+- [SECURITY.md](SECURITY.md) — reporting a vulnerability privately, and what
+  is in scope.
 
 ## License
 
