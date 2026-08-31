@@ -211,6 +211,11 @@ export interface Revision {
   /** Changed lines beyond the cap, so a diff that stops partway is not read as
    *  a complete one. */
   diffTruncated?: number
+  /** This revision is past the per-request diff ceiling, so the line-by-line
+   *  detail was not computed. `changes` and `identical` above are still
+   *  complete — without this flag the row is indistinguishable from one that
+   *  matches the deployed template, which is the opposite of what it means. */
+  diffOmitted?: boolean
 }
 
 export interface ResourceRef {
