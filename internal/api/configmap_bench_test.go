@@ -45,7 +45,7 @@ func BenchmarkProjectConfigMapPage(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		for _, o := range objs[:50] {
-			if set.row(o)["keys"].(int64) != 20 {
+			if set.rowOf(o)["keys"].(int64) != 20 {
 				b.Fatal("wrong key count")
 			}
 		}

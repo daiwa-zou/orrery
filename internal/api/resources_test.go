@@ -335,8 +335,9 @@ func TestPathNamespacePlaceholder(t *testing.T) {
 
 // restartsColumns projects the one value these tests sort on.
 func restartsColumns(byName map[string]int64) columnSet {
-	return columnSet{row: func(u *unstructured.Unstructured) map[string]any {
-		return map[string]any{"name": u.GetName(), "restarts": byName[u.GetName()]}
+	return columnSet{row: func(u *unstructured.Unstructured, r map[string]any) {
+		r["name"] = u.GetName()
+		r["restarts"] = byName[u.GetName()]
 	}}
 }
 

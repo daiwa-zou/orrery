@@ -437,7 +437,7 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 // reason labelsOf gives: it is read here and encoded, never held or changed,
 // and copying a map per row to serialise it is a copy nobody reads.
 func buildRow(o *unstructured.Unstructured, set columnSet, withLabels bool) map[string]any {
-	row := set.row(o)
+	row := set.rowOf(o)
 	if withLabels {
 		if l := labelsOf(o); len(l) > 0 {
 			row["_labels"] = l
@@ -518,11 +518,22 @@ func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, de
 	if key == "" {
 		key = "name"
 	}
+	// One row map, refilled per object. The sort needs one cell from each of
+	// them and keeps none of the rows, so a fresh map per object was fifty
+	// thousand allocations and sixty megabytes to read fifty thousand values
+	// — measured by BenchmarkSortByProjected50k, which was allocating more
+	// than the objects themselves cost to hold.
+	//
+	// clear is not optional. The projectors write conditional keys —
+	// namespace, _terminating, and per-table ones like claim — so a key the
+	// previous object had and this one does not would still be sitting there,
+	// and sorting by that column would read the wrong object's value.
 	cells := make([]any, len(objs))
+	scratch := make(map[string]any, 12)
 	for i, o := range objs {
-		// set.row allocates a map; taking one value out of it and letting it
-		// go is the whole point.
-		cells[i] = set.row(o)[key]
+		clear(scratch)
+		set.row(o, scratch)
+		cells[i] = scratch[key]
 	}
 
 	order := make([]int, len(objs))
@@ -581,7 +592,46 @@ func compareCell(x, y any) int {
 			}
 		}
 	}
+	// The pairs above match like with like, and a column that holds one type
+	// never gets past them. A column that holds two numeric types does: the
+	// unstructured decoder gives int64 for a whole JSON number and float64 for
+	// a fractional one, so a CRD printer column over a field that reads 0 on
+	// one object and 0.5 on the next arrives here mixed. Without this the pair
+	// fell to the text fallback, which sorts a numeric column lexicographically
+	// and puts 10 before 9 — the misordering the type switch above exists to
+	// prevent, reappearing on exactly the column the reader sorted for its
+	// numbers.
+	if xn, ok := orderableNumber(x); ok {
+		if yn, ok := orderableNumber(y); ok {
+			return cmp.Compare(xn, yn)
+		}
+	}
 	return strings.Compare(strings.ToLower(fmt.Sprint(x)), strings.ToLower(fmt.Sprint(y)))
+}
+
+// orderableNumber reports a cell's numeric value, for cells that are already
+// numbers.
+//
+// Deliberately unlike cellNumber, which also parses numeric-looking strings:
+// that is the right reading for a `where` bound, where the reader has asked
+// about a quantity, and the wrong one for sorting, where it would pull strings
+// out of the text ordering the rest of their column is sorted in. The float64
+// return loses precision above 2^53, which only mixed int64/float64 columns can
+// reach — same-typed int64 cells are compared as int64 above.
+func orderableNumber(cell any) (float64, bool) {
+	switch v := cell.(type) {
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	}
+	return 0, false
 }
 
 // listFilter is the parsed narrowing criteria shared by the list endpoint and
@@ -700,7 +750,7 @@ func (f listFilter) matches(o *unstructured.Unstructured) bool {
 	if len(f.where) > 0 {
 		// Projecting is the expensive part, so it happens once per object and
 		// only when something actually asks for a column.
-		row := f.set.row(o)
+		row := f.set.rowOf(o)
 		for _, p := range f.where {
 			if !p.matches(row) {
 				return false

@@ -35,13 +35,33 @@ type Column struct {
 	Align    string `json:"align,omitempty"`
 }
 
-// rowFunc projects one object into the cells of its row.
-type rowFunc func(u *unstructured.Unstructured) map[string]any
+// rowFunc fills r with the cells of one object's row.
+//
+// It writes into a map the caller owns rather than returning a fresh one so
+// that a caller reading one cell from each of fifty thousand objects — which
+// is what sorting by a column is — can hand the same map back fifty thousand
+// times. A projector that returned a map made every such read allocate one.
+// A reused map must be cleared first: the keys here are conditional, and a
+// namespace or a _terminating flag left over from the previous object would
+// be read as this one's.
+type rowFunc func(u *unstructured.Unstructured, r map[string]any)
 
 // columnSet pairs a table definition with its projector.
 type columnSet struct {
 	columns []Column
 	row     rowFunc
+}
+
+// rowOf projects one object into a row of its own, for the callers that keep
+// what they get. The reading callers — sorting, and the column predicates —
+// hand the projector a map they reuse instead.
+//
+// 12 is a little over the widest built-in table, so the common row is filled
+// without the map having to grow.
+func (s columnSet) rowOf(u *unstructured.Unstructured) map[string]any {
+	r := make(map[string]any, 12)
+	s.row(u, r)
+	return r
 }
 
 // sortable reports whether key names a column of this table. Tables are short
@@ -69,19 +89,33 @@ var ageColumn = Column{Key: "age", Label: "Age", Type: ColAge, Align: "right"}
 
 // baseRow supplies the fields every row carries, including the identity the
 // frontend needs to build links and issue follow-up requests.
-func baseRow(u *unstructured.Unstructured) map[string]any {
-	row := map[string]any{
-		"name": u.GetName(),
-		"uid":  string(u.GetUID()),
-		"age":  u.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05Z"),
-	}
+func baseRow(u *unstructured.Unstructured, row map[string]any) {
+	row["name"] = u.GetName()
+	row["uid"] = string(u.GetUID())
+	row["age"] = u.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05Z")
 	if ns := u.GetNamespace(); ns != "" {
 		row["namespace"] = ns
 	}
-	if ts := u.GetDeletionTimestamp(); ts != nil {
+	if terminating(u) {
 		row["_terminating"] = true
 	}
-	return row
+}
+
+// terminating reports whether the object is being deleted.
+//
+// Whether the stamp is set, not what it says: GetDeletionTimestamp parses it
+// and returns a fresh *metav1.Time on every call, which came to a hundred
+// megabytes of garbage over a fifty-thousand-object list to answer a
+// yes-or-no question. Reading it as present-means-terminating is also the
+// more robust answer — a stamp too malformed to parse still means the object
+// is on its way out, and the old code called that one alive.
+func terminating(u *unstructured.Unstructured) bool {
+	v, found, err := unstructured.NestedFieldNoCopy(u.Object, "metadata", "deletionTimestamp")
+	if !found || err != nil {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s != ""
 }
 
 // builtinColumns maps "group/Kind" to a hand-tuned table. Everything not
@@ -104,15 +138,14 @@ func init() {
 		{Key: "restarts", Label: "Restarts", Type: ColNumber, Align: "right"},
 		{Key: "node", Label: "Node", Type: ColText, Priority: 1},
 		{Key: "podIP", Label: "IP", Type: ColText, Priority: 2},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		ready, total, restarts := podContainerSummary(u)
 		r["status"] = podStatus(u)
 		r["ready"] = fmt.Sprintf("%d/%d", ready, total)
 		r["restarts"] = restarts
 		r["node"] = str(u, "spec", "nodeName")
 		r["podIP"] = str(u, "status", "podIP")
-		return r
 	})
 
 	reg("apps", "Deployment", []Column{
@@ -120,24 +153,22 @@ func init() {
 		{Key: "upToDate", Label: "Up-to-date", Type: ColNumber, Align: "right", Priority: 1},
 		{Key: "available", Label: "Available", Type: ColNumber, Align: "right", Priority: 1},
 		{Key: "images", Label: "Images", Type: ColList, Priority: 2},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		desired := specReplicas(u)
 		r["ready"] = fmt.Sprintf("%d/%d", i64(u, "status", "readyReplicas"), desired)
 		r["upToDate"] = i64(u, "status", "updatedReplicas")
 		r["available"] = i64(u, "status", "availableReplicas")
 		r["images"] = containerImages(u, "spec", "template", "spec")
-		return r
 	})
 
 	reg("apps", "StatefulSet", []Column{
 		{Key: "ready", Label: "Ready", Type: ColRatio, Align: "right"},
 		{Key: "images", Label: "Images", Type: ColList, Priority: 2},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["ready"] = fmt.Sprintf("%d/%d", i64(u, "status", "readyReplicas"), specReplicas(u))
 		r["images"] = containerImages(u, "spec", "template", "spec")
-		return r
 	})
 
 	reg("apps", "DaemonSet", []Column{
@@ -146,46 +177,43 @@ func init() {
 		{Key: "ready", Label: "Ready", Type: ColNumber, Align: "right"},
 		{Key: "upToDate", Label: "Up-to-date", Type: ColNumber, Align: "right", Priority: 1},
 		{Key: "available", Label: "Available", Type: ColNumber, Align: "right", Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["desired"] = i64(u, "status", "desiredNumberScheduled")
 		r["current"] = i64(u, "status", "currentNumberScheduled")
 		r["ready"] = i64(u, "status", "numberReady")
 		r["upToDate"] = i64(u, "status", "updatedNumberScheduled")
 		r["available"] = i64(u, "status", "numberAvailable")
-		return r
 	})
 
 	reg("apps", "ReplicaSet", []Column{
 		{Key: "desired", Label: "Desired", Type: ColNumber, Align: "right"},
 		{Key: "current", Label: "Current", Type: ColNumber, Align: "right"},
 		{Key: "ready", Label: "Ready", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["desired"] = specReplicas(u)
 		r["current"] = i64(u, "status", "replicas")
 		r["ready"] = i64(u, "status", "readyReplicas")
-		return r
 	})
 
 	reg("", "ReplicationController", []Column{
 		{Key: "desired", Label: "Desired", Type: ColNumber, Align: "right"},
 		{Key: "current", Label: "Current", Type: ColNumber, Align: "right"},
 		{Key: "ready", Label: "Ready", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["desired"] = specReplicas(u)
 		r["current"] = i64(u, "status", "replicas")
 		r["ready"] = i64(u, "status", "readyReplicas")
-		return r
 	})
 
 	reg("batch", "Job", []Column{
 		{Key: "status", Label: "Status", Type: ColStatus},
 		{Key: "completions", Label: "Completions", Type: ColRatio, Align: "right"},
 		{Key: "duration", Label: "Duration", Type: ColText, Align: "right", Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		want, ok := i64ok(u, "spec", "completions")
 		if !ok {
 			want = 1
@@ -193,7 +221,6 @@ func init() {
 		r["completions"] = fmt.Sprintf("%d/%d", i64(u, "status", "succeeded"), want)
 		r["status"] = jobStatus(u)
 		r["duration"] = jobDuration(u)
-		return r
 	})
 
 	reg("batch", "CronJob", []Column{
@@ -201,13 +228,12 @@ func init() {
 		{Key: "suspend", Label: "Suspended", Type: ColBool},
 		{Key: "active", Label: "Active", Type: ColNumber, Align: "right"},
 		{Key: "lastSchedule", Label: "Last schedule", Type: ColAge, Align: "right", Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["schedule"] = str(u, "spec", "schedule")
 		r["suspend"] = boolean(u, "spec", "suspend")
 		r["active"] = int64(len(slice(u, "status", "active")))
 		r["lastSchedule"] = str(u, "status", "lastScheduleTime")
-		return r
 	})
 
 	reg("", "Service", []Column{
@@ -215,19 +241,18 @@ func init() {
 		{Key: "clusterIP", Label: "Cluster IP", Type: ColText},
 		{Key: "externalIP", Label: "External IP", Type: ColText, Priority: 1},
 		{Key: "ports", Label: "Ports", Type: ColText, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["type"] = str(u, "spec", "type")
 		r["clusterIP"] = str(u, "spec", "clusterIP")
 		r["externalIP"] = serviceExternalIP(u)
 		r["ports"] = servicePorts(u)
-		return r
 	})
 
 	reg("", "Endpoints", []Column{
 		{Key: "endpoints", Label: "Endpoints", Type: ColText},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		var eps []string
 		for _, s := range slice(u, "subsets") {
 			sm := mapOf(s)
@@ -245,15 +270,14 @@ func init() {
 			}
 		}
 		r["endpoints"] = joinLimit(eps, 3)
-		return r
 	})
 
 	reg("networking.k8s.io", "Ingress", []Column{
 		{Key: "class", Label: "Class", Type: ColText},
 		{Key: "hosts", Label: "Hosts", Type: ColText},
 		{Key: "address", Label: "Address", Type: ColText, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["class"] = str(u, "spec", "ingressClassName")
 		var hosts []string
 		for _, rule := range slice(u, "spec", "rules") {
@@ -272,43 +296,39 @@ func init() {
 			}
 		}
 		r["address"] = joinLimit(addrs, 2)
-		return r
 	})
 
 	reg("networking.k8s.io", "IngressClass", []Column{
 		{Key: "controller", Label: "Controller", Type: ColText},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["controller"] = str(u, "spec", "controller")
-		return r
 	})
 
 	reg("networking.k8s.io", "NetworkPolicy", []Column{
 		{Key: "podSelector", Label: "Pod selector", Type: ColText},
 		{Key: "types", Label: "Policy types", Type: ColList, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		sel, _, _ := unstructured.NestedStringMap(u.Object, "spec", "podSelector", "matchLabels")
 		r["podSelector"] = formatSelector(sel)
 		r["types"] = strSlice(u, "spec", "policyTypes")
-		return r
 	})
 
 	reg("", "ConfigMap", []Column{
 		{Key: "keys", Label: "Keys", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		data, _ := mapAt(u, "data")
 		bin, _ := mapAt(u, "binaryData")
 		r["keys"] = int64(len(data) + len(bin))
-		return r
 	})
 
 	reg("", "Secret", []Column{
 		{Key: "type", Label: "Type", Type: ColText},
 		{Key: "keys", Label: "Keys", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["type"] = str(u, "type")
 		// The cache holds redacted secrets: key names survive, values do not.
 		if red, ok := mapAt(u, "orrery.io/redacted", "data"); ok {
@@ -317,7 +337,6 @@ func init() {
 			data, _ := mapAt(u, "data")
 			r["keys"] = int64(len(data))
 		}
-		return r
 	})
 
 	reg("", "PersistentVolumeClaim", []Column{
@@ -326,14 +345,13 @@ func init() {
 		{Key: "capacity", Label: "Capacity", Type: ColText, Align: "right"},
 		{Key: "accessModes", Label: "Access modes", Type: ColList, Priority: 1},
 		{Key: "storageClass", Label: "Storage class", Type: ColText, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["status"] = str(u, "status", "phase")
 		r["volume"] = str(u, "spec", "volumeName")
 		r["capacity"] = str(u, "status", "capacity", "storage")
 		r["accessModes"] = strSlice(u, "spec", "accessModes")
 		r["storageClass"] = str(u, "spec", "storageClassName")
-		return r
 	})
 
 	reg("", "PersistentVolume", []Column{
@@ -343,8 +361,8 @@ func init() {
 		{Key: "reclaimPolicy", Label: "Reclaim", Type: ColText, Priority: 2},
 		{Key: "claim", Label: "Claim", Type: ColText, Priority: 1},
 		{Key: "storageClass", Label: "Storage class", Type: ColText, Priority: 2},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["status"] = str(u, "status", "phase")
 		r["capacity"] = str(u, "spec", "capacity", "storage")
 		r["accessModes"] = strSlice(u, "spec", "accessModes")
@@ -353,7 +371,6 @@ func init() {
 			r["claim"] = ns + "/" + str(u, "spec", "claimRef", "name")
 		}
 		r["storageClass"] = str(u, "spec", "storageClassName")
-		return r
 	})
 
 	reg("storage.k8s.io", "StorageClass", []Column{
@@ -361,13 +378,12 @@ func init() {
 		{Key: "default", Label: "Default", Type: ColBool},
 		{Key: "reclaimPolicy", Label: "Reclaim", Type: ColText, Priority: 1},
 		{Key: "bindingMode", Label: "Binding mode", Type: ColText, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["provisioner"] = str(u, "provisioner")
 		r["reclaimPolicy"] = str(u, "reclaimPolicy")
 		r["bindingMode"] = str(u, "volumeBindingMode")
 		r["default"] = u.GetAnnotations()["storageclass.kubernetes.io/is-default-class"] == "true"
-		return r
 	})
 
 	reg("", "Node", []Column{
@@ -376,8 +392,8 @@ func init() {
 		{Key: "version", Label: "Version", Type: ColText, Priority: 1},
 		{Key: "internalIP", Label: "Internal IP", Type: ColText, Priority: 2},
 		{Key: "os", Label: "OS image", Type: ColText, Priority: 3},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["status"] = nodeStatus(u)
 		r["roles"] = nodeRoles(u)
 		r["version"] = str(u, "status", "nodeInfo", "kubeletVersion")
@@ -389,15 +405,13 @@ func init() {
 				break
 			}
 		}
-		return r
 	})
 
 	reg("", "Namespace", []Column{
 		{Key: "status", Label: "Status", Type: ColStatus},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["status"] = str(u, "status", "phase")
-		return r
 	})
 
 	reg("", "Event", []Column{
@@ -407,8 +421,8 @@ func init() {
 		{Key: "message", Label: "Message", Type: ColText},
 		{Key: "count", Label: "Count", Type: ColNumber, Align: "right", Priority: 1},
 		{Key: "lastSeen", Label: "Last seen", Type: ColAge, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["type"] = str(u, "type")
 		r["reason"] = str(u, "reason")
 		r["message"] = str(u, "message")
@@ -423,22 +437,19 @@ func init() {
 			last = str(u, "firstTimestamp")
 		}
 		r["lastSeen"] = last
-		return r
 	})
 
 	reg("", "ServiceAccount", []Column{
 		{Key: "secrets", Label: "Secrets", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["secrets"] = int64(len(slice(u, "secrets")))
-		return r
 	})
 
 	rbacRoleCols := []Column{{Key: "rules", Label: "Rules", Type: ColNumber, Align: "right"}}
-	rbacRoleRow := func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	rbacRoleRow := func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["rules"] = int64(len(slice(u, "rules")))
-		return r
 	}
 	reg("rbac.authorization.k8s.io", "Role", rbacRoleCols, rbacRoleRow)
 	reg("rbac.authorization.k8s.io", "ClusterRole", rbacRoleCols, rbacRoleRow)
@@ -447,8 +458,8 @@ func init() {
 		{Key: "role", Label: "Role", Type: ColText},
 		{Key: "subjects", Label: "Subjects", Type: ColText},
 	}
-	bindRow := func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	bindRow := func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["role"] = str(u, "roleRef", "kind") + "/" + str(u, "roleRef", "name")
 		var subs []string
 		for _, s := range slice(u, "subjects") {
@@ -456,7 +467,6 @@ func init() {
 			subs = append(subs, mstr(m, "kind")+"/"+mstr(m, "name"))
 		}
 		r["subjects"] = joinLimit(subs, 3)
-		return r
 	}
 	reg("rbac.authorization.k8s.io", "RoleBinding", bindCols, bindRow)
 	reg("rbac.authorization.k8s.io", "ClusterRoleBinding", bindCols, bindRow)
@@ -466,35 +476,32 @@ func init() {
 		{Key: "replicas", Label: "Replicas", Type: ColNumber, Align: "right"},
 		{Key: "min", Label: "Min", Type: ColNumber, Align: "right", Priority: 1},
 		{Key: "max", Label: "Max", Type: ColNumber, Align: "right", Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["reference"] = str(u, "spec", "scaleTargetRef", "kind") + "/" + str(u, "spec", "scaleTargetRef", "name")
 		r["replicas"] = i64(u, "status", "currentReplicas")
 		r["min"] = i64(u, "spec", "minReplicas")
 		r["max"] = i64(u, "spec", "maxReplicas")
-		return r
 	})
 
 	reg("policy", "PodDisruptionBudget", []Column{
 		{Key: "minAvailable", Label: "Min available", Type: ColText, Align: "right"},
 		{Key: "maxUnavailable", Label: "Max unavailable", Type: ColText, Align: "right"},
 		{Key: "allowedDisruptions", Label: "Allowed disruptions", Type: ColNumber, Align: "right"},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["minAvailable"] = intOrString(u, "spec", "minAvailable")
 		r["maxUnavailable"] = intOrString(u, "spec", "maxUnavailable")
 		r["allowedDisruptions"] = i64(u, "status", "disruptionsAllowed")
-		return r
 	})
 
 	reg("scheduling.k8s.io", "PriorityClass", []Column{
 		{Key: "value", Label: "Value", Type: ColNumber, Align: "right"},
 		{Key: "globalDefault", Label: "Global default", Type: ColBool},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["value"] = i64(u, "value")
 		r["globalDefault"] = boolean(u, "globalDefault")
-		return r
 	})
 
 	reg("apiextensions.k8s.io", "CustomResourceDefinition", []Column{
@@ -502,8 +509,8 @@ func init() {
 		{Key: "kind", Label: "Kind", Type: ColText},
 		{Key: "scope", Label: "Scope", Type: ColText},
 		{Key: "versions", Label: "Versions", Type: ColList, Priority: 1},
-	}, func(u *unstructured.Unstructured) map[string]any {
-		r := baseRow(u)
+	}, func(u *unstructured.Unstructured, r map[string]any) {
+		baseRow(u, r)
 		r["group"] = str(u, "spec", "group")
 		r["kind"] = str(u, "spec", "names", "kind")
 		r["scope"] = str(u, "spec", "scope")
@@ -512,7 +519,6 @@ func init() {
 			vs = append(vs, mstr(mapOf(v), "name"))
 		}
 		r["versions"] = vs
-		return r
 	})
 }
 
@@ -577,7 +583,7 @@ func podContainerSummary(u *unstructured.Unstructured) (ready, total, restarts i
 // informative than status.phase alone: it surfaces the container-level reason
 // that actually explains why a pod is not running.
 func podStatus(u *unstructured.Unstructured) string {
-	if u.GetDeletionTimestamp() != nil {
+	if terminating(u) {
 		return "Terminating"
 	}
 	if reason := str(u, "status", "reason"); reason != "" {

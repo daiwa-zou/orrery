@@ -459,7 +459,20 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ checks }) },
       signal,
     )
-    return checks.map((_, i) => res.results[String(i)] ?? { allowed: false })
+    // The server answers every index, so a gap here is a contract violation
+    // rather than a refusal — and `{ allowed: false }` would report it as one.
+    // Callers separate the two deliberately: useCatalogAccess reads
+    // `!d.unavailable ? d.allowed : undefined` so a review that did not happen
+    // leaves a row undimmed, and a bare false walked straight past that and
+    // told the reader they lack a permission nobody ever asked about.
+    return checks.map(
+      (_, i) =>
+        res.results[String(i)] ?? {
+          allowed: false,
+          unavailable: true,
+          reason: 'the server did not answer this access check',
+        },
+    )
   },
 
   scale: (cluster: string, ref: Omit<ResourceRef, 'cluster'>, replicas: number) =>

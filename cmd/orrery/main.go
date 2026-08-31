@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -18,23 +19,45 @@ import (
 // -ldflags "-X main.version=v1.2.3"; source builds report "dev".
 var version = "dev"
 
-func main() {
+func main() { os.Exit(run(os.Args[1:])) }
+
+// run is main's body with the arguments passed in and the exit code returned
+// rather than taken, so the codes this binary promises can be tested.
+//
+// Those codes are part of the interface: an init container, a systemd unit or
+// a CI job distinguishes a configuration it can fix (2) from a cluster it
+// cannot reach (1), and nothing else in the process reports them. With os.Exit
+// inlined here there was no way to observe one without a subprocess, so none
+// of it was covered.
+//
+// Its own FlagSet rather than the package-level one, because two tests parsing
+// arguments would otherwise redefine flags on the same global and panic.
+func run(args []string) int {
+	fs := flag.NewFlagSet("orrery", flag.ContinueOnError)
 	var (
-		configPath = flag.String("config", os.Getenv("ORRERY_CONFIG"), "path to the YAML configuration file")
-		printCfg   = flag.Bool("print-config", false, "print the resolved configuration and exit")
-		printVer   = flag.Bool("version", false, "print the version and exit")
+		configPath = fs.String("config", os.Getenv("ORRERY_CONFIG"), "path to the YAML configuration file")
+		printCfg   = fs.Bool("print-config", false, "print the resolved configuration and exit")
+		printVer   = fs.Bool("version", false, "print the version and exit")
 	)
-	flag.Parse()
+	if err := fs.Parse(args); err != nil {
+		// Parse has already printed the reason and the usage. The codes match
+		// what ExitOnError would have produced: -h is a question that was
+		// answered, a bad flag is a failure.
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
 
 	if *printVer {
 		fmt.Println("orrery", version)
-		return
+		return 0
 	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
-		os.Exit(2)
+		return 2
 	}
 
 	log := newLogger(cfg.Log)
@@ -43,7 +66,7 @@ func main() {
 
 	if *printCfg {
 		printResolved(cfg)
-		return
+		return 0
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -52,12 +75,13 @@ func main() {
 	srv, err := server.New(ctx, cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := srv.Run(ctx); err != nil {
 		log.Error("server stopped", "err", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func newLogger(cfg config.LogConfig) *slog.Logger {

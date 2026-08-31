@@ -57,15 +57,28 @@ func (m *MemoryStore) sweep() {
 		case <-m.stop:
 			return
 		case now := <-t.C:
-			m.mu.Lock()
-			for id, s := range m.sessions {
-				if s.Expired(now, m.idle) {
-					delete(m.sessions, id)
-				}
-			}
-			m.mu.Unlock()
+			m.evictExpired(now)
 		}
 	}
+}
+
+// evictExpired drops every session that has run out, reporting how many went.
+//
+// Separate from the loop so it can be tested without a minute of waiting. It
+// is also the only thing that reclaims an abandoned session: Get evicts what
+// it reads, and a session nobody comes back for is never read again, so
+// without this the map only ever grows.
+func (m *MemoryStore) evictExpired(now time.Time) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, s := range m.sessions {
+		if s.Expired(now, m.idle) {
+			delete(m.sessions, id)
+			n++
+		}
+	}
+	return n
 }
 
 func (m *MemoryStore) Get(_ context.Context, id string) (*Session, error) {
