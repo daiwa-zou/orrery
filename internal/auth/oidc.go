@@ -392,7 +392,28 @@ func (a *Authenticator) Refresh(ctx context.Context, s *Session) error {
 		if r.Err != nil {
 			return r.Err
 		}
-		*s = *r.Val.(*Session)
+		// Cloned, not struct-copied. Deduplication means every caller waiting
+		// on this key is handed the *same* *Session, so a plain copy leaves
+		// each of their sessions pointing at one User.Groups backing array —
+		// which is the precise arrangement Clone exists to prevent, and its
+		// comment says why it matters here: Groups becomes the impersonation
+		// header and the SubjectAccessReview subject, so a group written
+		// through an alias is a group granted to whoever else holds a copy.
+		//
+		// A hazard rather than a live bug, and worth being exact about which.
+		// An append cannot cross sessions here: Clone and both Stores build
+		// Groups with append([]string(nil), ...), so capacity equals length
+		// and appending always reallocates. What sharing still exposes is a
+		// write through an index and a sort in place — neither of which
+		// anything does today.
+		//
+		// That is the reason to close it now rather than when it bites. It
+		// takes two concurrent refreshes of one session to arise at all, every
+		// other path through the store hands back independent copies, and the
+		// capacity that makes appends safe is an accident of how the slices
+		// happen to be built rather than anything stated. A future sort would
+		// look correct everywhere it was tested.
+		*s = *r.Val.(*Session).Clone()
 		return nil
 	}
 }
