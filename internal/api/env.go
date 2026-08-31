@@ -282,6 +282,14 @@ func podFieldValue(pod *corev1.Pod, path string) (string, error) {
 		return pod.Annotations[key], nil
 	}
 	switch path {
+	// Unsubscripted, both are the whole map. The kubelet injects it as one
+	// value of sorted `key="value"` lines, and this renders it the same way:
+	// reporting the path unsupported instead described a running container's
+	// environment as broken when the only thing missing was here.
+	case "metadata.labels":
+		return formatFieldMap(pod.Labels), nil
+	case "metadata.annotations":
+		return formatFieldMap(pod.Annotations), nil
 	case "metadata.name":
 		return pod.Name, nil
 	case "metadata.namespace":
@@ -304,6 +312,22 @@ func podFieldValue(pod *corev1.Pod, path string) (string, error) {
 		return strings.Join(ips, ","), nil
 	}
 	return "", fmt.Errorf("unsupported fieldRef %q", path)
+}
+
+// formatFieldMap renders a whole label or annotation map the way the kubelet
+// does for an unsubscripted fieldRef: one sorted `key="value"` line each, with
+// no trailing newline. The quoting matters as much as the order — an
+// annotation whose value contains a newline would otherwise be
+// indistinguishable from two annotations.
+func formatFieldMap(m map[string]string) string {
+	var b strings.Builder
+	for i, k := range sortedKeys(m) {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%s=%q", k, m[k])
+	}
+	return b.String()
 }
 
 // subscript extracts k from `prefix['k']`.
