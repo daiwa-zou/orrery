@@ -275,6 +275,14 @@ single `…` entry, and a diff past 120 lines stops with `diffTruncated` countin
 the changed lines left out — a diff that ends mid-change must not read as a
 complete one.
 
+Diffs are computed for at most the 25 most recent revisions. The list is every
+ReplicaSet the deployment owns — `revisionHistoryLimit`, and so whatever an
+operator set it to — and each diff is a longest-common-subsequence table over
+two pod templates, which is quadratic: at the input cap one costs about 8.6ms
+and 16.3MB. Revisions past the ceiling are still listed and still carry
+`changes` and `identical`; only the line detail stops, and `diffOmitted` marks
+them so a row with no `diff` is not read as one with nothing to show.
+
 `identical` says the template matches the deployed one exactly, so rolling back
 would change nothing. It is not implied by an empty `changes`: a difference this
 server does not name leaves both empty and `identical` false. The comparison

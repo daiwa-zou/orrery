@@ -443,6 +443,17 @@ export function RollbackButton({
                         </button>
                       </>
                     )}
+                    {/* Past the server's per-request diff ceiling. The summary
+                        above is still complete, so the row is not missing an
+                        answer — only the detail behind it. Said out loud
+                        because an absent expander otherwise reads as "there is
+                        nothing to show", which is what identical means. */}
+                    {rev.diffOmitted && (
+                      <span className="mt-1 block text-[11px] text-ink-faint">
+                        the line-by-line diff was not computed for this revision — it is
+                        further back than this view diffs
+                      </span>
+                    )}
                   </td>
                   {/* Ready of desired: a revision that never became ready is a
                       poor thing to go back to, and this is the only warning of

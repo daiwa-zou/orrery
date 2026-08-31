@@ -48,6 +48,12 @@ type revisionSummary struct {
 	// DiffTruncated counts the changed lines beyond the cap, so a diff that
 	// stops partway does not read as a complete one.
 	DiffTruncated int `json:"diffTruncated,omitempty"`
+	// DiffOmitted marks a revision past the per-request diff ceiling: Changes
+	// and Identical above are still complete, and only the line-by-line detail
+	// was not computed. Without it such a revision carries no Diff and no
+	// reason, which is exactly what Identical looks like — and "rolling back
+	// here would change nothing" is the one wrong answer available.
+	DiffOmitted bool `json:"diffOmitted,omitempty"`
 	// Identical says the template matches the one deployed now exactly, so a
 	// rollback would change nothing. Empty Changes does not imply it: a
 	// difference this server does not name leaves both empty and false.
@@ -118,6 +124,24 @@ func (a *API) deploymentRevisions(ctx context.Context, res *resolved, namespace,
 // as truncated rather than shipped in full to a modal nobody will read it in.
 const maxDiffLines = 120
 
+// maxDiffedRevisions bounds how many line diffs one request will compute.
+//
+// maxDiffLines caps what a diff *returns*; nothing capped how many were run.
+// The list is every ReplicaSet the deployment owns, which is
+// revisionHistoryLimit and therefore whatever an operator set it to, and each
+// entry costs a longest-common-subsequence table over two pod templates. That
+// table is quadratic, and BenchmarkLineDiff2000 puts one at 8.6ms and 16.3MB
+// at the 2000-line input cap — so a deployment keeping two hundred revisions of
+// a large template is well over a second of CPU and gigabytes of allocation
+// churn, for one GET that any viewer of the deployment may make.
+//
+// Twenty-five is well past the point of usefulness. The rows are sorted newest
+// first and the question is which recent revision to go back to; kubectl's own
+// default history limit is ten. Every revision is still listed, and still
+// carries its named Changes and its Identical verdict — both cheap and neither
+// quadratic. Only the line-by-line detail stops, and DiffOmitted says where.
+const maxDiffedRevisions = 25
+
 // templateLines renders a revision's pod template as the YAML lines to diff.
 //
 // YAML rather than JSON because it is the shape the object is read in
@@ -175,7 +199,14 @@ func (a *API) rolloutHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Rendered once, not once per revision. Every row diffs against the same
+	// deployed template, and templateLines marshals it to YAML and splits it —
+	// work that does not change between iterations and was being repeated for
+	// every revision in the history.
+	currentLines := templateLines(currentRS)
+
 	out := make([]revisionSummary, 0, len(owned))
+	diffed := 0
 	for _, rs := range owned {
 		current := revisionOf(rs) == currentRev
 		summary := revisionSummary{
@@ -195,9 +226,20 @@ func (a *API) rolloutHistory(w http.ResponseWriter, r *http.Request) {
 				summary.Changes = changes
 			}
 			summary.Identical = identical
-			if !identical {
-				diff := lineDiff(templateLines(currentRS), templateLines(rs), 2)
+			switch {
+			case identical:
+				// Nothing to diff.
+			case diffed < maxDiffedRevisions:
+				diff := lineDiff(currentLines, templateLines(rs), 2)
 				summary.Diff, summary.DiffTruncated = truncateDiff(diff, maxDiffLines)
+				diffed++
+			default:
+				// Past the ceiling: the summary above is still complete, and
+				// only the line-by-line detail is missing. Said so explicitly,
+				// because a revision with no Diff and no flag is one the
+				// console draws as having nothing to show — which is what
+				// Identical means, and this is not that.
+				summary.DiffOmitted = true
 			}
 		}
 		out = append(out, summary)
