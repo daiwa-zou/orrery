@@ -100,7 +100,7 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		Verb: "watch", Group: res.resource.Group, Version: res.resource.Version,
 		Resource: res.resource.Name, Namespace: watched,
 	}
-	visible, err := a.watchScope(r.Context(), res, attrs, namespaces)
+	visible, warnings, err := a.watchScope(r.Context(), res, attrs, namespaces)
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
@@ -133,12 +133,21 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, buildRow(o, set, withLabels))
 	}
-	if err := ws.WriteJSON(map[string]any{
+	// The snapshot says what it is missing, in the same sentences the list
+	// endpoint uses. A stream that quietly dropped a namespace shows a table
+	// that is wrong for as long as it stays open — and wrong in the one
+	// direction a reader takes as reassurance, since the missing rows are the
+	// ones nothing further will ever arrive for.
+	init := map[string]any{
 		"type":     "INIT",
 		"columns":  set.columns,
 		"items":    items,
 		"resource": metaOf(res.resource),
-	}); err != nil {
+	}
+	if len(warnings) > 0 {
+		init["warnings"] = warnings
+	}
+	if err := ws.WriteJSON(init); err != nil {
 		return
 	}
 
@@ -163,9 +172,33 @@ func (a *API) watchResources(w http.ResponseWriter, r *http.Request) {
 			// Adopt the recomputed scope, not just the yes/no: losing one
 			// namespace out of several must stop that namespace's objects from
 			// streaming, and only total revocation closes the socket.
-			next, err := a.watchScope(ctx, res, attrs, namespaces)
+			next, _, err := a.watchScope(ctx, res, attrs, namespaces)
 			if err != nil {
 				ws.wsError(streamClosedBecause(err, "access to this resource was revoked"))
+				return
+			}
+			// A scope that has *changed* is not something adopting the filter
+			// can finish. This stream is a snapshot plus the deltas since, and
+			// both halves are now wrong in a way no delta describes.
+			//
+			// Narrower: the rows for the lost namespace were already sent, and
+			// silence is not a retraction — they sit on the page, frozen at the
+			// moment access went away, looking like objects that have stopped
+			// changing.
+			//
+			// Wider: the namespace that came back was excluded from INIT, so
+			// its objects are ones the client has never seen. The next edit to
+			// one of them arrives as MODIFIED for a row that does not exist.
+			// That case is not hypothetical — it is exactly what a scan that
+			// failed on some namespaces and succeeded on the rest produces
+			// sixty seconds later, when the API server is no longer busy.
+			//
+			// OVERFLOW is the message this protocol already has for "what you
+			// are holding cannot be repaired from here"; the client reloads and
+			// gets a snapshot that matches its permissions.
+			if !visible.sameAs(next) {
+				_ = ws.WriteJSON(map[string]any{"type": "OVERFLOW"})
+				ws.closeWith(1000, "reload required: your access to these namespaces changed")
 				return
 			}
 			visible = next
@@ -280,16 +313,45 @@ func (v watchVisibility) permits(o *unstructured.Unstructured) bool {
 	return ok
 }
 
-// watchScope authorizes the stream and returns the namespace filter to apply.
-func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attributes, namespaces []string) (watchVisibility, error) {
+// sameAs reports whether two scopes reveal the same thing.
+//
+// It exists because a scope that has changed makes the snapshot the client is
+// holding wrong, and wrong in a way the delta stream cannot put right — see the
+// note at the re-authorization tick.
+func (v watchVisibility) sameAs(o watchVisibility) bool {
+	if v.all != o.all || v.namespaced != o.namespaced {
+		return false
+	}
+	if len(v.namespaces) != len(o.namespaces) {
+		return false
+	}
+	for ns := range v.namespaces {
+		if _, ok := o.namespaces[ns]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// watchScope authorizes the stream and returns the namespace filter to apply,
+// together with any partial-answer warnings.
+//
+// The warnings are returned rather than dropped for the reason the list
+// endpoint returns them, which authz.VisibleNamespaces states outright: a scan
+// that could not ask every question has measured a lower bound on a scope and
+// not the scope, and an answer narrowed by a busy API server is indistinguishable
+// from one narrowed by RBAC unless it says so. This used to consult the scan
+// error only when *nothing* came back, so a stream that lost some namespaces to
+// a hiccup and kept the rest opened in silence.
+func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attributes, namespaces []string) (watchVisibility, []string, error) {
 	vis := watchVisibility{namespaced: res.resource.Namespaced}
 
 	if !res.resource.Namespaced {
 		if err := a.authorize(ctx, res, "watch", "", "", ""); err != nil {
-			return vis, err
+			return vis, nil, err
 		}
 		vis.all = true
-		return vis, nil
+		return vis, nil, nil
 	}
 
 	if len(namespaces) > 0 {
@@ -298,7 +360,7 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		// is a narrower stream rather than a refused one.
 		access := a.authorizeNamespaces(ctx, res, "watch", namespaces)
 		if len(access.allowed) == 0 {
-			return vis, access.firstErr
+			return vis, nil, access.firstErr
 		}
 		// Every allowed namespace goes in the filter, including when there is
 		// only one. Asking the informer for a single namespace looks like it
@@ -312,7 +374,7 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 		for _, ns := range access.allowed {
 			vis.namespaces[ns] = struct{}{}
 		}
-		return vis, nil
+		return vis, access.warnings(res.resource.Name), nil
 	}
 
 	all, allowed, scanErr := res.cluster.Authz.VisibleNamespaces(
@@ -324,17 +386,21 @@ func (a *API) watchScope(ctx context.Context, res *resolved, attrs authz.Attribu
 	)
 	if all {
 		vis.all = true
-		return vis, nil
+		return vis, nil, nil
 	}
 	if len(allowed) == 0 {
 		if scanErr != nil {
-			return vis, scanErr
+			return vis, nil, scanErr
 		}
-		return vis, &forbiddenError{verb: "watch", resource: res.resource.Name}
+		return vis, nil, &forbiddenError{verb: "watch", resource: res.resource.Name}
 	}
 	vis.namespaces = make(map[string]struct{}, len(allowed))
 	for _, ns := range allowed {
 		vis.namespaces[ns] = struct{}{}
 	}
-	return vis, nil
+	var warnings []string
+	if scanErr != nil {
+		warnings = append(warnings, scanErr.Error())
+	}
+	return vis, warnings, nil
 }

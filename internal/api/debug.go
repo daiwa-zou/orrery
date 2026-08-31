@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -168,18 +170,30 @@ func (a *API) debugPod(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func hasContainer(pod *corev1.Pod, name string) bool {
+// targetableContainers is every container a debug container may be pointed at.
+//
+// One list, because hasContainer and containerNames are the check and the
+// message for the same question and they had drifted apart: the check accepted
+// init containers and the message did not list them. Mistyping an init
+// container's name was then answered with "pod "web" has no container
+// "migrat" (containers: app, sidecar)" — a sentence whose parenthesis, read as
+// the choices on offer, says init containers cannot be targeted at all. They
+// can; the name was simply misspelt. A message that enumerates a different set
+// from the one the check tests is worse than no message, because it is read as
+// authoritative.
+func targetableContainers(pod *corev1.Pod) []string {
+	out := make([]string, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers))
 	for _, c := range pod.Spec.Containers {
-		if c.Name == name {
-			return true
-		}
+		out = append(out, c.Name)
 	}
 	for _, c := range pod.Spec.InitContainers {
-		if c.Name == name {
-			return true
-		}
+		out = append(out, c.Name)
 	}
-	return false
+	return out
+}
+
+func hasContainer(pod *corev1.Pod, name string) bool {
+	return slices.Contains(targetableContainers(pod), name)
 }
 
 // containerState reports whether one of a pod's containers is running, and the
@@ -208,16 +222,12 @@ func containerState(pod *corev1.Pod, name string) (string, bool) {
 	return "not started", false
 }
 
+// containerNames renders the set hasContainer accepts, for the refusal that
+// names it.
 func containerNames(pod *corev1.Pod) string {
-	out := ""
-	for i, c := range pod.Spec.Containers {
-		if i > 0 {
-			out += ", "
-		}
-		out += c.Name
-	}
-	if out == "" {
+	names := targetableContainers(pod)
+	if len(names) == 0 {
 		return "none"
 	}
-	return out
+	return strings.Join(names, ", ")
 }

@@ -107,6 +107,14 @@ List endpoints take `namespace`, `q`, `labelSelector`, `fieldSelector`,
 Unsupported `fieldSelector` fields are rejected with a 400 naming the
 supported set, rather than silently matching nothing.
 
+`where` is repeatable and takes the column predicates described under Events.
+It is bounded in two directions, because they are separate quantities: at most
+16 predicates per request, and at most 256 bytes in any one `=~` / `!~` pattern
+with 512 across all of them. Both run against every object in scope before the
+page is cut, and the cost of matching is proportional to the length of the
+pattern as well as the length of the list — so a count on its own would leave
+one predicate free to carry the whole request line.
+
 The page arrives under `items` for `view=table` and under `objects` for
 `view=full`, and **the requested one is always present** — an empty namespace, a
 page past the end and a filter that matches nothing all return `[]` rather than
@@ -142,9 +150,20 @@ The watch endpoint accepts the same `q` / `labelSelector` / `fieldSelector` as
 listing, and translates edits across the filter boundary into ADDED/DELETED,
 so a filtered page only hears about the objects it shows.
 
+The `INIT` frame carries `warnings` when the snapshot is partial, in the same
+sentences the list endpoint uses — a namespace denied, or one whose access
+review could not be performed. A stream that narrows in silence is worse than a
+list that does: nothing further ever arrives for the missing rows, so the table
+stays wrong for as long as the socket is open and reads as a quiet cluster.
+
 A subscriber whose buffer fills is dropped with an `OVERFLOW` message telling
 it to reload, rather than being allowed to stall the shared cache for everyone
-else.
+else. The re-authorization check sends the same message when the caller's
+visible namespaces have *changed* since the stream opened, in either direction.
+A snapshot plus deltas cannot express that: rows already sent for a namespace
+since lost are never retracted, and a namespace regained was excluded from
+`INIT`, so the next edit to one of its objects would arrive as `MODIFIED` for a
+row the client has never seen.
 
 ## Facets
 
@@ -183,7 +202,10 @@ can be terminating while its siblings are healthy.
 Both accept `container`, `previous`, `timestamps`, `tailLines`,
 `sinceSeconds` and `limitBytes`. `tailLines` is clamped (default 500, max
 100000) and there is deliberately no "all lines" mode: unbounded scrollback
-belongs to the log store, not a browser tab. Lines are batched for up to 100ms
+belongs to the log store, not a browser tab. The snapshot additionally holds
+each pod to 10000 lines *and* 1 MiB, since a single line may be a megabyte on
+its own and the reply is held whole in memory at both ends; a pod cut by either
+ceiling is flagged `truncated`. Lines are batched for up to 100ms
 before being sent, so a pod logging ten thousand lines a second does not become
 ten thousand WebSocket frames a second.
 
@@ -225,7 +247,9 @@ dropped a namespace reads as everything that happened.
 `involvedKind`) — the last of which is what an object's own event list uses.
 
 `q` is a search box rather than one substring: its words are ANDed and each may
-match a different column, `"a phrase"` is one word, and `-word` excludes. The
+match a different column, `"a phrase"` is one word, and `-word` excludes. At
+most 16 words: each is looked for in every searched column of every event in
+scope, so the words multiply rather than add. The
 same `where` predicates the resource lists take apply here too, bound to the
 event columns — `count>3`, `lastSeen<15m`, `reason=~^Failed`, `type!~Normal`.
 Both are applied before `limit`, so a match older than the newest few hundred
@@ -275,7 +299,9 @@ Each entry carries a `relation` — `owner`, `child`, `descendant`, `node`,
 serving it, already assembled, so a caller follows a link rather than rebuilding
 one out of placeholders. `depth` (default 2, max 4) bounds the ownership walk in
 each direction; `childResource` names an extra resource to scan, for custom
-controllers whose children are not one of the built-in edges; `events=false`
+controllers whose children are not one of the built-in edges, and is capped at
+8 per request for the reason `/search` caps its scan set — a named resource is
+listed through the shared cache, which starts an informer for it; `events=false`
 drops the bundled events.
 
 `events` distinguishes its three states, which matters most to the callers this
@@ -311,6 +337,13 @@ instead of trusting the order. `scanned` says what was looked at and `warnings`
 name the clusters and resources that could not be, so "no results" is never
 confused with "nowhere to look".
 
+A `cluster` value that names nothing configured is one of those warnings rather
+than a refusal or a silence. Narrowing to a cluster that does not exist selects
+no cluster, so the reply is an empty result — and an empty result reads as "your
+object is not there", which is a claim about a cluster nobody asked about. The
+warning names the value and lists the clusters that do exist. Naming one that
+exists alongside one that does not still searches the first.
+
 ## Permission checks
 
 `POST .../access` answers a batch of questions in one round trip; it is what
@@ -335,6 +368,16 @@ already performs and caches.
 metrics-server. A cluster without metrics-server returns
 `{available: false}` with a plain explanation, not a 500 that reads as a
 dashboard bug.
+
+`warnings` carries what a reading is missing while still being worth serving: a
+namespace whose metrics could not be read, or a pod cache that could not supply
+the container limits. The second is not cosmetic. Pod usage is drawn as a
+fraction of its limits, and a pod with no limit has no denominator, so the
+console draws an empty bar — which means "nobody set a limit on this". A limits
+lookup that failed silently made that statement about every pod at once.
+
+A refusal is not a `{available: false}`; it stays a 403, because "you may not
+read metrics here" is a fact about the caller and not about the cluster.
 
 ## HTTP proxy
 
@@ -399,3 +442,10 @@ cluster and resource.
 `GET /api/v1/clusters/{c}/stats` shows exactly which caches are running, how
 many objects each holds, and how long they have been idle. It is the first
 place to look when memory use surprises you.
+
+The list is filtered by an access review, because the set of running caches is
+itself information about the cluster. A cache the caller may not list is simply
+absent; a cache whose review could not be *performed* is counted in `unchecked`
+and explained in `warning`, because `informers` and `totalObjects` are read as
+measurements and this is the page you open when you doubt the figure. A total
+quietly missing a cache is worse than no total.

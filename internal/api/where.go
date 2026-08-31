@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -64,6 +66,44 @@ var whereOps = []whereOp{opGTE, opLTE, opMatch, opNotMatch, opGT, opLT}
 // the note in parseWhere for why the number matters at all.
 const maxWherePredicates = 16
 
+// maxPatternBytes and maxPatternBudget bound the *size* of the patterns, which
+// is a separate quantity from how many of them there are and was the half this
+// file originally left open.
+//
+// Counting predicates bounds the wrong term. A regular expression is matched by
+// simulating its program over the cell, so the cost of one comparison is
+// proportional to the length of the pattern as well as the length of the text —
+// and a pattern is not a dozen bytes unless its author wants it to be. Measured
+// against a 224-byte event message, with a pattern built from nothing but
+// alternation and character classes behind a leading `.*`:
+//
+//	pattern      per cell     20k events
+//	  256 B         40 µs           0.8 s
+//	   16 KB       5.2 ms         1m 44 s
+//	    1 MB       1.18 s        6h 35 m
+//
+// It is linear, with no threshold to hide behind: every byte of pattern buys
+// the same multiple of every row in scope. One predicate — comfortably inside
+// the count cap — carries the whole request line, and the filter runs before
+// the limit and never consults the request context, so the client may hang up
+// and the core keeps going. Nothing else stops it either: writeTimeout is
+// deliberately zero so that watches and log follows are not severed mid-stream.
+//
+// Two numbers are needed because either alone is undone by the other. A
+// per-pattern cap is what makes the refusal legible — it names the term that is
+// too long — but sixteen patterns at the cap cost sixteen times one. A budget
+// over their total is what actually bounds the work, and stating it separately
+// is what lets the message say which of the two was exceeded.
+//
+// The values are generous by the standard of anything anyone writes. The
+// patterns this parameter exists for are `^web-`, `canary$|1$`, `^Failed`:
+// tens of bytes. Two hundred and fifty-six is a pattern nobody types and a
+// generated one would have to work at.
+const (
+	maxPatternBytes  = 256
+	maxPatternBudget = 512
+)
+
 // wherePredicate is one parsed comparison, ready to run against a row.
 type wherePredicate struct {
 	column string
@@ -103,6 +143,7 @@ func parseWhere(raw []string, cols []Column) ([]wherePredicate, error) {
 	}
 
 	out := make([]wherePredicate, 0, len(raw))
+	budget := 0
 	for _, term := range raw {
 		term = strings.TrimSpace(term)
 		if term == "" {
@@ -111,6 +152,17 @@ func parseWhere(raw []string, cols []Column) ([]wherePredicate, error) {
 		p, err := parseWhereTerm(term, byKey, cols)
 		if err != nil {
 			return nil, err
+		}
+		if p.re != nil {
+			// Spent after the term parsed, so the number in the message counts
+			// pattern bytes and not the column name and operator in front of
+			// them — which is what the caller would have to shorten.
+			budget += len(p.value)
+			if budget > maxPatternBudget {
+				return nil, badRequest(
+					"at most %d bytes of pattern per request across all where terms (given %d)",
+					maxPatternBudget, budget)
+			}
 		}
 		out = append(out, p)
 	}
@@ -143,6 +195,14 @@ func parseWhereTerm(term string, byKey map[string]Column, cols []Column) (whereP
 	p.kind = col.Type
 
 	if !op.ordering() {
+		// Checked before compiling, not after: compiling is itself linear in
+		// the pattern, so a megabyte of it costs eighty milliseconds to find
+		// out we did not want it.
+		if len(p.value) > maxPatternBytes {
+			return p, badRequest(
+				"where: the pattern for %q is %d bytes; at most %d are accepted",
+				p.column, len(p.value), maxPatternBytes)
+		}
 		re, err := regexp.Compile(p.value)
 		if err != nil {
 			return p, badRequest("where: %q is not a valid pattern: %v", p.value, err)
@@ -156,6 +216,10 @@ func parseWhereTerm(term string, byKey map[string]Column, cols []Column) (whereP
 		n, err := parseNumber(p.value)
 		if err != nil {
 			return p, badRequest("where: %q is not a number, and %q is numeric", p.value, p.column)
+		}
+		if err := finite(n); err != nil {
+			return p, badRequest("where: %q is not a bound %q can be compared against: %v",
+				p.value, p.column, err)
 		}
 		p.num = n
 	case ColAge:
@@ -218,22 +282,63 @@ func parseNumber(s string) (float64, error) {
 	return q.AsApproximateFloat64(), nil
 }
 
+// finite rejects the float values that parse without meaning anything as a
+// bound.
+//
+// strconv.ParseFloat accepts "nan", "inf" and "+Infinity" and returns no
+// error, so `?where=restarts>nan` reaches the row loop as a well-formed
+// predicate. Every comparison against NaN is false, so the filter matches
+// nothing; `restarts<inf` is true everywhere, so it matches everything and the
+// filter the caller wrote is silently not applied. Both are served as a
+// perfectly successful 200, and an empty table is the one answer a reader takes
+// at face value — the same conflation of "there is nothing" with "that was not
+// a question" the rest of this package refuses to make. A 400 naming the term
+// is the only honest reply.
+func finite(v float64) error {
+	switch {
+	case math.IsNaN(v):
+		return errors.New("not a number")
+	case math.IsInf(v, 0):
+		return errors.New("infinite")
+	}
+	return nil
+}
+
 // parseAgeBound reads a duration, extending Go's units with the days and weeks
 // that any question about a cluster is actually asked in.
+//
+// time.ParseDuration already refuses a non-finite or overflowing value; the two
+// units added here are scaled by hand, so they have to make the same refusals
+// themselves. Without them `age>infd` saturates to the largest representable
+// duration and reads as "older than anything", and `age>nand` compares false
+// against every row — a filter that quietly answers nothing.
 func parseAgeBound(s string) (time.Duration, error) {
-	if n, ok := strings.CutSuffix(s, "d"); ok {
+	for _, u := range []struct {
+		suffix string
+		scale  time.Duration
+	}{
+		{"d", 24 * time.Hour},
+		{"w", 7 * 24 * time.Hour},
+	} {
+		n, ok := strings.CutSuffix(s, u.suffix)
+		if !ok {
+			continue
+		}
 		v, err := strconv.ParseFloat(n, 64)
 		if err != nil {
 			return 0, err
 		}
-		return time.Duration(v * float64(24*time.Hour)), nil
-	}
-	if n, ok := strings.CutSuffix(s, "w"); ok {
-		v, err := strconv.ParseFloat(n, 64)
-		if err != nil {
+		if err := finite(v); err != nil {
 			return 0, err
 		}
-		return time.Duration(v * float64(7*24*time.Hour)), nil
+		scaled := v * float64(u.scale)
+		// Checked before the conversion: out of range, float-to-int is not
+		// defined to do anything in particular, and on the platforms it does
+		// saturate the result is a bound nobody asked for rather than an error.
+		if scaled > math.MaxInt64 || scaled < math.MinInt64 {
+			return 0, fmt.Errorf("%s%s is out of range", n, u.suffix)
+		}
+		return time.Duration(scaled), nil
 	}
 	return time.ParseDuration(s)
 }

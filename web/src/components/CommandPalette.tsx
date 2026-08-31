@@ -363,6 +363,21 @@ export function CommandPalette({
           })}
         </ul>
 
+        {/*
+          The Objects section is the only one that goes and asks, and the fleet
+          it asks does not always answer in full: a cluster can be down, a scan
+          can be refused. The search endpoint returns those gaps precisely so
+          that "no results" is not read as "nowhere holds this", and dropping
+          them here restores the reading it was avoiding — someone chasing a
+          name out of an alert concludes the object does not exist, when the
+          cluster holding it simply was not searched.
+        */}
+        {objects.data?.warnings?.length ? (
+          <p className="border-t border-border bg-warn/8 px-3 py-1.5 text-[10.5px] text-warn">
+            Not every cluster was searched: {objects.data.warnings.join('; ')}
+          </p>
+        ) : null}
+
         <div className="flex gap-3.5 border-t border-border px-3 py-1.5 text-[10.5px] text-ink-faint">
           <span>↑↓ navigate</span>
           <span>⏎ open</span>

@@ -182,6 +182,34 @@ func TestWhereRefusesWhatItCannotAnswer(t *testing.T) {
 	}
 }
 
+// "nan" and "inf" are floats as far as strconv is concerned, so a bound built
+// from one parses and then answers every row the same way: NaN compares false
+// against everything and matches nothing, +Inf compares true under < and
+// matches everything. Either is served as a successful, complete-looking
+// answer, which is the failure this whole package is arranged to avoid.
+func TestWhereRefusesNonFiniteBounds(t *testing.T) {
+	for _, term := range []string{
+		"restarts>nan", "restarts<inf", "restarts>+Inf", "restarts>-Infinity",
+		"age>nand", "age<infd", "age>infw",
+		// Finite, but past what a duration can hold: saturating it silently
+		// turns the bound into "older than anything representable".
+		"age>1e30d",
+	} {
+		if _, err := parseWhere([]string{term}, whereCols); err == nil {
+			t.Errorf("%s was accepted; a bound that cannot be compared must be refused", term)
+		}
+	}
+}
+
+// The refusal must not have cost the ordinary bounds their meaning.
+func TestWhereStillAcceptsOrdinaryBounds(t *testing.T) {
+	for _, term := range []string{"restarts>3", "restarts>=0", "restarts<1.5", "age>3d", "age<2w"} {
+		if _, err := parseWhere([]string{term}, whereCols); err != nil {
+			t.Errorf("%s was refused: %v", term, err)
+		}
+	}
+}
+
 // The refusal for an unknown column has to be usable: it names what there is.
 func TestWhereUnknownColumnListsTheRealOnes(t *testing.T) {
 	_, err := parseWhere([]string{"restart>1"}, whereCols)

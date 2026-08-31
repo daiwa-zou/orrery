@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -101,17 +102,15 @@ func (a *API) searchResources(w http.ResponseWriter, r *http.Request) {
 	namespace := r.URL.Query().Get("namespace")
 	limit := queryInt(r, "limit", 50, 1, 500)
 
-	wanted := map[string]bool{}
-	for _, name := range r.URL.Query()["cluster"] {
-		wanted[name] = true
-	}
-
 	type clusterResult struct {
 		hits     []searchHit
 		warnings []string
 		scanned  []string
 	}
 	entries := a.registry.Entries()
+
+	wanted, clusterWarnings := searchClusters(r.URL.Query()["cluster"], entries)
+
 	results := make([]clusterResult, len(entries))
 
 	// Clusters are independent and each scan is a cache read plus a handful of
@@ -119,7 +118,11 @@ func (a *API) searchResources(w http.ResponseWriter, r *http.Request) {
 	// take eleven times as long as it needs to.
 	var wg sync.WaitGroup
 	for i, e := range entries {
-		if len(wanted) > 0 && !wanted[e.Name] {
+		// nil means no filter was given; an empty-but-present filter selects
+		// nothing, which is a real answer and must not read as "no filter".
+		// Testing len(wanted) conflated the two, so naming one cluster and
+		// spelling it wrong quietly searched the entire fleet.
+		if wanted != nil && !wanted[e.Name] {
 			continue
 		}
 		if e.Cluster == nil {
@@ -137,6 +140,7 @@ func (a *API) searchResources(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	out := searchResponse{Query: q, Limit: limit, Hits: []searchHit{}, Scanned: []string{}}
+	out.Warnings = append(out.Warnings, clusterWarnings...)
 	seenScan := map[string]bool{}
 	for _, res := range results {
 		out.Hits = append(out.Hits, res.hits...)
@@ -231,6 +235,66 @@ func (a *API) searchScope(
 		return res.cluster.Informers.List(ctx, ar, namespace)
 	}
 	return a.visibleObjects(ctx, res, ar.Group, ar.Version, ar.Name)
+}
+
+// searchClusters resolves the repeated ?cluster= parameter into the set to
+// scan, and names any value no cluster answers to.
+//
+// Naming it is the point. The filter is "keep the entries whose name is in this
+// set", so a value matching nothing keeps nothing: the fan-out runs over an
+// empty selection and the reply is a successful 200 with no hits, no warnings,
+// and an empty `scanned`. searchResponse's own comment says warnings exist "so
+// 'no results' is never confused with 'nowhere to look'", and this was the one
+// route to the second that said nothing at all.
+//
+// It is easy to reach. These names come out of alerts, tickets and shell
+// history, and a fleet holding `prod-eu-1` will be asked about `prod-eu1`. What
+// comes back then is that the object is not in that cluster — a claim about the
+// cluster, wrong, and precisely the one the caller was searching to rule out.
+//
+// A warning rather than a refusal, deliberately. A caller naming a cluster that
+// has since been removed from the fleet is asking a reasonable question about
+// the rest, and the answer for the others is worth having; it is the silence
+// that was wrong, not the tolerance. That also keeps this the same shape as an
+// unreachable cluster, which is warned about a few lines below.
+func searchClusters(raw []string, entries []cluster.Entry) (map[string]bool, []string) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	known := make(map[string]bool, len(entries))
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		known[e.Name] = true
+		names = append(names, e.Name)
+	}
+
+	wanted := make(map[string]bool, len(raw))
+	var unknown []string
+	for _, name := range raw {
+		name = strings.TrimSpace(name)
+		// An empty value is how a cleared filter arrives, exactly as in
+		// queryNamespaces; it narrows nothing rather than narrowing to nothing.
+		if name == "" || wanted[name] {
+			continue
+		}
+		if !known[name] {
+			unknown = append(unknown, name)
+			continue
+		}
+		wanted[name] = true
+	}
+	// Nothing but blanks is a cleared filter, not a filter that selects
+	// nothing. nil says so; the caller distinguishes the two.
+	if len(wanted) == 0 && len(unknown) == 0 {
+		return nil, nil
+	}
+	if len(unknown) == 0 {
+		return wanted, nil
+	}
+	sort.Strings(names)
+	return wanted, []string{fmt.Sprintf(
+		"no cluster named %s is configured, so nothing there was searched (configured: %s)",
+		strings.Join(unknown, ", "), strings.Join(names, ", "))}
 }
 
 // searchTargets resolves the caller's resource list, or the default set.

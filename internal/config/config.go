@@ -386,11 +386,75 @@ func (c *Config) finalize() error {
 			return fmt.Errorf("oidc: issuer and clientID are required when enabled")
 		}
 	}
-	if c.Session.Store == "redis" && c.Session.RedisURL == "" {
-		return fmt.Errorf("session: redisURL is required for store=redis")
+	if err := c.finalizeSession(); err != nil {
+		return err
+	}
+	switch c.Log.Level {
+	case "", "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf(
+			"log.level: unknown level %q (use debug, info, warn or error)", c.Log.Level)
+	}
+	switch c.Log.Format {
+	case "", "text", "json":
+	default:
+		return fmt.Errorf("log.format: unknown format %q (use text or json)", c.Log.Format)
 	}
 	if _, err := c.SessionKey(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// finalizeSession checks the settings that used to be matched case-sensitively
+// against a literal and otherwise fell through to a default.
+//
+// Every one of these is spelled by hand in a YAML file, and every one of them
+// had the same shape of failure: a value that looks accepted, is not the value
+// that takes effect, and is never mentioned again. That is the failure this
+// codebase is most concerned with, and finalize already refuses an unknown
+// authMode for exactly this reason — the check simply never reached the four
+// settings beside it.
+//
+// What each one silently did:
+//
+//   - sameSite: Strict is a downgrade to Lax, which is to say the protection
+//     the operator asked for is not the one they got.
+//   - store: Redis runs in memory, and the redisURL requirement below did not
+//     fire either, so an HA deployment passed validation and then logged people
+//     out at random as they moved between replicas.
+//   - log.level: DEBUG stays at info, which is discovered while trying to debug
+//     something.
+//
+// Empty is still accepted and still means the default; it is a value that was
+// never set, not one that was set and misread.
+func (c *Config) finalizeSession() error {
+	switch c.Session.SameSite {
+	case "", "lax", "strict", "none":
+	default:
+		return fmt.Errorf(
+			"session.sameSite: unknown value %q (use lax, strict or none, lower-case)",
+			c.Session.SameSite)
+	}
+	// A cookie that says SameSite=None and not Secure is rejected outright by
+	// every current browser, so the session is never stored and the sign-in
+	// bounces forever against a server with nothing wrong with it. Nothing in
+	// the response says so; the refusal happens in the browser.
+	if c.Session.SameSite == "none" && !c.Session.Secure {
+		return fmt.Errorf(
+			"session.sameSite=none requires session.secure=true; " +
+				"browsers reject a SameSite=None cookie that is not Secure, " +
+				"which appears as a sign-in loop rather than as an error")
+	}
+	switch c.Session.Store {
+	case "", "memory", "redis":
+	default:
+		return fmt.Errorf(
+			"session.store: unknown store %q (use memory or redis, lower-case)",
+			c.Session.Store)
+	}
+	if c.Session.Store == "redis" && c.Session.RedisURL == "" {
+		return fmt.Errorf("session: redisURL is required for store=redis")
 	}
 	return nil
 }

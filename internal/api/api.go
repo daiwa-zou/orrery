@@ -70,6 +70,11 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	// Responses are per-user (authorization-gated) and can contain live secret
 	// values; nothing on this surface may land in a browser or proxy cache.
 	w.Header().Set("Cache-Control", "no-store")
+	// Every one of these bodies embeds strings taken verbatim from cluster
+	// objects — names, annotations, event messages, container arguments — and
+	// every one of them is written by whoever can write to that namespace. The
+	// declared type says JSON; this is what holds a browser to it.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		// The status line is already written; all that is left is a log line.

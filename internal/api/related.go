@@ -42,6 +42,58 @@ const maxRelated = 500
 // maxRelatedEvents bounds the events bundled with a neighbourhood.
 const maxRelatedEvents = 50
 
+// maxChildResources bounds the repeated ?childResource= parameter.
+//
+// It is the most expensive repeated parameter this server has, and it was the
+// one left uncapped. Every name that resolves costs a discovery lookup, a
+// SubjectAccessReview, and — the part that matters — a call into the shared
+// cache, which starts an informer if one is not already running: a cluster-wide
+// LIST and a WATCH held open afterwards. One request naming everything
+// discovery advertises makes the dashboard read the whole cluster, and does it
+// again on the next request, because maxInformersPerCluster is evicting behind
+// it the whole time. All of it runs under one cluster's client rate limit, so
+// the users who are merely looking at a page wait behind it.
+//
+// The hazard is already written down. docs/API.md says of /search that "the
+// default set is deliberately not everything discovery advertises: listing
+// every resource would start an informer for every resource, and informer
+// caches are shared and long-lived" — which is why that endpoint caps its
+// ?resource= at twelve. The same sentence is true here and the cap was not.
+//
+// maxRelated bounds the answer, not the work, and cannot stand in for this: a
+// named resource that owns nothing adds no references, so a request naming four
+// hundred resources that own nothing scans all four hundred and never reaches
+// the cap it would have been stopped by.
+//
+// Eight is past the purpose. The parameter is for a custom controller whose
+// children are not one of the built-in edges, and an object has one or two of
+// those, not eight.
+const maxChildResources = 8
+
+// queryChildResources reads the repeated ?childResource= parameter.
+//
+// Duplicates are dropped before counting, for the reason queryNamespaces drops
+// them: repeating a name is not a second request for the same scan, and
+// refusing a caller for something it did not ask for is its own bug.
+func queryChildResources(r *http.Request) ([]string, error) {
+	raw := r.URL.Query()["childResource"]
+	out := make([]string, 0, min(len(raw), maxChildResources))
+	seen := make(map[string]bool, len(out))
+	for _, c := range raw {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		if len(out) == maxChildResources {
+			return nil, badRequest(
+				"at most %d childResource values per request", maxChildResources)
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 // objectRef identifies one object in a neighbourhood, and says why it is there.
 type objectRef struct {
 	// Relation names the edge. See relatedResources for the vocabulary.
@@ -208,6 +260,13 @@ func (a *API) relatedResources(w http.ResponseWriter, r *http.Request) {
 	if !res.resource.Namespaced {
 		namespace = ""
 	}
+	// Read before the subject is fetched, so a bad parameter is a 400 that
+	// costs nothing rather than one paid for with a live read.
+	childResources, err := queryChildResources(r)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	if err := a.authorize(ctx, res, "get", namespace, name, ""); err != nil {
 		a.writeErr(w, r, err)
 		return
@@ -228,7 +287,7 @@ func (a *API) relatedResources(w http.ResponseWriter, r *http.Request) {
 	n.seen[refKey(res.resource.Group, res.resource.Name+"/"+subject.GetKind(), namespace, name)] = true
 
 	a.walkOwners(ctx, res, subject, depth, n)
-	a.walkChildren(ctx, res, res.resource, subject, depth, r.URL.Query()["childResource"], n)
+	a.walkChildren(ctx, res, res.resource, subject, depth, childResources, n)
 	a.walkAffinities(ctx, res, subject, n)
 
 	out := relatedResponse{

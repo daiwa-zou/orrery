@@ -1157,6 +1157,17 @@ func (a *API) writeObjectYAML(w http.ResponseWriter, r *http.Request, obj *unstr
 		return true
 	}
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	// nosniff, like the other two responses on this surface that write bytes
+	// rather than JSON — the log stream and the workload proxy both set it, and
+	// this was the one that did not.
+	//
+	// It matters most here. The body is a cluster object rendered verbatim, so
+	// an annotation, a label value or a ConfigMap key is reproduced exactly as
+	// somebody with write access to that namespace wrote it, and one of them
+	// can be a whole HTML document. A browser that sniffs past the declared
+	// type renders it as a page on the console's own origin, with the viewer's
+	// session — from a URL that is an ordinary GET anyone can be sent.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(raw)
 	return true

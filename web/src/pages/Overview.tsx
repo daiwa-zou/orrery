@@ -245,9 +245,19 @@ export function Overview() {
     ['API latency', `${health.latencyMs}ms`],
   ]
   if (stats.data) {
+    // A cache whose access review could not be performed is not in either
+    // number, so when that happens both are marked as the lower bounds they
+    // are. Rendering "Cached objects: 4,102" when the real answer is "at least
+    // 4,102" is the kind of quietly-wrong figure this panel exists to give.
+    const short = (stats.data.unchecked ?? 0) > 0
     controlPlane.push(
-      ['Cached objects', stats.data.totalObjects.toLocaleString()],
-      ['Informers', String(stats.data.informers.length)],
+      ['Cached objects', (short ? 'at least ' : '') + stats.data.totalObjects.toLocaleString()],
+      [
+        'Informers',
+        short
+          ? `${stats.data.informers.length} (${stats.data.unchecked} unchecked)`
+          : String(stats.data.informers.length),
+      ],
     )
   }
 
@@ -441,6 +451,18 @@ export function Overview() {
                 ))}
               </ul>
             )}
+            {/*
+              This card is a ranking, which is the shape that suffers most from
+              a partial read: the pod that would have been first is simply not
+              in the list, and nothing about the list says so. The warnings the
+              metrics endpoint already returns say which namespaces it could
+              not reach.
+            */}
+            {podMetrics.data?.warnings?.map((w) => (
+              <p key={w} className="border-t border-ink/6 py-2 text-[12.5px] text-warn">
+                {w}
+              </p>
+            ))}
           </Card>
         </div>
 
@@ -527,6 +549,9 @@ export function Overview() {
                 <span className="text-right font-mono text-ink-muted">{v}</span>
               </div>
             ))}
+            {stats.data?.warning && (
+              <p className="py-2 text-[12.5px] text-warn">{stats.data.warning}</p>
+            )}
           </Card>
         </div>
       </div>

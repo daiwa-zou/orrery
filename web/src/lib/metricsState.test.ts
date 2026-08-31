@@ -61,4 +61,32 @@ describe('metricsState', () => {
     const state = metricsState({ isLoading: false })
     expect(state.kind).toBe('unreachable')
   })
+
+  // A refusal is an answer, and it is a permanent one. Landing it in
+  // 'unreachable' put a "Try again" link under a permission the viewer will
+  // never hold — on the cluster used for local development, where the console
+  // says "you are not allowed to list nodes cluster-wide · Try again" and
+  // trying again does exactly the same thing forever.
+  it('reports a refusal as forbidden, not as something to retry', () => {
+    const err = Object.assign(new Error('you are not allowed to list nodes cluster-wide'), {
+      status: 403,
+    })
+    const state = metricsState({ isLoading: false, error: err })
+    expect(state.kind).toBe('forbidden')
+    expect(state).toMatchObject({ reason: expect.stringContaining('not allowed') })
+  })
+
+  // And it must not swallow the failures that *are* worth retrying.
+  it('keeps other HTTP failures retryable', () => {
+    const err = Object.assign(new Error('the server hit an unexpected error'), { status: 500 })
+    expect(metricsState({ isLoading: false, error: err }).kind).toBe('unreachable')
+  })
+
+  // A refusal still loses to data already on screen, like any other error.
+  it('keeps showing data when a later refetch is refused', () => {
+    const err = Object.assign(new Error('forbidden'), { status: 403 })
+    expect(
+      metricsState({ data: { available: true, nodes: [] }, isLoading: false, error: err }),
+    ).toEqual({ kind: 'ready' })
+  })
 })

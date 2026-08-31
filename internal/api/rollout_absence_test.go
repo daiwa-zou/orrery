@@ -18,7 +18,7 @@ import (
 
 func TestRolloutHistoryDoesNotCallAnUnreadableCacheAMissingDeployment(t *testing.T) {
 	rig := hndNewRig(t)
-	rig.fake.breakCacheResource = "deployments"
+	rig.fake.breakCacheResource = "apps/deployments"
 
 	rec := rig.get(t, "/api/v1/clusters/fake/rollout/history?namespace=demo&name=web")
 	if rec.Code == http.StatusNotFound {
@@ -34,7 +34,7 @@ func TestRolloutHistoryDoesNotCallAnUnreadableCacheAMissingDeployment(t *testing
 
 func TestRolloutUndoDoesNotCallAnUnreadableCacheAMissingDeployment(t *testing.T) {
 	rig := hndNewRig(t)
-	rig.fake.breakCacheResource = "deployments"
+	rig.fake.breakCacheResource = "apps/deployments"
 
 	rec := rig.do(t, http.MethodPost, "/api/v1/clusters/fake/actions/rollout-undo",
 		`{"namespace":"demo","name":"web"}`, nil)

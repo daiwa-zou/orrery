@@ -258,12 +258,25 @@ func (a *API) podMetrics(w http.ResponseWriter, r *http.Request) {
 	// Limits come from the pod cache, mirroring how nodeMetrics reads capacity:
 	// one metrics call, zero extra API-server traffic. Only pods already in the
 	// (authorization-filtered) metrics list are looked up.
+	//
+	// A failure here is named, not skipped, for the same reason the namespace
+	// fallback above names one. An absent limit is not a blank in the console:
+	// the bar fills against the limit, and the table renders "no limit
+	// declared" as an empty bar with the reading beside it. So a pod cache that
+	// could not be read does not produce a page that is missing something — it
+	// produces a page that says, of every pod at once, that nobody set limits
+	// on any of them. That is a specific claim about the workloads, it is
+	// wrong, and it is the sort of thing somebody acts on.
 	limitsByPod := map[string]usage{}
-	if pods, listErr := res.cluster.Informers.List(ctx, podRes, namespace); listErr == nil {
-		for _, p := range pods {
-			if l, ok := podLimits(p); ok {
-				limitsByPod[p.GetNamespace()+"/"+p.GetName()] = l
-			}
+	pods, listErr := res.cluster.Informers.List(ctx, podRes, namespace)
+	if listErr != nil {
+		warnings = append(warnings, fmt.Sprintf(
+			"container limits could not be read, so usage is shown without the ceiling it is "+
+				"measured against — this is not a sign that no limits are set: %v", listErr))
+	}
+	for _, p := range pods {
+		if l, ok := podLimits(p); ok {
+			limitsByPod[p.GetNamespace()+"/"+p.GetName()] = l
 		}
 	}
 

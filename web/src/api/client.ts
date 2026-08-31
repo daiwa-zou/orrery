@@ -293,7 +293,17 @@ export const api = {
     ),
 
   cacheStats: (cluster: string, signal?: AbortSignal) =>
-    request<{ cluster: string; informers: unknown[]; totalObjects: number }>(
+    request<{
+      cluster: string
+      informers: unknown[]
+      totalObjects: number
+      // Present when an access review could not be performed for some of the
+      // running caches. Those caches are absent from `informers` and their
+      // objects are absent from `totalObjects`, so both numbers are a lower
+      // bound rather than a measurement — which the panel has to say.
+      unchecked?: number
+      warning?: string
+    }>(
       `/clusters/${cluster}/stats`,
       {},
       signal,

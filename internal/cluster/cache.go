@@ -411,7 +411,17 @@ func (m *InformerManager) List(ctx context.Context, ar APIResource, namespace st
 	if err != nil {
 		return nil, err
 	}
-	var raw []any
+	return e.list(ar, namespace)
+}
+
+// list reads one entry's store. It is split out because Watch has to snapshot
+// the very entry it subscribed to, and not merely an entry for the same
+// resource — see the note there.
+func (e *informerEntry) list(ar APIResource, namespace string) ([]*unstructured.Unstructured, error) {
+	var (
+		raw []any
+		err error
+	)
 	if namespace != "" && ar.Namespaced {
 		raw, err = e.informer.GetIndexer().ByIndex(cache.NamespaceIndex, namespace)
 		if err != nil {
@@ -462,13 +472,26 @@ func (s *Subscription) Close() {
 
 // Watch attaches a subscriber to a resource's shared informer and replays the
 // current cache contents so the client starts from a complete picture.
+//
+// The order is load-bearing: subscribing first and snapshotting second means a
+// change landing between the two arrives twice, which a client keyed by object
+// is free to ignore. The reverse order loses it entirely, and a row that was
+// created during the handshake then sits missing from the table until something
+// else touches it.
+//
+// The snapshot is read from the entry that was subscribed to, not fetched again
+// by resource. Going back through entry() looks equivalent and is not: it can
+// hand back a *different* informer — one built after this one failed and was
+// retired — and the guarantee above is then between a subscription on one cache
+// and a snapshot of another, which is no guarantee at all. It also repeats the
+// whole sync wait for a cache this call has already waited on.
 func (m *InformerManager) Watch(ctx context.Context, ar APIResource, namespace string, buffer int) (*Subscription, []*unstructured.Unstructured, error) {
 	e, err := m.entry(ctx, ar)
 	if err != nil {
 		return nil, nil, err
 	}
 	id, ch := e.bc.Subscribe(buffer)
-	initial, err := m.List(ctx, ar, namespace)
+	initial, err := e.list(ar, namespace)
 	if err != nil {
 		e.bc.Unsubscribe(id)
 		return nil, nil, err
@@ -490,20 +513,48 @@ type InformerStat struct {
 }
 
 // Stats reports every running informer.
+//
+// The entries are copied out under the lock and measured after it is released,
+// which is not a tidiness point. m.mu is the lock every read takes — entry() is
+// on the path of every list, get and watch for this cluster — and counting an
+// informer's objects means asking its indexer for a slice of every key it
+// holds, since a shared informer offers no way to ask for the size of a store
+// without building one. Forty caches over fifty thousand objects is a couple of
+// million strings built and thrown away, and doing it inside the lock stalled
+// every read on the cluster for as long as it took.
+//
+// It is on a timer, too, which is what turns an occasional stall into a
+// periodic one: the Prometheus collector calls this for every cluster on every
+// scrape, whether or not anyone has opened the admin view.
 func (m *InformerManager) Stats() []InformerStat {
+	type snap struct {
+		gvr schema.GroupVersionResource
+		e   *informerEntry
+	}
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]InformerStat, 0, len(m.entries))
+	entries := make([]snap, 0, len(m.entries))
 	for gvr, e := range m.entries {
+		entries = append(entries, snap{gvr, e})
+	}
+	m.mu.Unlock()
+
+	// An entry evicted between the snapshot and here is still safe to read: a
+	// shut-down informer keeps its store, so this reports the size it had when
+	// it stopped rather than racing. The alternative — holding the lock so the
+	// number cannot be stale — is the cost this exists to avoid, and a metric
+	// one scrape out of date is not worth it.
+	out := make([]InformerStat, 0, len(entries))
+	for _, s := range entries {
 		out = append(out, InformerStat{
-			GVR:         gvr.String(),
-			Group:       gvr.Group,
-			Version:     gvr.Version,
-			Resource:    gvr.Resource,
-			Objects:     len(e.informer.GetIndexer().ListKeys()),
-			Subscribers: e.bc.Count(),
-			IdleSeconds: int64(e.idleFor().Seconds()),
-			AgeSeconds:  int64(time.Since(e.startedAt).Seconds()),
+			GVR:         s.gvr.String(),
+			Group:       s.gvr.Group,
+			Version:     s.gvr.Version,
+			Resource:    s.gvr.Resource,
+			Objects:     len(s.e.informer.GetIndexer().ListKeys()),
+			Subscribers: s.e.bc.Count(),
+			IdleSeconds: int64(s.e.idleFor().Seconds()),
+			AgeSeconds:  int64(time.Since(s.e.startedAt).Seconds()),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GVR < out[j].GVR })

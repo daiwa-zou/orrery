@@ -108,7 +108,9 @@ func TestSearchNarrowsByClusterAndNamespace(t *testing.T) {
 	if got := search(t, rig, "q=web&cluster=fake"); len(got.Hits) == 0 {
 		t.Error("naming the only cluster excluded it")
 	}
-	// A cluster nobody configured is not an error; it is an empty answer.
+	// A cluster nobody configured is not an error; it is an empty answer —
+	// carrying a warning that says so, which
+	// TestSearchNamesAClusterItDoesNotHave covers.
 	other := search(t, rig, "q=web&cluster=elsewhere")
 	if len(other.Hits) != 0 {
 		t.Errorf("hits from an unconfigured cluster: %v", other.names())
