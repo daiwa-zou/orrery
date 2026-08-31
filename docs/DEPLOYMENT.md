@@ -17,8 +17,13 @@ recognising by symptom:
   `session.store: memory`, which keeps sessions inside the pod. The chart
   defaults to Redis for exactly this reason; point `session.redisURL` at your
   instance.
-- **Terminals and log follows die after a minute.** A proxy in front is
-  timing out long-lived streams. See [The proxy in front](#the-proxy-in-front).
+- **Terminals and log follows die after a minute.** Two different causes, and
+  the second is easy to inflict on yourself. Usually a proxy in front is timing
+  out long-lived streams — see [The proxy in front](#the-proxy-in-front). But
+  `server.writeTimeout` does the same thing from inside, which is why it
+  defaults to `0`: it bounds the whole response, and a streaming response is
+  never finished. Setting it to a sane-looking `30s` severs every watch, log
+  follow and terminal at thirty seconds, with nothing in the logs to say so.
 
 ## The shape of the workload
 
@@ -234,8 +239,10 @@ subresource check is the same authority as everything else here.
 
 ## Configuration you will actually tune
 
-Every field has a default; `-print-config` shows what the server actually
-resolved, with secrets masked.
+Every field has a default. This table is the subset worth a decision, not the
+whole configuration surface — `-print-config` enumerates every field with the
+value the server actually resolved, secrets masked, which is also the fastest
+way to settle "is it reading my file at all?".
 
 | Setting | Default | What it controls, and when to change it |
 | --- | --- | --- |
@@ -247,6 +254,10 @@ resolved, with secrets masked.
 | `session.ttl` / `idleTimeout` | `12h` / `2h` | Your org's session policy. |
 | `clusters[].qps` / `burst` | `50` / `100` | Bound what one dashboard may put on one API server. |
 | `proxy.enabled` | `true` | The read-only HTTP proxy into pods and services. `false` removes the route entirely — see [above](#turning-the-http-proxy-off). |
+| `server.writeTimeout` | `0` | **Leave it at zero.** It bounds an entire response, and watches, log follows and terminals never finish one. Any non-zero value is the interval at which they will all be cut. Listed here because it looks like an omission rather than a decision. |
+| `session.sameSite` | `lax` | `strict` if you never link into the console from elsewhere; `none` only when it is embedded cross-site, and then `session.secure` must be true — browsers drop a `SameSite=None` cookie that is not `Secure`, which presents as a sign-in loop rather than an error. Config load refuses that combination outright. |
+| `cache.resyncPeriod` | `0` (off) | A full relist per informer at this interval. Off is right almost always: watches already keep caches current, and a resync re-runs the transform over every cached object. Set it only if you suspect a cluster of dropping watch events. |
+| `cache.discoveryTTL` | `5m` | How stale the API resource list may be — in practice, how long a newly installed CRD can stay invisible. A miss also forces one refresh immediately (rate-limited), so this is the ceiling rather than the usual wait. |
 | `debug.image` | `busybox:1.37` | The image an ephemeral debug container runs. Deliberately the operator's choice, not the caller's: a console that took an image name from the browser would be a way to run arbitrary code inside another workload's namespaces. **Not exposed by the chart** — see [Known limitations](#known-limitations-of-the-current-setup). |
 
 ## Upgrades
