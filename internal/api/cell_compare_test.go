@@ -159,6 +159,70 @@ func TestOrderableNumberDeclinesWhatIsNotANumber(t *testing.T) {
 	}
 }
 
+// cellNumber is orderableNumber's opposite number, used by `where` bounds
+// rather than by sorting, and it does read a numeric-looking string — because
+// there the reader has typed a quantity and means one. Everything a column can
+// hold has to be decided one way or the other: a cell it declines never
+// matches a numeric predicate, which is right, and a cell it misreads matches
+// the wrong rows silently.
+func TestCellNumberReadsEveryNumericShape(t *testing.T) {
+	for _, c := range []struct {
+		cell any
+		want float64
+	}{
+		{int(7), 7},
+		{int32(7), 7},
+		{int64(7), 7},
+		{float32(0.5), 0.5},
+		{float64(0.5), 0.5},
+		{"42", 42},
+		{"-3", -3},
+		{"1.5", 1.5},
+		// Column values arrive rendered, so the quantities Kubernetes prints
+		// have to read as the numbers they are.
+		{"128Mi", 128 * 1024 * 1024},
+		{"250m", 0.25},
+	} {
+		got, ok := cellNumber(c.cell)
+		if !ok || got != c.want {
+			t.Errorf("cellNumber(%#v) = %v, %v; want %v, true", c.cell, got, ok, c.want)
+		}
+	}
+}
+
+func TestCellNumberDeclinesWhatIsNotANumber(t *testing.T) {
+	// A declined cell never matches a numeric `where`, so what matters is that
+	// nothing here is quietly read as zero.
+	for _, cell := range []any{"", "Running", "1/2", true, nil, []string{"1"}, map[string]any{}} {
+		if v, ok := cellNumber(cell); ok {
+			t.Errorf("cellNumber(%#v) = %v, true; want false", cell, v)
+		}
+	}
+}
+
+// cellString renders a cell for pattern matching. A list column is joined so a
+// pattern can reach any one entry — matching only the first would silently
+// answer "no such rows" for objects whose match is second.
+func TestCellStringFlattensListColumns(t *testing.T) {
+	for _, c := range []struct {
+		cell any
+		want string
+	}{
+		{"web", "web"},
+		{[]string{"web", "sidecar"}, "web sidecar"},
+		{[]any{"web", "sidecar"}, "web sidecar"},
+		{[]any{"a", []string{"b", "c"}}, "a b c"},
+		{[]string{}, ""},
+		{int64(3), "3"},
+		{true, "true"},
+		{nil, "<nil>"},
+	} {
+		if got := cellString(c.cell); got != c.want {
+			t.Errorf("cellString(%#v) = %q, want %q", c.cell, got, c.want)
+		}
+	}
+}
+
 // sign reduces a comparison to -1, 0 or 1 so the tests can state the ordering
 // without depending on the magnitudes strings.Compare happens to return.
 func sign(n int) int {
