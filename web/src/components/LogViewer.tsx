@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { wsURL } from '../api/client'
 import type { LogMessage } from '../api/types'
+import { logEmptyReason } from '../lib/logEmptyReason'
 import { DownloadIcon, FollowIcon } from './icons'
 import { Badge, Button, Checkbox, FilterInput, Select, Spinner } from './primitives'
 
@@ -345,9 +346,7 @@ export function LogViewer({
           </p>
         )}
         {status !== 'connecting' && visible.length === 0 && (
-          <p className="text-code-ink-faint">
-            {filter ? 'No lines match the filter.' : 'No output yet.'}
-          </p>
+          <p className="text-code-ink-faint">{logEmptyReason(status, filter, buf.items.length)}</p>
         )}
         {visible.map(({ line, key }) => (
           <div
