@@ -57,8 +57,9 @@ func TestSortByCellOrdersAMixedNumericColumn(t *testing.T) {
 		obj("c", "d", nil, nil),
 		obj("d", "d", nil, nil),
 	}
-	set := columnSet{row: func(u *unstructured.Unstructured) map[string]any {
-		return map[string]any{"name": u.GetName(), "progress": cells[u.GetName()]}
+	set := columnSet{row: func(u *unstructured.Unstructured, r map[string]any) {
+		r["name"] = u.GetName()
+		r["progress"] = cells[u.GetName()]
 	}}
 
 	sortByCell(objs, set, "progress", false)

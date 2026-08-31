@@ -219,8 +219,8 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 
 	return columnSet{
 		columns: cols,
-		row: func(u *unstructured.Unstructured) map[string]any {
-			r := baseRow(u)
+		row: func(u *unstructured.Unstructured, r map[string]any) {
+			baseRow(u, r)
 			for _, pc := range compiled {
 				results, err := pc.findResults(u.Object)
 				if err != nil || len(results) == 0 || len(results[0]) == 0 {
@@ -231,7 +231,6 @@ func (a *API) crdColumns(ctx context.Context, c *cluster.Cluster, ar cluster.API
 					r[pc.column.Key] = v
 				}
 			}
-			return r
 		},
 	}, nil
 }

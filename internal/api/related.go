@@ -878,7 +878,7 @@ func (a *API) objectEvents(
 	// that. The columns come too, so an empty table still has its headings.
 	rows := make([]map[string]any, 0, len(matched))
 	for _, e := range matched {
-		rows = append(rows, set.row(e))
+		rows = append(rows, set.rowOf(e))
 	}
 	return rows, set.columns
 }

@@ -64,7 +64,7 @@ func TestGenericColumnsProjectsBaseRow(t *testing.T) {
 		t.Errorf("generic columns should add nothing beyond identity: %v", set.columns)
 	}
 	u := mkObj(t, map[string]any{"name": "thing", "namespace": "demo"}, nil)
-	row := set.row(u)
+	row := set.rowOf(u)
 	if row["name"] != "thing" || row["namespace"] != "demo" {
 		t.Errorf("generic row = %v", row)
 	}

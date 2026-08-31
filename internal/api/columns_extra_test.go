@@ -24,7 +24,11 @@ func mkObj(t *testing.T, meta map[string]any, extra map[string]any) *unstructure
 
 // rowFor fetches a registered builtin projector, failing loudly if a kind
 // silently drops out of the registry.
-func rowFor(t *testing.T, group, kind string) rowFunc {
+//
+// It hands back a projector that allocates its own row, since a test asserting
+// on one row reads better than one threading a map through. The production
+// readers reuse a map instead; columnSet.rowOf is the same wrapper.
+func rowFor(t *testing.T, group, kind string) func(*unstructured.Unstructured) map[string]any {
 	t.Helper()
 	set, ok := builtinColumns[gk(group, kind)]
 	if !ok {
@@ -33,7 +37,15 @@ func rowFor(t *testing.T, group, kind string) rowFunc {
 	if len(set.columns) == 0 {
 		t.Fatalf("builtin columns for %q are empty", gk(group, kind))
 	}
-	return set.row
+	return set.rowOf
+}
+
+// baseRowOf is baseRow into a row of its own, for the tests that assert on
+// what it puts there.
+func baseRowOf(u *unstructured.Unstructured) map[string]any {
+	r := map[string]any{}
+	baseRow(u, r)
+	return r
 }
 
 func TestIdentityColumns(t *testing.T) {
@@ -56,7 +68,7 @@ func TestBaseRow(t *testing.T) {
 		"creationTimestamp": "2024-01-02T03:04:05Z",
 	}, nil)
 
-	row := baseRow(u)
+	row := baseRowOf(u)
 	if row["name"] != "web" || row["namespace"] != "demo" || row["uid"] != "abc-123" {
 		t.Errorf("identity fields = %v", row)
 	}
@@ -74,7 +86,7 @@ func TestBaseRowClusterScopedAndTerminating(t *testing.T) {
 		"deletionTimestamp": "2024-01-02T03:04:05Z",
 	}, nil)
 
-	row := baseRow(u)
+	row := baseRowOf(u)
 	// Cluster-scoped objects omit the key entirely rather than sending "".
 	if _, ok := row["namespace"]; ok {
 		t.Errorf("cluster-scoped row grew a namespace: %v", row["namespace"])

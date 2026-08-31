@@ -437,7 +437,7 @@ func (a *API) listResources(w http.ResponseWriter, r *http.Request) {
 // reason labelsOf gives: it is read here and encoded, never held or changed,
 // and copying a map per row to serialise it is a copy nobody reads.
 func buildRow(o *unstructured.Unstructured, set columnSet, withLabels bool) map[string]any {
-	row := set.row(o)
+	row := set.rowOf(o)
 	if withLabels {
 		if l := labelsOf(o); len(l) > 0 {
 			row["_labels"] = l
@@ -518,11 +518,22 @@ func sortByCell(objs []*unstructured.Unstructured, set columnSet, key string, de
 	if key == "" {
 		key = "name"
 	}
+	// One row map, refilled per object. The sort needs one cell from each of
+	// them and keeps none of the rows, so a fresh map per object was fifty
+	// thousand allocations and sixty megabytes to read fifty thousand values
+	// — measured by BenchmarkSortByProjected50k, which was allocating more
+	// than the objects themselves cost to hold.
+	//
+	// clear is not optional. The projectors write conditional keys —
+	// namespace, _terminating, and per-table ones like claim — so a key the
+	// previous object had and this one does not would still be sitting there,
+	// and sorting by that column would read the wrong object's value.
 	cells := make([]any, len(objs))
+	scratch := make(map[string]any, 12)
 	for i, o := range objs {
-		// set.row allocates a map; taking one value out of it and letting it
-		// go is the whole point.
-		cells[i] = set.row(o)[key]
+		clear(scratch)
+		set.row(o, scratch)
+		cells[i] = scratch[key]
 	}
 
 	order := make([]int, len(objs))
@@ -739,7 +750,7 @@ func (f listFilter) matches(o *unstructured.Unstructured) bool {
 	if len(f.where) > 0 {
 		// Projecting is the expensive part, so it happens once per object and
 		// only when something actually asks for a column.
-		row := f.set.row(o)
+		row := f.set.rowOf(o)
 		for _, p := range f.where {
 			if !p.matches(row) {
 				return false

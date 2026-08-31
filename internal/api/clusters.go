@@ -341,7 +341,7 @@ func (a *API) listEvents(w http.ResponseWriter, r *http.Request) {
 		if onlyWarnings && str(e, "type") != "Warning" {
 			continue
 		}
-		row := set.row(e)
+		row := set.rowOf(e)
 		// Free text and predicates both read the projected row, so what
 		// filters is exactly what the reader can see — and both are applied
 		// before the limit below, so a match older than the newest few hundred
