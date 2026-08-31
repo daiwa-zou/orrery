@@ -295,8 +295,25 @@ func (d *DiscoveryCache) lookup(group, version, resource string) (APIResource, b
 	if gvr, ok := d.aliases[aliasKey(resource, group)]; ok {
 		return d.byGVR[gvr], true
 	}
-	if gvr, ok := d.aliases[resource]; ok {
-		return d.byGVR[gvr], true
+	// The unqualified table answers "which group serves a thing called this?",
+	// so it is consulted only when the caller did not say. Naming a group is
+	// naming one, and a group that does not serve the resource is a miss, not
+	// an invitation to look elsewhere: Resolve("example.io", "v1",
+	// "deployments") used to come back apps/v1 deployments, which is a real
+	// object, served successfully, from a group nobody asked about. The route
+	// is /resources/{group}/{version}/{resource} and the caller spelled all
+	// three; answering with a different one is answering a different question,
+	// and UnknownResourceError already says the true thing — "resource
+	// %q is not served by this cluster (group %s)".
+	//
+	// A stale *version* is a different case and still resolves, one line above:
+	// the group matched, so apps/v9 deployments finds apps/v1. NormalizeGroup
+	// has already folded "core", "_" and "-" to empty, so the placeholders
+	// still mean "unqualified" exactly as they did.
+	if group == "" {
+		if gvr, ok := d.aliases[resource]; ok {
+			return d.byGVR[gvr], true
+		}
 	}
 	return APIResource{}, false
 }

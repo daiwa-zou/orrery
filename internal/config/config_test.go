@@ -118,6 +118,67 @@ clusters:
 	}
 }
 
+// Deriving from nothing derives nonsense: the redirect would be the bare path
+// "/api/v1/auth/callback". The process would start healthy and the first person
+// to sign in would be bounced by the provider with "invalid redirect_uri",
+// which names neither this setting nor this file.
+func TestPublicURLIsRequiredWithOIDC(t *testing.T) {
+	body := `
+server:
+  publicURL: ''
+oidc:
+  enabled: true
+  issuer: https://id.example.com
+  clientID: abc
+clusters:
+  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}
+`
+	_, err := Load(writeConfig(t, body))
+	if err == nil {
+		t.Fatal("an empty publicURL was accepted with OIDC enabled")
+	}
+	if !strings.Contains(err.Error(), "publicURL") {
+		t.Errorf("the error should name the missing field, got: %v", err)
+	}
+}
+
+// An explicit redirectURL stands on its own, so publicURL is not needed to
+// derive one.
+func TestExplicitRedirectURLNeedsNoPublicURL(t *testing.T) {
+	body := `
+server:
+  publicURL: ''
+oidc:
+  enabled: true
+  issuer: https://id.example.com
+  clientID: abc
+  redirectURL: https://console.example.com/api/v1/auth/callback
+clusters:
+  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("an explicitly configured redirectURL was refused: %v", err)
+	}
+	if cfg.OIDC.RedirectURL != "https://console.example.com/api/v1/auth/callback" {
+		t.Errorf("redirectURL = %q", cfg.OIDC.RedirectURL)
+	}
+}
+
+// Without OIDC there is nothing to derive, so an empty publicURL is a
+// deployment's own business.
+func TestPublicURLNotRequiredWithoutOIDC(t *testing.T) {
+	body := `
+server:
+  publicURL: ''
+clusters:
+  - {name: a, kubeconfig: /tmp/k, authMode: serviceaccount}
+`
+	if _, err := Load(writeConfig(t, body)); err != nil {
+		t.Fatalf("an empty publicURL was refused with OIDC off: %v", err)
+	}
+}
+
 func TestOfflineAccessAddsScope(t *testing.T) {
 	body := `
 oidc:
