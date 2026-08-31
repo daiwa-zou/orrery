@@ -25,20 +25,52 @@ func pathNamespace(r *http.Request) string {
 	return ns
 }
 
+// middlewares is the chain every request passes through, outermost first.
+//
+// Named rather than inlined into Router because the *order* is a behaviour and
+// not a formatting choice — see the note on observe and recoverer below — and a
+// list nothing can read is a list nothing can test. The router installs it, and
+// so does the test that pins the one ordering here that is easy to get wrong.
+func (a *API) middlewares() []func(http.Handler) http.Handler {
+	return []func(http.Handler) http.Handler{
+		// No RealIP: it rewrites RemoteAddr from spoofable headers
+		// (X-Forwarded-For et al.) whether or not a trusted proxy set them,
+		// and nothing here consumes the client IP anyway.
+		middleware.RequestID,
+
+		// observe outside recoverer, which is the order that makes a panic
+		// countable. chi wraps in registration order, so with recoverer first
+		// the recovery happened *above* the metrics: a panicking handler
+		// unwound straight past observe's recording lines, and the 500 the
+		// recoverer then wrote went to a ResponseWriter observe was no longer
+		// watching. orrery_http_requests_total never showed a single one of
+		// them — the failures the metric exists to surface were the only
+		// failures missing from it, and the graph looked healthiest exactly
+		// when it should not have.
+		//
+		// This way the recoverer writes its 500 through observe's recorder and
+		// returns normally, so the request is counted with the status it
+		// actually carried. A re-panicked http.ErrAbortHandler still travels
+		// through and is deliberately not counted: the connection was dropped
+		// without a reply, so there is no status to report. httpInFlight is
+		// decremented on a defer and stays correct either way.
+		a.observe,
+		a.recoverer,
+
+		// Compression pays off heavily on list payloads, which are repetitive
+		// JSON. WebSocket upgrades bypass it via their own negotiation.
+		middleware.Compress(5, "application/json", "text/plain", "application/yaml"),
+		a.cors,
+	}
+}
+
 // Router builds the complete HTTP surface.
 func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 
-	// No RealIP middleware: it rewrites RemoteAddr from spoofable headers
-	// (X-Forwarded-For et al.) whether or not a trusted proxy set them, and
-	// nothing here consumes the client IP anyway.
-	r.Use(middleware.RequestID)
-	r.Use(a.recoverer)
-	r.Use(a.observe)
-	// Compression pays off heavily on list payloads, which are repetitive
-	// JSON. WebSocket upgrades bypass it via their own negotiation.
-	r.Use(middleware.Compress(5, "application/json", "text/plain", "application/yaml"))
-	r.Use(a.cors)
+	for _, mw := range a.middlewares() {
+		r.Use(mw)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
