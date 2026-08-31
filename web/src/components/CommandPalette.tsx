@@ -378,6 +378,20 @@ export function CommandPalette({
           </p>
         ) : null}
 
+        {/*
+          The fleet search is asked for twenty and says how many it found. A
+          list cut at twenty and shown without that number is read as the whole
+          answer — so the object ranked twenty-third does not exist, rather than
+          being one more character away. `total` and `truncated` were already
+          returned and already typed; only this line was missing.
+        */}
+        {objects.data?.truncated ? (
+          <p className="border-t border-border px-3 py-1.5 text-[10.5px] text-ink-faint">
+            Showing {objects.data.hits.length} of {objects.data.total.toLocaleString()} matches —
+            keep typing to narrow it.
+          </p>
+        ) : null}
+
         <div className="flex gap-3.5 border-t border-border px-3 py-1.5 text-[10.5px] text-ink-faint">
           <span>↑↓ navigate</span>
           <span>⏎ open</span>
