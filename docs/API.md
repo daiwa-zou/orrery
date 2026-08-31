@@ -5,6 +5,12 @@ Everything is served under `/api/v1`. The resource surface is one shape:
 cluster-scoped resources, so a single route serves every group/version/resource
 the cluster advertises — built-in kinds and custom resources alike.
 
+Naming a group means naming one. A resource can be spelled as its plural,
+singular, kind or short name, and leaving the group off resolves it to whichever
+group serves it at its preferred version — but a group that is given and does
+not serve the resource is a 404 rather than a redirect to one that does. A stale
+`{version}` under the right group still resolves.
+
 Every read and every write is preceded by a `SubjectAccessReview` against the
 cluster in question. Which identity makes the onward call, and whether the
 answer comes from a cache or the API server, differs by route:
