@@ -80,7 +80,11 @@ mechanisms for the client secret rather than writing it into the file.
 Related, outside the `oidc:` block:
 
 - `server.publicURL` anchors the default redirect URL and must be the URL the
-  browser actually uses.
+  browser actually uses. It is required whenever OIDC is enabled and
+  `redirectURL` is not set explicitly, and the server now refuses to start
+  without it rather than deriving the bare path `/api/v1/auth/callback` — which
+  starts up healthy and then fails at the provider, on the first login, with an
+  `invalid redirect_uri` that names neither this setting nor this file.
 - `session.secure` (default `true`) marks cookies `Secure`. Set it to `false`
   only for plain-HTTP local development — the login flow will otherwise appear
   to succeed and immediately forget the session.

@@ -332,6 +332,22 @@ func (c *Config) finalize() error {
 		}
 	}
 	if c.OIDC.Enabled && c.OIDC.RedirectURL == "" {
+		// Derived from publicURL, so an empty publicURL derives nonsense: the
+		// redirect becomes the bare path "/api/v1/auth/callback", which is not
+		// a URL a provider will accept. Nothing notices at startup — discovery
+		// against the issuer succeeds, the process comes up healthy — and the
+		// first person to sign in is bounced by the identity provider with
+		// "invalid redirect_uri", which names neither this setting nor this
+		// file. The same empty value silently fails every WebSocket handshake
+		// and every write, since it is what the Origin check compares against.
+		//
+		// Refused here instead, beside the issuer and clientID checks, because
+		// it is required for exactly the same reason they are.
+		if c.Server.PublicURL == "" {
+			return fmt.Errorf(
+				"server.publicURL is required when oidc.enabled: the OIDC redirect " +
+					"URL and the Origin check are both derived from it")
+		}
 		c.OIDC.RedirectURL = c.Server.PublicURL + "/api/v1/auth/callback"
 	}
 	if c.OIDC.OfflineAccess && !slices.Contains(c.OIDC.Scopes, "offline_access") {
