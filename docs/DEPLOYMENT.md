@@ -213,7 +213,10 @@ the pod accordingly:
   informer cache, and opening a secret refetches it under the viewer's own
   identity), so a heap dump does not contain every credential in the fleet.
 - Keep `/metrics` (`:9090`) unexposed; it is a separate listener precisely so
-  the ingress never routes to it.
+  the ingress never routes to it. If you run the Prometheus Operator, set
+  `serviceMonitor.enabled=true` and the chart creates a ServiceMonitor against
+  that port — scraping it in-cluster, which is the point of keeping it off the
+  ingress. `serviceMonitor.interval` defaults to `30s`.
 
 For clusters where impersonation is too strong a grant, register them in
 `passthrough` mode instead — the dashboard then holds no privileged credential
@@ -250,6 +253,7 @@ way to settle "is it reading my file at all?".
 | `cache.maxInformersPerCluster` | `64` | Ceiling on concurrent caches per cluster; the least recently used is retired past it. Raise when users legitimately browse more distinct resource types than the cap; lower to bound memory harder. |
 | `cache.idleTimeout` | `10m` | How long an unwatched resource cache survives before being stopped. Raise for snappier repeat visits at the cost of memory; lower on memory-constrained installs. |
 | `authz.ttl` | `30s` | How long an access-review verdict is cached. Lower for faster revocation propagation, at the cost of more SubjectAccessReviews. |
+| `authz.cacheSize` | `65536` | How many access-review verdicts are held at once, across all users and clusters. Each is a small map entry, and evicting one costs a round trip the next time that question is asked, so raise it for a large fleet rather than lowering it. |
 | `authz.namespaceScanLimit` | `200` | Bounds the per-namespace probe used for users without cluster-wide read. Truncation is reported to the UI, never hidden. |
 | `session.ttl` / `idleTimeout` | `12h` / `2h` | Your org's session policy. |
 | `clusters[].qps` / `burst` | `50` / `100` | Bound what one dashboard may put on one API server. |
