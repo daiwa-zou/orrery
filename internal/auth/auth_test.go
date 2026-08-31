@@ -314,6 +314,19 @@ func TestSafeReturnToBlocksOpenRedirects(t *testing.T) {
 		// Not a path at all, however it is dressed up.
 		"http:/evil.example.com": "/",
 		"c/prod":                 "/",
+		// Three slashes and more. url.Parse reads the third as an empty
+		// authority and reports Host "" — so these passed every check and were
+		// returned unchanged — while a browser resolving them against
+		// https://console.example.com/login produces https://evil.example/,
+		// exactly as it does for the two-slash form. Verified in Chrome.
+		"///evil.example.com":     "/",
+		"////evil.example.com":    "/",
+		`//\evil.example.com`:     "/",
+		`/\/evil.example.com`:     "/",
+		"///evil.example.com/x?a": "/",
+		// A dot segment keeps it on this origin, and the browser agrees:
+		// "/.//evil.example" resolves to console.example.com//evil.example.
+		"/.//evil.example.com": "/.//evil.example.com",
 	}
 	for in, want := range cases {
 		if got := safeReturnTo(in); got != want {
